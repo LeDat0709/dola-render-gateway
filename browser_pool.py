@@ -37,6 +37,9 @@ class AllAccountsQuotaBlockedError(RuntimeError):
 MAX_BROWSER_SLOTS = 24   # trần cứng: mỗi slot là một Chrome thật (~0.4GB)
 
 
+_PARK_TASKS: set = set()   # giữ tham chiếu, kẻo task bị GC giữa lúc đang giữ bớt permit
+
+
 def resize_semaphore(sem: asyncio.Semaphore, delta: int) -> None:
     """Đổi trần một semaphore đang chạy: cộng thì nhả thêm permit, trừ thì giữ bớt lại.
 
@@ -49,7 +52,9 @@ def resize_semaphore(sem: asyncio.Semaphore, delta: int) -> None:
         async def park(n: int):
             for _ in range(n):
                 await sem.acquire()
-        asyncio.create_task(park(-delta))
+        task = asyncio.create_task(park(-delta))
+        _PARK_TASKS.add(task)
+        task.add_done_callback(_PARK_TASKS.discard)
 
 
 class BrowserPool:
@@ -399,8 +404,11 @@ class BrowserPool:
         self.max_concurrency = limit
         return limit
 
-    async def verify_all(self) -> list:
-        """Kiểm tra phiên mọi nick (ưu tiên HTTP nhanh, thiếu cookie backup thì dùng trình duyệt)."""
+    async def verify_all(self, names: list | None = None) -> list:
+        """Kiểm tra phiên các nick (ưu tiên HTTP nhanh, thiếu cookie backup thì dùng trình duyệt).
+
+        names=None: kiểm tra tất cả. Truyền danh sách để chỉ kiểm tra đúng mấy nick đang cần.
+        """
         browser_slots = asyncio.Semaphore(config.LOGIN_CONCURRENCY)
 
         async def check(name: str) -> dict:
@@ -414,7 +422,8 @@ class BrowserPool:
                 print(f"[verify] {name} lỗi: {e}", flush=True)
             return {"name": name, "ok": bool(r), "checked": r is not None}
 
-        return list(await asyncio.gather(*(check(n) for n in list(self.accounts))))
+        wanted = list(self.accounts) if names is None else [n for n in self.accounts if n in set(names)]
+        return list(await asyncio.gather(*(check(n) for n in wanted)))
 
     async def resume_video(self, account: str, conversation_id: str, timeout: int,
                            on_poll=None, ratio: str | None = None, duration: int | None = None) -> dict:

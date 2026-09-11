@@ -867,12 +867,15 @@ ipcMain.handle("video:getDir", () => {
   return { abs: dir };
 });
 
-ipcMain.handle("account:verifyAll", async () => {
+ipcMain.handle("account:verifyAll", async (_e, names) => {
   try {
     const env = readEnvLocal();
     const headers = { "Content-Type": "application/json" };
     if (env.DOLA_ADMIN_KEY) headers["x-admin-key"] = env.DOLA_ADMIN_KEY;
-    const r = await fetch(config().base + "/api/admin/verify-all", { method: "POST", headers });
+    const r = await fetch(config().base + "/api/admin/verify-all", {
+      method: "POST", headers,
+      body: JSON.stringify({ names: Array.isArray(names) && names.length ? names : null }),
+    });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
     return j;

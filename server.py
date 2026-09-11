@@ -138,6 +138,17 @@ class KeyConcurrencyLimiter:
 
 key_limiter = KeyConcurrencyLimiter()
 
+# asyncio KHÔNG giữ tham chiếu tới task nền: task có thể bị GC giữa đường (cảnh báo trong tài
+# liệu asyncio.create_task). Job video biến mất im lặng, dòng DB kẹt 'processing' → nick treo.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
+
 # Thêm/đăng nhập nhiều nick cùng lúc, nhưng có trần: mỗi nick là một Chrome thật.
 MAX_LOGIN_SLOTS = 12
 login_concurrency = config.LOGIN_CONCURRENCY
@@ -396,7 +407,7 @@ async def lifespan(app: FastAPI):
             store.update(row["id"], status="failed", finished_at=now,
                          error="Video treo quá lâu (Dola không trả kết quả) — đã bỏ để giải phóng nick.")
             continue
-        asyncio.create_task(_resume_task(row))
+        _spawn(_resume_task(row))
     # Job 'processing' không có conversation_id: server tắt giữa lúc mở trình duyệt / gửi prompt.
     for row in store.orphan_processing_tasks(recoverable_ids):
         action, reason = _restart_action(row, now)
@@ -409,7 +420,7 @@ async def lifespan(app: FastAPI):
         ratio = row.get("ratio")
         if ratio == "default":
             ratio = None
-        asyncio.create_task(_run_task(
+        _spawn(_run_task(
             row["id"], row["model"], row["prompt"], ratio, row["duration"],
             _task_reference_images(row.get("reference_images")), _task_client(row),
         ))
@@ -467,7 +478,7 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
         raise HTTPException(429, str(exc)) from exc
     except PendingTaskLimitExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
-    asyncio.create_task(_run_task(
+    _spawn(_run_task(
         task_id, req.model, req.prompt, ratio, duration, reference_images, client, account
     ))
     return TaskResponse(id=task_id, status="queued", model=req.model, prompt=req.prompt)
@@ -660,10 +671,15 @@ async def admin_account_clear_cookies(name: str, x_admin_key: str | None = Heade
     return res
 
 
+class VerifyRequest(BaseModel):
+    names: list[str] | None = None   # None = kiểm tra tất cả
+
+
 @app.post("/api/admin/verify-all")
-async def admin_verify_all(x_admin_key: str | None = Header(default=None)):
+async def admin_verify_all(body: VerifyRequest | None = None,
+                           x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"ok": True, "results": await pool.verify_all()}
+    return {"ok": True, "results": await pool.verify_all(body.names if body else None)}
 
 
 @app.post("/api/admin/accounts/{name}/verify")
@@ -728,7 +744,7 @@ async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(d
         raise HTTPException(409, "account exists")
     if JOBS.get(body.name, {}).get("status") == "running":
         raise HTTPException(409, "add job running")
-    asyncio.create_task(_run_add_job(body.name, body.email, body.password, body.totp))
+    _spawn(_run_add_job(body.name, body.email, body.password, body.totp))
     return {"ok": True, "job": "running"}
 
 
@@ -742,7 +758,7 @@ async def admin_account_add_facebook(body: AccountFacebookAdd, x_admin_key: str 
         raise HTTPException(409, "account exists")
     if JOBS.get(body.name, {}).get("status") == "running":
         raise HTTPException(409, "job already running for this account")
-    asyncio.create_task(_run_facebook_add_job(name, body.cookie_line, body.note, body.visible))
+    _spawn(_run_facebook_add_job(name, body.cookie_line, body.note, body.visible))
     return {"ok": True, "job": "running"}
 
 

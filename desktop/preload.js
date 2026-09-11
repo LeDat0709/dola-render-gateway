@@ -27,7 +27,7 @@ contextBridge.exposeInMainWorld("api", {
   openAccountsDir: () => ipcRenderer.invoke("open:accountsDir"),
   getVideoDir: () => ipcRenderer.invoke("video:getDir"),
   removeWatermark: (file) => ipcRenderer.invoke("video:removeWatermark", { file }),
-  verifyAll: () => ipcRenderer.invoke("account:verifyAll"),
+  verifyAll: (names) => ipcRenderer.invoke("account:verifyAll", names),
   setConcurrency: (send, login) => ipcRenderer.invoke("config:setConcurrency", { send, login }),
   chooseVideoDir: () => ipcRenderer.invoke("video:chooseDir"),
   tailLogs: (n) => ipcRenderer.invoke("logs:tail", n),

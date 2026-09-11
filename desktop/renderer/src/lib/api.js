@@ -92,7 +92,8 @@ export function riskyPrompt(p) {
 // Quá 12s (nick phải mở Chrome để kiểm tra) thì chạy luôn, không bắt người dùng chờ.
 export async function deadNicks(names) {
   try {
-    const r = await Promise.race([api.verifyAll?.(), new Promise((res) => setTimeout(() => res(null), 12000))]);
+    const r = await Promise.race([api.verifyAll?.(names),   // chỉ kiểm tra nick đang cần chạy
+                                  new Promise((res) => setTimeout(() => res(null), 12000))]);
     if (!r?.ok) return [];
     return (r.results || []).filter((x) => x.checked && !x.ok).map((x) => x.name).filter((n) => names.includes(n));
   } catch { return []; }
