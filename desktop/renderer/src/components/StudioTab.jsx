@@ -9,11 +9,13 @@ import { api, cfg, submitJob, pollJob, fmtError, creditCost, firstLine, fnameFro
 
 const MODELS = ["seedance-2.0", "seedance-2.5"];
 const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"];
-const DURS = ["10", "15", "30"];
+// Dola đã bỏ 30 giây (chỉ còn 4–15). Chọn 30 thì Dola hỏi lại rồi tự hạ 15 → mất thêm
+// 1–2 phút giữ nick, nên mặc định 15 và nói rõ trên nhãn.
+const DURS = [["10", "10s"], ["15", "15s"], ["30", "30s → Dola hạ 15s"]];
 
 export default function StudioTab({ health, onRefresh, onPlay }) {
   const accounts = health?.accounts || [];
-  const [def, setDef] = useState({ model: "seedance-2.5", dur: "30", ratio: "9:16" });
+  const [def, setDef] = useState({ model: "seedance-2.5", dur: "15", ratio: "9:16" });
   const [bulk, setBulk] = useState("");
   const [rows, setRows] = useState({});           // nick -> {prompt,model,ratio,dur,phase,status,startedAt,videoUrl,errorRaw}
   const [sel, setSel] = useState({});             // nick -> bool
@@ -203,7 +205,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">Mặc định:</span>
           <SelectNative className="w-auto" value={def.model} onChange={(e) => setDef({ ...def, model: e.target.value })}>{MODELS.map((m) => <option key={m}>{m}</option>)}</SelectNative>
-          <SelectNative className="w-auto" value={def.dur} onChange={(e) => setDef({ ...def, dur: e.target.value })}>{DURS.map((m) => <option key={m}>{m}</option>)}</SelectNative>
+          <SelectNative className="w-auto" value={def.dur} onChange={(e) => setDef({ ...def, dur: e.target.value })}>{DURS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}</SelectNative>
           <SelectNative className="w-auto" value={def.ratio} onChange={(e) => setDef({ ...def, ratio: e.target.value })}>{RATIOS.map((m) => <option key={m}>{m}</option>)}</SelectNative>
           <Button variant="outline" size="sm" onClick={fillAll}><ArrowDown className="h-3.5 w-3.5" />Điền tất cả</Button>
           <Button variant="outline" size="sm" onClick={fillLines}><ArrowDown className="h-3.5 w-3.5" />Mỗi dòng 1 nick</Button>
@@ -264,7 +266,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
                   <td className="px-3"><Input value={s.prompt} placeholder={`prompt cho ${n}…`} onChange={(e) => setRow(n, { prompt: e.target.value })} /></td>
                   <td className="px-3"><SelectNative value={s.model} onChange={(e) => setRow(n, { model: e.target.value })}>{MODELS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
                   <td className="px-3"><SelectNative value={s.ratio} onChange={(e) => setRow(n, { ratio: e.target.value })}>{RATIOS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
-                  <td className="px-3"><SelectNative value={s.dur} onChange={(e) => setRow(n, { dur: e.target.value })}>{DURS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
+                  <td className="px-3"><SelectNative value={s.dur} onChange={(e) => setRow(n, { dur: e.target.value })}>{DURS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}</SelectNative></td>
                   <td className="px-3 py-2.5"><StatusCell s={s} clock={clock} elapsed={elapsed} onPlay={onPlay} onOpen={() => api.openDownloads?.()} onCopy={copyPath} onRemoveWm={removeWm} /></td>
                   <td className="whitespace-nowrap px-3 text-right">
                     <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" title="Chạy" onClick={() => { stop.current = false; runOne(n); }}><Play className="h-3.5 w-3.5" /></Button>

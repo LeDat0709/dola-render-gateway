@@ -4,6 +4,7 @@
   "description": "Desktop GUI for the Dola Render Gateway (generate videos, manage accounts by cookie login).",
   "main": "main.js",
   "scripts": {
+    "prestart": "npm run build:ui",
     "start": "electron .",
     "build:ui": "npm --prefix renderer run build",
     "setup:ui": "npm --prefix renderer install --ignore-scripts --no-audit --no-fund && node renderer/node_modules/esbuild/install.js",

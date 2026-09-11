@@ -427,7 +427,7 @@ function renderStudio(h){
       <td><input class="rprompt" value="${esc(s.prompt)}" placeholder="prompt cho ${esc(n)}…"></td>
       <td><select class="rmodel mini">${optsHtml(["seedance-2.0","seedance-2.5"],s.model)}</select></td>
       <td><select class="rratio mini">${optsHtml(["16:9","9:16","1:1","4:3","3:4"],s.ratio)}</select></td>
-      <td><select class="rdur mini">${optsHtml(["10","15","30"],s.dur)}</select></td>
+      <td><select class="rdur mini">${optsHtml(["10","15"],s.dur)}</select></td>
       <td class="rst status">${s.status||"—"}</td>
       <td class="racts"><button class="ghost rrun" title="Chạy nick này">${ic('play')}</button><button class="ghost rlogin" title="Đăng nhập lại (lấy cookie mới)">${ic('refresh')}</button><button class="ghost rproxy" title="Proxy riêng">${ic('gear')}</button><button class="ghost rdel" title="Xóa nick">${ic('trash')}</button></td>
     </tr>`;
