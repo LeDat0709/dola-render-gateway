@@ -571,6 +571,7 @@ class AccountCookieImport(BaseModel):
     cookies: str
     email: str | None = None
     ui_lang: str = "ja"
+    proxy: str = ""   # proxy riêng, ghi TRƯỚC khi mở Chrome kiểm tra phiên (nick mới chưa có trên máy chủ)
 
 
 class AccountFacebookAdd(BaseModel):
@@ -609,7 +610,20 @@ async def admin_login(body: AdminLogin):
 @app.get("/api/admin/accounts")
 async def admin_accounts(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"accounts": pool.list_accounts()}
+    from browser import account_proxy_raw
+    # Kèm proxy riêng để giao diện khỏi hỏi từng nick (46 nick × 4s = 46 yêu cầu mỗi vòng ở chế độ từ xa).
+    return {"accounts": [{**a, "proxy": account_proxy_raw(a["name"])} for a in pool.list_accounts()]}
+
+
+@app.get("/api/admin/config")
+async def admin_config(x_admin_key: str | None = Header(default=None)):
+    """Cấu hình đang chạy cho giao diện: máy chủ từ xa không đọc được .env.local trên VPS."""
+    _admin_auth(x_admin_key)
+    from browser import mask_proxy
+    return {"proxy": mask_proxy(config.PROXY), "max_concurrency": pool.max_concurrency,
+            "auto_retry": config.AUTO_RETRY, "submit_gap": config.SUBMIT_GAP_SEC,
+            "submit_jitter": config.SUBMIT_JITTER_SEC, "max_rotate": config.MAX_ROTATE,
+            "video_timeout": config.VIDEO_TIMEOUT, "daily_limit": config.DAILY_LIMIT}
 
 
 @app.patch("/api/admin/accounts/{name}")
@@ -651,6 +665,16 @@ async def admin_account_proxy(name: str, body: AccountProxy, x_admin_key: str | 
         raise HTTPException(422, "proxy không hợp lệ (host:port, user:pass@host:port, hoặc host:port:user:pass)")
     set_account_proxy(name, body.proxy)
     return {"ok": True, "proxy": body.proxy.strip() or "(global)"}
+
+
+@app.get("/api/admin/accounts/{name}/proxy")
+async def admin_account_proxy_get(name: str, x_admin_key: str | None = Header(default=None)):
+    """Proxy riêng của nick trên máy chủ — app ở chế độ server từ xa đọc qua đây thay vì file cục bộ."""
+    _admin_auth(x_admin_key)
+    if name not in pool.accounts:
+        raise HTTPException(404, "account not found")
+    from browser import account_proxy_raw
+    return {"proxy": account_proxy_raw(name)}
 
 
 @app.delete("/api/admin/accounts/{name}")
@@ -778,8 +802,11 @@ async def admin_account_import_cookie(body: AccountCookieImport, x_admin_key: st
     name = body.name.strip()
     if not NAME_RE.match(name):
         raise HTTPException(400, "invalid account name (1-32 chars: letters, numbers, -, _)")
+    from browser import parse_proxy
+    if body.proxy.strip() and not parse_proxy(body.proxy):
+        raise HTTPException(422, "proxy không hợp lệ (host:port, user:pass@host:port, hoặc host:port:user:pass)")
     try:
-        res = await apply_cookies_to_account(name, body.cookies, ui_lang=body.ui_lang)
+        res = await apply_cookies_to_account(name, body.cookies, ui_lang=body.ui_lang, proxy=body.proxy.strip())
         if body.email:
             pool.set_email(name, body.email.strip())
         pool.set_login_status(name, res["ok"])

@@ -147,6 +147,26 @@ def account_proxy(account: str) -> dict | None:
     return parse_proxy(config.PROXY)
 
 
+def account_proxy_raw(account: str) -> str:
+    """Chuỗi proxy riêng của nick (accounts/<nick>/proxy.txt); "" = dùng proxy chung."""
+    try:
+        f = config.ACCOUNTS_DIR / account / "proxy.txt"
+        return f.read_text(encoding="utf-8").strip() if f.exists() else ""
+    except OSError:
+        return ""
+
+
+def mask_proxy(raw: str) -> str:
+    """Che mật khẩu để trả ra giao diện: scheme://user:•••@host:port hoặc host:port:user:•••."""
+    import re
+    s = (raw or "").strip()
+    m = re.match(r"^(\w+://)?([^:@/]+):([^@/]+)@(.+)$", s)
+    if m:
+        return f"{m.group(1) or ''}{m.group(2)}:•••@{m.group(4)}"
+    p = re.sub(r"^\w+://", "", s).split(":")
+    return f"{p[0]}:{p[1]}:{p[2]}:•••" if len(p) >= 4 else s
+
+
 def set_account_proxy(account: str, raw: str) -> None:
     """Writes/clears accounts/<account>/proxy.txt (empty raw removes it → back to global)."""
     d = config.ACCOUNTS_DIR / account

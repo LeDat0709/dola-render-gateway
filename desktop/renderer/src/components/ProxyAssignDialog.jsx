@@ -28,6 +28,7 @@ export default function ProxyAssignDialog({ open, onOpenChange, accounts, select
 
   async function apply() {
     if (!proxies.length) { setMsg("Dán ít nhất 1 proxy."); return; }
+    if (!api.setProxy) { setMsg("Chỉ gán được trong app Dola Studio (trình duyệt không có IPC)."); return; }
     setBusy(true); let ok = 0; const bad = [];
     for (const p of plan) {
       setMsg(`Đang gán ${ok + bad.length + 1}/${plan.length}: ${p.name}…`);

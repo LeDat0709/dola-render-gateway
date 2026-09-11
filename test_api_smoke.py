@@ -98,6 +98,31 @@ def main():
         st, d = call("GET", "/api/report")
         check("/api/report trả 200", st == 200)
 
+        # --- Những gì giao diện mới (Tổng quan / Kho / tab Proxy) và app ở chế độ từ xa gọi ---
+        st, d = call("GET", "/api/admin/config")
+        check("/api/admin/config đủ trường", st == 200 and all(k in d for k in ("proxy", "max_concurrency", "auto_retry", "max_rotate", "submit_gap", "video_timeout")), repr(d)[:100])
+        (tmp / "accounts" / "n1").mkdir(parents=True, exist_ok=True)
+        st, d = call("POST", "/api/admin/accounts/n1/proxy", {"proxy": "http://u:p@1.2.3.4:8080"})
+        check("đặt proxy riêng cho nick", st == 200 and d.get("ok"), f"{st} {repr(d)[:80]}")
+        st, d = call("GET", "/api/admin/accounts/n1/proxy")
+        check("đọc lại proxy riêng (app từ xa dùng)", st == 200 and d.get("proxy") == "http://u:p@1.2.3.4:8080", repr(d)[:80])
+        st, d = call("GET", "/api/admin/accounts")
+        a1 = next((a for a in d.get("accounts", []) if a["name"] == "n1"), {})
+        check("danh sách nick mang trường proxy", a1.get("proxy") == "http://u:p@1.2.3.4:8080", repr(a1.get("proxy")))
+        missing = [k for k in ("remaining", "used_today", "limit", "cooling", "cooldown_until", "busy", "login_ok",
+                               "email", "note", "scheduling", "credit_balance", "rate_limited", "quota_blocked", "last_used_at") if k not in a1]
+        check("nick có đủ trường giao diện đọc", not missing, f"thiếu {missing}")
+        st, _ = call("POST", "/api/admin/accounts/n1/proxy", {"proxy": "khong hop le"})
+        check("proxy sai định dạng → 422", st == 422, f"nhận {st}")
+        st, _ = call("GET", "/api/admin/accounts/khong-ton-tai/proxy")
+        check("đọc proxy nick lạ → 404", st == 404, f"nhận {st}")
+        st, _ = call("POST", "/api/admin/accounts/import-cookie", {"name": "n2", "cookies": "rac", "proxy": "sai dinh dang"})
+        check("import-cookie kèm proxy sai → 422 (chưa mở Chrome)", st == 422, f"nhận {st}")
+        st, d = call("POST", "/api/admin/accounts/import-cookie", {"name": "n2", "cookies": "rac", "proxy": "http://u:p@1.2.3.4:8080"})
+        check("cookie rác → 400 và KHÔNG để lại nick ma", st == 400 and not (tmp / "accounts" / "n2").exists(), f"nhận {st}, dir={(tmp / 'accounts' / 'n2').exists()}")
+        st, _ = call("DELETE", "/api/admin/accounts/n1")
+        check("xoá nick thử → pool trống lại", st == 200 and call("GET", "/api/admin/accounts")[1].get("accounts") == [], f"nhận {st}")
+
         st, d = call("POST", "/api/admin/concurrency", {"max_concurrency": 7, "login_concurrency": 4})
         check("đổi luồng: nhận 7/4", st == 200 and d.get("max_concurrency") == 7 and d.get("login_concurrency") == 4, repr(d)[:90])
         st, h2 = call("GET", "/health")

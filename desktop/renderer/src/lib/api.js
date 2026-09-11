@@ -237,6 +237,15 @@ export async function recentTasks(limit = 200) {
     return (await r.json()).tasks || [];
   } catch { return []; }
 }
+// Cấu hình ĐANG chạy trên server (proxy chung đã che mật khẩu, luồng, giãn nhịp…): ở chế độ từ xa
+// app không đọc được .env.local trên VPS. Server cũ chưa có endpoint → null, caller tự lùi về IPC.
+export async function adminConfig() {
+  await ensureConfig();
+  try {
+    const r = await fetch(cfg.base + "/api/admin/config", { headers: adminHeaders(), cache: "no-store" });
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
 // Chip trạng thái theo bản Stitch: tách "hết credit" với "hết lượt hôm nay", ghi giờ hết nghỉ.
 export function accChip(a) {
   const st = accState(a);

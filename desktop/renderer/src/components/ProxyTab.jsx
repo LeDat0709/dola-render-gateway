@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Network, RefreshCw, Activity, Users, Unlink, ChevronDown, ChevronUp, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { api, cfg, adminAccounts, accState, accChip, maskProxy, proxyHost } from "@/lib/api";
+import { api, cfg, adminAccounts, adminConfig, accState, accChip, maskProxy, proxyHost } from "@/lib/api";
 import ProxyAssignDialog from "@/components/ProxyAssignDialog";
 
 const PER_IP = 5;
@@ -20,9 +20,12 @@ export default function ProxyTab() {
   const load = useCallback(async () => {
     const res = await adminAccounts();
     if (!res.ok) { setList(null); return; }
-    const proxies = await Promise.all(res.accounts.map((a) => Promise.resolve(api.getProxy?.(a.name)).then((r) => r?.proxy || "").catch(() => "")));
-    setList(res.accounts.map((a, i) => ({ ...a, proxy: proxies[i] })));
-    try { setGproxy((await api.getGlobalProxy?.())?.proxy || ""); } catch { /* không có IPC (trình duyệt) */ }
+    const proxies = await Promise.all(res.accounts.map((a) => a.proxy !== undefined ? a.proxy
+      : Promise.resolve(api.getProxy?.(a.name)).then((r) => r?.proxy || "").catch(() => "")));
+    setList(res.accounts.map((a, i) => ({ ...a, proxy: proxies[i] || "" })));
+    const c = await adminConfig();   // proxy chung ĐANG chạy trên server (đã che mật khẩu); server cũ → hỏi IPC
+    if (c) setGproxy(c.proxy || "");
+    else { try { setGproxy((await api.getGlobalProxy?.())?.proxy || ""); } catch { /* không có IPC (trình duyệt) */ } }
   }, []);
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
 

@@ -3,8 +3,8 @@
 
 Đọc accounts/<nick>/cookies.json → POST /api/admin/accounts/import-cookie. Nếu đưa file proxy
 (mỗi dòng một proxy: http://user:pass@host:port, socks5://…, host:port:user:pass) thì chia nick
-lên proxy theo vòng tròn, tối đa --per-ip nick một IP, và ghi proxy riêng cho từng nick
-(POST /api/admin/accounts/<nick>/proxy). Nhiều nick chung một IP là lý do tool đối thủ sập.
+lên proxy theo vòng tròn, tối đa --per-ip nick một IP, gửi kèm trường `proxy` trong import-cookie
+để server ghi proxy riêng trước khi kiểm tra phiên. Nhiều nick chung một IP là lý do tool đối thủ sập.
 
 Mỗi nick nhập mất 10–30 giây (VPS mở Chrome kiểm tra phiên) — 42 nick khoảng 10 phút.
 
@@ -55,11 +55,10 @@ def push(base: str, admin_key: str, items: list[tuple], post=_post, dry_run: boo
             print("  [thử] " + tag)
             continue
         try:
-            # Proxy TRƯỚC, cookie SAU: bước nhập cookie mở Chrome của nick để kiểm tra phiên, phải đi
-            # qua đúng proxy riêng của nick (server tự tạo thư mục nick khi ghi proxy.txt).
-            if proxy:
-                post(base, admin_key, f"/api/admin/accounts/{n}/proxy", {"proxy": proxy})
-            _, res = post(base, admin_key, "/api/admin/accounts/import-cookie", {"name": n, "cookies": raw})
+            # Proxy đi cùng cookie trong MỘT yêu cầu: server ghi proxy.txt trước khi mở Chrome kiểm tra
+            # phiên. (Endpoint /proxy riêng đòi nick phải có sẵn trên máy chủ → nick mới sẽ 404.)
+            _, res = post(base, admin_key, "/api/admin/accounts/import-cookie",
+                          {"name": n, "cookies": raw, "proxy": proxy or ""})
             ok += 1
             print(f"  ✅ {tag} login_ok={res.get('ok')}")
         except urllib.error.HTTPError as e:
@@ -88,9 +87,8 @@ def _selftest():
         calls.append((path, body.get("proxy")))
         return 200, {"ok": True}
     assert push("http://x", "k", items, post=fake) == 3
-    assert calls[0] == ("/api/admin/accounts/n1/proxy", "http://p1:1") and calls[1] == ("/api/admin/accounts/import-cookie", None)
-    assert len(calls) == 6                                    # 3 nick × (đặt proxy rồi nhập cookie)
-    assert push("http://x", "k", items, post=fake, dry_run=True) == 0 and len(calls) == 6
+    assert calls == [("/api/admin/accounts/import-cookie", p) for p in ("http://p1:1", "http://p2:2", "http://p1:1")]
+    assert push("http://x", "k", items, post=fake, dry_run=True) == 0 and len(calls) == 3
     print("OK")
 
 

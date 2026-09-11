@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, Server, Gauge, Timer, PieChart, Zap, Play, FolderOpen, ArrowRight, Send, CheckCircle2, XCircle, Users, Copy } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { api, cfg, adminAccounts, recentTasks, report as fetchReport, accChip, fmtError, fmtSec, maskProxy, fnameFromUrl, sttFromUrl, timeAgo } from "@/lib/api";
+import { api, cfg, adminAccounts, adminConfig, recentTasks, report as fetchReport, accChip, fmtError, fmtSec, maskProxy, fnameFromUrl, sttFromUrl, timeAgo } from "@/lib/api";
 
 const POLL_MS = 5000;
 const isToday = (ts) => !!ts && new Date(ts * 1000).toDateString() === new Date().toDateString();
@@ -76,7 +76,8 @@ export default function OverviewTab({ health, onPlay, onGo }) {
     load(); const id = setInterval(load, POLL_MS);
     const rid = setInterval(async () => setRep(await fetchReport()), 15000);
     fetchReport().then(setRep);
-    Promise.resolve(api.getGlobalProxy?.()).then((r) => setGproxy(r?.proxy || "")).catch(() => {});
+    adminConfig().then((c) => c ? setGproxy(c.proxy || "")
+      : Promise.resolve(api.getGlobalProxy?.()).then((r) => setGproxy(r?.proxy || ""))).catch(() => {});
     return () => { clearInterval(id); clearInterval(rid); };
   }, [load]);
 

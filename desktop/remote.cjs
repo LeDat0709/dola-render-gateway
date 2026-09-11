@@ -45,4 +45,29 @@ async function testRemote(base, apiKey, adminKey, timeoutMs = 10000) {
   }
 }
 
-module.exports = { normalizeRemoteBase, gatewayBase, testRemote };
+// Gọi API admin trên máy chủ từ xa (proxy theo nick, cấu hình đang chạy). Trả { ok, ...json } hoặc
+// { ok:false, status?, error }. Thuần fetch → test-remote.cjs dựng http server giả để kiểm.
+async function adminFetch(base, adminKey, path, { method = "GET", body, timeoutMs = 10000 } = {}) {
+  const b = normalizeRemoteBase(base);
+  if (!b) return { ok: false, error: "Địa chỉ máy chủ sai" };
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const r = await fetch(b + path, {
+      method, cache: "no-store", signal: ctl.signal,
+      headers: { "Content-Type": "application/json", "x-admin-key": String(adminKey || "").trim() },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, status: r.status, error: j.detail || `HTTP ${r.status}` };
+    return { ok: true, ...j };
+  } catch (e) {
+    return { ok: false, error: `Không nối được ${b}: ${String((e && e.message) || e).slice(0, 120)}` };
+  } finally { clearTimeout(t); }
+}
+const getAccountProxy = (base, adminKey, name) =>
+  adminFetch(base, adminKey, `/api/admin/accounts/${encodeURIComponent(name)}/proxy`);
+const setAccountProxy = (base, adminKey, name, proxy) =>
+  adminFetch(base, adminKey, `/api/admin/accounts/${encodeURIComponent(name)}/proxy`, { method: "POST", body: { proxy: proxy || "" } });
+const getRemoteConfig = (base, adminKey) => adminFetch(base, adminKey, "/api/admin/config");
+
+module.exports = { normalizeRemoteBase, gatewayBase, testRemote, adminFetch, getAccountProxy, setAccountProxy, getRemoteConfig };

@@ -17,7 +17,7 @@ const DATA_DIR = PACKAGED ? app.getPath("userData") : REPO_ROOT;
 const { fetchGenerate } = require("./fetch-generate.cjs");
 const { applyProxy, attachLoadErrorHandler, preflightDola, readEnvLocal: _readEnvLocal,
         parseProxy, globalProxy, testProxy, PROXY_FORMATS } = require("./proxy.cjs");
-const { gatewayBase, normalizeRemoteBase, testRemote } = require("./remote.cjs");
+const { gatewayBase, normalizeRemoteBase, testRemote, getAccountProxy, setAccountProxy, getRemoteConfig } = require("./remote.cjs");
 const _IS_WIN = process.platform === "win32";
 const _VENV_BIN = _IS_WIN ? "Scripts" : "bin";   // Windows: .venv\\Scripts, macOS/Linux: .venv/bin
 const VENV_PY = PACKAGED
@@ -813,8 +813,14 @@ ipcMain.handle("video:removeWatermark", async (_e, { file }) => {
   });
 });
 
-ipcMain.handle("account:setProxy", (_e, { name, proxy }) => {
+ipcMain.handle("account:setProxy", async (_e, { name, proxy }) => {
   if (!NAME_RE.test(name || "")) return { ok: false, error: "Tên nick không hợp lệ" };
+  if (isRemote()) {   // proxy của nick nằm trên máy chủ, không phải file trên máy này
+    const v = (proxy || "").trim();
+    if (v && !parseProxy(v)) return { ok: false, error: `Proxy sai định dạng. Chấp nhận: ${PROXY_FORMATS}` };
+    const c = config();
+    return setAccountProxy(c.base, c.adminKey, name, v);
+  }
   const dir = path.join(DATA_DIR, "accounts", name);
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -849,7 +855,12 @@ ipcMain.handle("account:bulkImport", async (_e, { json, verify }) => {
   });
 });
 
-ipcMain.handle("account:getProxy", (_e, { name }) => {
+ipcMain.handle("account:getProxy", async (_e, { name }) => {
+  if (isRemote()) {
+    const c = config();
+    const r = await getAccountProxy(c.base, c.adminKey, name);
+    return { ok: true, proxy: r.ok ? (r.proxy || "") : "" };
+  }
   try {
     const f = path.join(DATA_DIR, "accounts", name, "proxy.txt");
     return { ok: true, proxy: fs.existsSync(f) ? fs.readFileSync(f, "utf8").trim() : "" };
@@ -857,7 +868,14 @@ ipcMain.handle("account:getProxy", (_e, { name }) => {
 });
 
 // Proxy chung = DOLA_PROXY trong .env.local (DATA_DIR). Python chỉ đọc lại khi Tắt/Bật server.
-ipcMain.handle("proxy:getGlobal", () => ({ ok: true, proxy: globalProxy(DATA_DIR) }));
+ipcMain.handle("proxy:getGlobal", async () => {
+  if (isRemote()) {   // proxy chung ĐANG chạy trên máy chủ (đã che mật khẩu), không phải .env.local máy này
+    const c = config();
+    const r = await getRemoteConfig(c.base, c.adminKey);
+    return { ok: true, proxy: r.ok ? (r.proxy || "") : "", remote: true };
+  }
+  return { ok: true, proxy: globalProxy(DATA_DIR) };
+});
 
 // Tự thử lại / xoay nick: đọc từ /health của server đang dùng (cục bộ hay VPS), đổi qua /api/admin/retry
 // (áp dụng ngay), và nhớ vào .env.local cho lần khởi động sau khi server ở máy này.
@@ -881,6 +899,7 @@ ipcMain.handle("config:setAutoRetry", async (_e, { on }) => {
   } catch (e) { return { ok: false, error: "Server chưa chạy? " + String(e).slice(0, 80) }; }
 });
 ipcMain.handle("proxy:setGlobal", (_e, { proxy }) => {
+  if (isRemote()) return { ok: false, error: "Đang dùng máy chủ từ xa: đặt DOLA_PROXY trong .env.local trên máy chủ rồi khởi động lại dịch vụ dola-gateway." };
   const v = (proxy || "").trim();
   if (v && !parseProxy(v)) return { ok: false, error: `Proxy sai định dạng. Chấp nhận: ${PROXY_FORMATS}` };
   try { upsertEnvLocal("DOLA_PROXY", v); } catch (e) { return { ok: false, error: String(e) }; }

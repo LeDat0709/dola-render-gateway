@@ -130,12 +130,21 @@ async def apply_cookies_to_account(
     account: str,
     cookie_raw: str,
     ui_lang: str = "ja",
-    check_url: str = "https://www.dola.com/chat"
+    check_url: str = "https://www.dola.com/chat",
+    proxy: str = "",
 ) -> Dict[str, Any]:
-    """Injects cookies into accounts/<account> profile and verifies session."""
+    """Injects cookies into accounts/<account> profile and verifies session.
+
+    proxy: proxy riêng của nick, ghi vào accounts/<nick>/proxy.txt SAU khi cookie đọc được nhưng
+    TRƯỚC khi mở Chrome — bước kiểm tra phiên phải đi đúng IP của nick (nhiều nick chung IP là
+    lý do Dola khoá cả loạt). Cookie rác thì không tạo thư mục, không để lại nick ma.
+    """
     parsed = parse_cookie_input(cookie_raw)
     if not parsed:
         raise ValueError("Không tìm thấy cookie hợp lệ trong dữ liệu nhập vào.")
+    if proxy:
+        from browser import set_account_proxy
+        set_account_proxy(account, proxy)
 
     # If user provided Facebook cookies (has c_user / xs) without Dola sessionid,
     # automatically perform Facebook OAuth to authenticate Dola.

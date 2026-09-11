@@ -55,9 +55,10 @@ export default function AccountWarehouse({ onRefresh, onAdd }) {
     if (!res.ok) { setLoadErr(res.kind); setList(null); return; }
     setLoadErr(null);
     const accs = res.accounts;
-    const proxies = await Promise.all(accs.map((a) =>
-      Promise.resolve(api.getProxy?.(a.name)).then((r) => r?.proxy || "").catch(() => "")));
-    setList(accs.map((a, i) => ({ ...a, proxy: proxies[i] })));
+    // Server mới trả sẵn `proxy` trong danh sách; server cũ thì hỏi IPC từng nick.
+    const proxies = await Promise.all(accs.map((a) => a.proxy !== undefined ? a.proxy
+      : Promise.resolve(api.getProxy?.(a.name)).then((r) => r?.proxy || "").catch(() => "")));
+    setList(accs.map((a, i) => ({ ...a, proxy: proxies[i] || "" })));
     // Cắt bỏ mọi khoá không còn trong kho (xoá 1 nick, xoá hàng loạt, hoặc xoá bằng
     // đường khác) -> sel không thể giữ tên mà pool không còn nữa.
     setSel((prev) => Object.fromEntries(accs.filter((a) => prev[a.name]).map((a) => [a.name, true])));
