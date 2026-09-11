@@ -47,6 +47,10 @@ MAX_PENDING_TASKS = int(os.getenv("DOLA_MAX_PENDING_TASKS", "100"))
 # 300s trừ ~60s Dola hỏi lại chỉ còn ~230s → quá nửa video "quá giờ" dù Dola vẫn dựng xong (cháy credit).
 VIDEO_TIMEOUT = int(os.getenv("DOLA_VIDEO_TIMEOUT", "900"))
 
+# Tự thử lại 1 lần khi Dola lỗi tạm thời (tạo thêm 1 cuộc trò chuyện) và xoay sang nick khác cho job
+# không ghim nick. Tắt (DOLA_AUTO_RETRY=0) = lỗi là dừng ngay. Đổi được lúc chạy qua POST /api/admin/retry.
+AUTO_RETRY = os.getenv("DOLA_AUTO_RETRY", "1").strip().lower() not in ("0", "false", "no", "off")
+
 # Tự xóa watermark "Dola AI" ngay khi tải video xong (BẬT mặc định; DOLA_AUTO_REMOVE_WM=0 để tắt)
 AUTO_REMOVE_WM = os.getenv("DOLA_AUTO_REMOVE_WM", "1").strip().lower() not in ("0", "false", "no", "off", "")
 

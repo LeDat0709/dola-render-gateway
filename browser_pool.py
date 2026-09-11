@@ -496,6 +496,8 @@ class BrowserPool:
             else:
                 candidates = self.list_accounts()
             for a in candidates:
+                if not config.AUTO_RETRY and last_err is not None:
+                    raise last_err   # người dùng tắt xoay nick: nick đầu hỏng là dừng, không thử nick khác
                 if not self._schedulable(a):
                     continue
                 account = a["name"]
@@ -558,6 +560,8 @@ class BrowserPool:
                     except TransientDolaError as e:
                         # Dola lỗi tạm thời (không phải lỗi tài khoản, thường không trừ lượt) → thử lại
                         # chính nick này 1 lần; vẫn lỗi thì xoay sang nick khác.
+                        if not config.AUTO_RETRY:
+                            raise   # người dùng tắt tự thử lại: không gửi lần 2 (không tạo thêm cuộc trò chuyện)
                         print(f"[pool] {account} Dola lỗi tạm thời, thử lại 1 lần: {e}", flush=True)
                         try:
                             await asyncio.sleep(3)
@@ -586,7 +590,8 @@ class BrowserPool:
                         except (ContentPolicyViolationError, PortraitProtectionError, ParameterChangeError):
                             raise   # lỗi của prompt / kích cỡ video này, không phải của nick → xoay vô ích
                         except Exception as e2:
-                            print(f"[pool] {account} vẫn lỗi sau khi thử lại, xoay nick: {e2}", flush=True)
+                            # Job ghim nick thì không có nick nào để xoay — nói đúng để người dùng khỏi hiểu nhầm.
+                            print(f"[pool] {account} vẫn lỗi sau khi thử lại{'' if pinned else ', xoay nick'}: {e2}", flush=True)
                             last_err = e2
                             continue
                     except RiskControlError as e:

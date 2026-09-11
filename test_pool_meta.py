@@ -79,9 +79,30 @@ def test_pinned_nick_reports_real_reason():
             assert False, f"lý do thật bị bọc thành: {e}"
 
 
+def test_auto_retry_off_fails_fast():
+    """Tắt 'tự thử lại / xoay nick': lỗi tạm thời → dừng ngay, 1 lần gửi, không sang nick khác."""
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp)
+        for n in ("n1", "n2"):
+            (Path(tmp) / "accounts" / n).mkdir(parents=True)
+        gen = _fake_gen(TransientDolaError("エラーが発生しました"))
+        browser_pool.generate_video = gen
+        browser_pool.config.AUTO_RETRY = False
+        try:
+            try:
+                asyncio.run(pool.generate_video("p", "9:16", 10))      # không ghim nick → bình thường sẽ xoay
+                assert False, "phải ném lỗi"
+            except TransientDolaError:
+                pass
+            assert gen.calls == ["n1"], gen.calls                     # đúng 1 lần gửi, không thử lại, không sang n2
+        finally:
+            browser_pool.config.AUTO_RETRY = True
+
+
 if __name__ == "__main__":
     test_status_for_unknown_nick_is_kept()
     test_new_profile_dir_shows_up_without_restart()
     test_timeout_in_retry_does_not_rotate()
     test_pinned_nick_reports_real_reason()
+    test_auto_retry_off_fails_fast()
     print("OK")

@@ -12,13 +12,23 @@ export default function SettingsTab() {
   const [vid, setVid] = useState("…"); const [acc, setAcc] = useState("…"); const [msg, setMsg] = useState("");
   const [gp, setGp] = useState(""); const [gpMsg, setGpMsg] = useState("");
   const [rb, setRb] = useState(""); const [rk, setRk] = useState(""); const [ra, setRa] = useState(""); const [rMsg, setRMsg] = useState("");
+  const [autoRetry, setAutoRetry] = useState(true); const [arMsg, setArMsg] = useState("");
   const load = () => {
     api.getVideoDir?.().then((r) => setVid(r?.abs || "downloads")).catch(() => {});
     api.getAccountsDir?.().then((r) => setAcc(r?.abs || r?.dir || "accounts")).catch(() => {});
     api.getGlobalProxy?.().then((r) => setGp(r?.proxy || "")).catch(() => {});
     api.getRemote?.().then((r) => { setRb(r?.base || ""); setRk(r?.apiKey || ""); setRa(r?.adminKey || ""); }).catch(() => {});
+    api.getAutoRetry?.().then((r) => setAutoRetry(r?.on !== false)).catch(() => {});
   };
   useEffect(load, []);
+
+  const toggleAutoRetry = async (e) => {
+    const on = e.target.checked;
+    setAutoRetry(on);
+    const r = await api.setAutoRetry?.(on);
+    if (!r?.ok) { setAutoRetry(!on); setArMsg("✗ " + (r?.error || "Bật server rồi thử lại")); return; }
+    setArMsg(`✓ Đã ${on ? "BẬT" : "TẮT"} tự thử lại / xoay nick — áp dụng ngay cho server đang chạy.`);
+  };
 
   const testProxy = async () => {
     setGpMsg("⏳ đang thử vào dola.com…");
@@ -68,6 +78,20 @@ export default function SettingsTab() {
             </div>
             <p className="mt-2 text-[11px] text-muted-foreground">Để trống = nối thẳng. Nick có proxy riêng (nút ⚙ ở từng nick) dùng proxy riêng.</p>
             <Msg text={gpMsg} />
+          </div>
+          <div>
+            <label className="flex cursor-pointer items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-1" checked={autoRetry} onChange={toggleAutoRetry} />
+              <span>
+                Tự thử lại / xoay nick khi lỗi
+                <span className="block text-[11px] text-muted-foreground">
+                  Bật: Dola báo "lỗi tạm thời" thì gửi lại 1 lần trên chính nick đó (tạo thêm 1 cuộc trò chuyện, không tốn lượt);
+                  job không ghim nick thì thử nick khác. Tắt: lỗi là dừng ngay, không gửi lần 2.
+                  Job trong bảng Studio luôn ghim đúng nick của dòng — không bao giờ tự sang nick khác.
+                </span>
+              </span>
+            </label>
+            <Msg text={arMsg} />
           </div>
           <div>
             <Label>Thư mục lưu video (tên có số thứ tự)</Label>

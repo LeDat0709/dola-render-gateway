@@ -858,6 +858,28 @@ ipcMain.handle("account:getProxy", (_e, { name }) => {
 
 // Proxy chung = DOLA_PROXY trong .env.local (DATA_DIR). Python chỉ đọc lại khi Tắt/Bật server.
 ipcMain.handle("proxy:getGlobal", () => ({ ok: true, proxy: globalProxy(DATA_DIR) }));
+
+// Tự thử lại / xoay nick: đọc từ /health của server đang dùng (cục bộ hay VPS), đổi qua /api/admin/retry
+// (áp dụng ngay), và nhớ vào .env.local cho lần khởi động sau khi server ở máy này.
+ipcMain.handle("config:getAutoRetry", async () => {
+  try {
+    const r = await fetch(config().base + "/health", { cache: "no-store" });
+    const j = await r.json();
+    return { ok: true, on: j.auto_retry !== false };
+  } catch (e) { return { ok: false, on: true, error: String(e).slice(0, 80) }; }
+});
+ipcMain.handle("config:setAutoRetry", async (_e, { on }) => {
+  const c = config();
+  const headers = { "Content-Type": "application/json" };
+  if (c.adminKey) headers["x-admin-key"] = c.adminKey;
+  try {
+    const r = await fetch(c.base + "/api/admin/retry", { method: "POST", headers, body: JSON.stringify({ auto_retry: !!on }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
+    if (!c.remote) upsertEnvLocal("DOLA_AUTO_RETRY", on ? "1" : "0");
+    return { ok: true, on: !!on, remote: c.remote };
+  } catch (e) { return { ok: false, error: "Server chưa chạy? " + String(e).slice(0, 80) }; }
+});
 ipcMain.handle("proxy:setGlobal", (_e, { proxy }) => {
   const v = (proxy || "").trim();
   if (v && !parseProxy(v)) return { ok: false, error: `Proxy sai định dạng. Chấp nhận: ${PROXY_FORMATS}` };

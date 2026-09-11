@@ -510,6 +510,7 @@ async def health():
         "max_browser_slots": MAX_BROWSER_SLOTS,
         "max_login_slots": MAX_LOGIN_SLOTS,
         "http_poll": config.HTTP_POLL,
+        "auto_retry": config.AUTO_RETRY,
     }
 
 
@@ -791,6 +792,19 @@ async def admin_account_open(name: str, x_admin_key: str | None = Header(default
     import subprocess
     subprocess.Popen([sys.executable, str(Path(__file__).resolve().with_name("login_profile.py")), name])
     return {"ok": True, "message": f"Opening browser for {name}..."}
+
+
+class AutoRetryUpdate(BaseModel):
+    auto_retry: bool
+
+
+@app.post("/api/admin/retry")
+async def admin_retry(body: AutoRetryUpdate, x_admin_key: str | None = Header(default=None)):
+    """Bật/tắt tự thử lại + xoay nick ngay lúc chạy (không cần khởi động lại)."""
+    _admin_auth(x_admin_key)
+    config.AUTO_RETRY = body.auto_retry
+    print(f"[gateway] tự thử lại / xoay nick: {'BẬT' if config.AUTO_RETRY else 'TẮT'}", flush=True)
+    return {"ok": True, "auto_retry": config.AUTO_RETRY}
 
 
 class ConcurrencyUpdate(BaseModel):

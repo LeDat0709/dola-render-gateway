@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld("api", {
   removeWatermark: (file) => ipcRenderer.invoke("video:removeWatermark", { file }),
   verifyAll: (names) => ipcRenderer.invoke("account:verifyAll", names),
   setConcurrency: (send, login) => ipcRenderer.invoke("config:setConcurrency", { send, login }),
+  getAutoRetry: () => ipcRenderer.invoke("config:getAutoRetry"),
+  setAutoRetry: (on) => ipcRenderer.invoke("config:setAutoRetry", { on }),
   chooseVideoDir: () => ipcRenderer.invoke("video:chooseDir"),
   tailLogs: (n) => ipcRenderer.invoke("logs:tail", n),
 });
