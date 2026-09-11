@@ -111,7 +111,7 @@ def test_answered_memory_survives_reopen():
     answered = set()
     polls = [{"ok": True, "texts": [CONFIRM], "videos": [], "images": []}, VIDEO]
     out = _run(polls, quiet=30, answered=[], shared=answered)
-    assert CONFIRM in answered, "phải nhớ là đã trả lời câu này"
+    assert vw._answer_key(CONFIRM) in answered, "phải nhớ là đã trả lời câu này"
 
     # lần mở lại nick (poll mới, cùng bộ nhớ): câu cũ vẫn còn trong hội thoại → KHÔNG trả lời nữa
     again = []
@@ -119,6 +119,56 @@ def test_answered_memory_survives_reopen():
                 quiet=0, answered=again, shared=answered)
     assert not again, "đã trả lời lại câu cũ → ping-pong"
     assert out2.get("handoff") is True          # hết việc phải làm thì nhả trình duyệt
+
+
+# Nguyên văn Dola trong log 11:14–11:16 (fb61593690226090): cùng một câu bị trả lời 3 lần vì
+# tin nhắn được đọc lúc còn đang stream nên chuỗi lưu lại NGẮN HƠN chuỗi đọc lần sau.
+STREAM_SHORT = "リクエストされた秒数 30 秒は対応範囲外です。動画生成は 4～15 秒まで可能です。"
+STREAM_GROWN = STREAM_SHORT + "ご希望の秒数を教えてください。"
+STREAM_MENU = STREAM_SHORT + "以下からお選びください：\n- A. 15 秒版（フル構成）\n- B. 10 秒版\n- C. 4 秒版"
+
+
+def _run_answers(polls, shared, ratio=None, duration=30):
+    """Chạy 1 lượt poll, trả về (số lần 'はい', các câu trả lời dạng chữ)."""
+    yes, texts = [], []
+    async def reply_yes(page, *a, **kw):
+        yes.append(True); return True
+    async def reply_text(page, ans, *a, **kw):
+        texts.append(ans); return True
+
+    class FakeCtx:
+        async def cookies(self, *a): return []
+
+    vw._reply_yes = reply_yes
+    vw._reply_text = reply_text
+    vw.HANDOFF_QUIET_SEC = 30
+    asyncio.run(vw.poll_conversation("acc1", FakePage(polls), FakeCtx(), "77", timeout=60,
+                                     handoff_after=0, answered=shared, ratio=ratio,
+                                     duration=duration))
+    return yes, texts
+
+
+def test_streaming_message_is_answered_once():
+    """Tin nhắn dài thêm trong lúc stream không được tính là câu hỏi MỚI."""
+    shared = set()
+    yes, _ = _run_answers([{"ok": True, "texts": [STREAM_SHORT], "videos": [], "images": []}, VIDEO], shared)
+    assert len(yes) == 1, "phải trả lời câu Dola hỏi"
+    yes2, _ = _run_answers([{"ok": True, "texts": [STREAM_GROWN], "videos": [], "images": []}, VIDEO], shared)
+    assert not yes2, "cùng một câu (chỉ dài thêm) mà trả lời lại → ping-pong như log 11:16"
+
+
+def test_option_list_gets_a_letter_not_yes():
+    """Dola liệt kê A/B/C thì 'はい' vô nghĩa — phải đáp chữ cái, và theo mức giây Dola cho."""
+    shared = set()
+    yes, texts = _run_answers([{"ok": True, "texts": [STREAM_MENU], "videos": [], "images": []}, VIDEO], shared)
+    assert not yes, "trả 'はい' cho menu A/B/C là câu trả lời sai → Dola hỏi lại mãi"
+    assert texts, "phải chọn một phương án trong menu"
+    assert "30" not in texts[0], f"đòi lại 30s sau khi Dola nói tối đa 15s: {texts[0]}"
+    assert texts[0].startswith("A"), f"phải gọi đúng chữ cái phương án 15 giây: {texts[0]}"
+    # hỏi lại y nguyên → im lặng; và HTTP poll cũng phải nhận ra để không mở lại nick vô ích
+    yes2, texts2 = _run_answers([{"ok": True, "texts": [STREAM_MENU], "videos": [], "images": []}, VIDEO], shared)
+    assert not yes2 and not texts2, "trả lời lại menu cũ → ping-pong"
+    assert vw._answer_key(vw._NeedsBrowser(STREAM_MENU).full) in shared
 
 
 def test_blocked_reason_says_one_thing():
@@ -141,4 +191,5 @@ if __name__ == "__main__":
     setup_module(); test_no_question_hands_off(); test_pending_question_is_answered_first()
     test_late_questions_reopen_browser(); test_duration_cap_is_not_content_policy()
     test_reply_uses_dola_cap_not_30s(); test_own_directive_is_ignored()
-    test_answered_memory_survives_reopen(); test_blocked_reason_says_one_thing(); print("OK")
+    test_answered_memory_survives_reopen(); test_streaming_message_is_answered_once()
+    test_option_list_gets_a_letter_not_yes(); test_blocked_reason_says_one_thing(); print("OK")

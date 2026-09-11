@@ -286,13 +286,35 @@ def _norm_ratio(r) -> str:
     return re.sub(r"\s", "", str(r or "")).replace("：", ":")
 
 
+def _lists_options(text: str) -> bool:
+    """Dola liệt kê phương án có chữ cái ("- A. 15秒版 / - B. 10秒版") → phải đáp CHỮ CÁI.
+
+    Trả 'はい' cho câu kiểu này là vô nghĩa: Dola hỏi lại y nguyên → vòng ping-pong
+    (log 11:14→11:16 của fb61593690226090).
+    """
+    return bool(re.search(r"[A-G]\s*[.\)、]", _zen2han(text or "")))
+
+
+def _answer_key(text: str) -> str:
+    """Khoá "đã trả lời": <nhánh xử lý>|<mức giây Dola cho phép>.
+
+    KHÔNG dùng nguyên văn câu hỏi: tin nhắn được đọc lúc Dola CÒN ĐANG STREAM rồi dài thêm
+    sau đó, nên so khớp cả chuỗi (kể cả tiền tố) luôn trượt và tool trả lời lại đúng câu cũ
+    — vòng ping-pong trong log 11:14→11:16 của fb61593690226090. Khoá theo CÂU TRẢ LỜI sẽ
+    gửi thì ổn định: cùng loại câu + cùng mức giây = cùng câu trả lời, gửi lần hai vô ích.
+    Menu A/B tách riêng để không bị nuốt vì trước đó đã trả 'はい' cho cùng thông báo chặn.
+    """
+    yes_branch = not _lists_options(text) and (_is_duration_capped(text) or _is_duration_confirm(text))
+    return f"{'yes' if yes_branch else 'menu'}|{_capped_seconds(text) or 0}"
+
+
 def _is_spec_menu(text: str) -> bool:
     """True khi Dola CHỜ mình cho specs: menu A/B, HOẶC hỏi mở 'yêu cầu thêm (độ dài/tỉ lệ) là gì'."""
     t = text or ""
     low = t.lower()
     hit = any(k in t for k in _SPEC_MENU_MARKS) or any(k in low for k in ("aspect ratio", "please choose", "please select"))
     ht = _zen2han(t)
-    has_opts = bool(re.search(r"[A-G]\s*[.\)、]", ht)) or bool(re.search(r"\d+\s*:\s*\d+", ht))
+    has_opts = _lists_options(t) or bool(re.search(r"\d+\s*:\s*\d+", ht))
     # Dola hỏi MỞ (không menu): "何か追加の要件（長さ、アスペクト比…）があれば教えてください" / "指定してください"
     spec_word = any(k in t for k in ("要件", "長さ", "アスペクト比", "縦横比", "スタイル", "秒数")) \
                 or any(k in low for k in ("aspect ratio", "duration", "length", "requirement"))
@@ -325,6 +347,13 @@ def _spec_menu_answer(text: str, ratio, duration) -> str:
     has_seconds = bool(re.search(r"秒数|長さ|duration|giây|second|\d+\s*秒", ht, re.IGNORECASE))
     # từ khoá dọc/ngang giúp Dola không nhầm khi phải ĐỔI tỉ lệ (nguyên nhân "dọc ra ngang")
     orient = {"9:16": "縦向き", "3:4": "縦", "16:9": "横向き", "4:3": "横", "1:1": "正方形"}.get(want, "")
+    # chữ cái cho phương án THỜI LƯỢNG: "- A. 15秒版 / - B. 10秒版" → gọi đúng chữ cái,
+    # nói vòng ("15秒に変更して…") thì Dola hay hỏi lại menu đó lần nữa.
+    if duration and not ratio_letter:
+        for m in re.finditer(r"([A-G])\s*[.\)、]\s*[^\n]{0,14}?(\d{1,2})\s*秒", ht):
+            if int(m.group(2)) == int(duration):
+                tail = f"、{want}{('（'+orient+'）') if orient else ''}" if want else ""
+                return f"{m.group(1)}、{duration}秒{tail}でお願いします。"
     parts = []
     if ratio_letter:
         parts.append(ratio_letter)
@@ -726,7 +755,14 @@ async def _preflight_balance(page, ms_token: str, fp: str, required: int) -> dic
 
 
 class _NeedsBrowser(Exception):
-    """HTTP poll gặp câu Dola hỏi lại — chỉ trang web trả lời được, phải mở lại nick."""
+    """HTTP poll gặp câu Dola hỏi lại — chỉ trang web trả lời được, phải mở lại nick.
+
+    Giữ `full` (nguyên văn) để tính _answer_key giống hệt lúc poll trong trang; phần in ra
+    cho người dùng thì cắt ngắn."""
+
+    def __init__(self, text: str):
+        self.full = text or ""
+        super().__init__(re.sub(r"\s+", " ", self.full).strip()[:160])
 
 
 def _question_needs_browser(text: str) -> bool:
@@ -911,7 +947,7 @@ async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, dura
                     return await poll_conversation_http(account, cookie_header, ms_token, fp, conv_id,
                                                         remaining, on_poll, on_balance)
                 except _NeedsBrowser as ask:
-                    if str(ask) in answered:
+                    if _answer_key(ask.full) in answered:
                         # Đã trả lời câu này rồi mà Dola vẫn lặp lại → mở nick nữa cũng vô ích.
                         raise RuntimeError(
                             "Dola hỏi đi hỏi lại cùng một câu (thường vì prompt mô tả video dài hơn "
@@ -1051,7 +1087,7 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
                         "Dola gặp lỗi tạm thời (hệ thống Dola báo lỗi, cần thử lại). Tự thử lại / xoay nick."
                         f"\n↳ Dola: {text[:140]}")
                 if _question_needs_browser(text):
-                    raise _NeedsBrowser(text[:160])
+                    raise _NeedsBrowser(text)
                 tt = (text or "").strip()
                 if len(tt) > 8 and not _is_status_text(tt) and not tt.startswith("生成された"):
                     last_msg = tt
@@ -1151,25 +1187,30 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 raise TransientDolaError(
                     "Dola gặp lỗi tạm thời (hệ thống Dola báo lỗi, cần thử lại). Tự thử lại / xoay nick."
                     f"\n↳ Dola: {text[:140]}")
-            if _is_duration_capped(text) and text not in answered_specs:
+            key = _answer_key(text)
+            # Dola nói "chỉ tới 15s" thì mọi câu trả lời sau phải dùng 15s, đừng đòi lại 30s
+            if _is_duration_capped(text) or _is_duration_confirm(text):
                 want_duration = _capped_seconds(text) or want_duration
+            # Câu có menu A/B thì bỏ qua 2 nhánh 'はい', xuống nhánh menu đáp chữ cái
+            yes_ok = not _lists_options(text)
+            if yes_ok and _is_duration_capped(text) and key not in answered_specs:
                 # Dola chặn thời lượng dài (30s) -> chấp nhận mức tối đa họ cho (15s) để có video
                 if await _reply_yes(page):
-                    answered_specs.add(text)
+                    answered_specs.add(key)
                     stale_msg, stale_n = "", 0
                     last_answer_at = time.time()
                     print(f"[{account}] Dola chặn thời lượng dài → chấp nhận mức tối đa (はい): {text[:80]}", flush=True)
                 continue
-            if _is_duration_confirm(text) and text not in answered_specs:
-                answered_specs.add(text)
+            if yes_ok and _is_duration_confirm(text) and key not in answered_specs:
+                answered_specs.add(key)
                 last_answer_at = time.time()
                 if await _reply_yes(page):
                     print(f"[{account}] Dola hỏi thời lượng → tự trả lời Có: {text[:80]}", flush=True)
                 continue
-            if _is_spec_menu(text) and text not in answered_specs and len(answered_specs) < 3:
+            if _is_spec_menu(text) and key not in answered_specs and len(answered_specs) < 3:
                 ans = _spec_menu_answer(text, ratio, want_duration)
                 if await _reply_text(page, ans):
-                    answered_specs.add(text)
+                    answered_specs.add(key)
                     stale_msg, stale_n = "", 0
                     last_answer_at = time.time()
                     print(f"[{account}] Dola hỏi thông số → tự chọn '{ans}': {text[:70]}", flush=True)
