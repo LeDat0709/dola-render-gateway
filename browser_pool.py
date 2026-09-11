@@ -218,6 +218,36 @@ class BrowserPool:
             })
         return out
 
+    def blocked_reason(self, a: dict) -> str:
+        """Vì sao nick này không chạy được — nói ĐÚNG MỘT lý do kèm cách xử lý.
+
+        Trước đây mọi trường hợp đều trả về một câu liệt kê cả 4 nguyên nhân, nên người dùng
+        thấy "đang tắt lịch" trong khi thật ra nick đang nghỉ chống risk-control.
+        """
+        now = time.time()
+        if a["login_ok"] == 0:
+            return "cookie chết — bấm đăng nhập lại nick"
+        if not a["scheduling"]:
+            return "đang tắt lịch — bấm 'Bật lịch tất cả'"
+        if a["cooling"]:
+            left = max(1, int(((a.get("cooldown_until") or 0) - now) / 60))
+            return f"đang nghỉ chống risk-control, còn {left} phút — bấm 'Bỏ nghỉ tất cả' nếu muốn chạy ngay"
+        if a["rate_limited"]:
+            return "hết lượt hôm nay — mai chạy lại hoặc dùng nick khác"
+        if a["quota_blocked"]:
+            return "Dola báo hết điểm — chờ reset hoặc dùng nick khác"
+        cb = a["credit_balance"]
+        if cb is not None and cb < 1:
+            return "hết điểm (còn 0 credit)"
+        if cb is None and a["used_today"] >= DAILY_LIMIT:
+            return f"đã dùng {a['used_today']}/{DAILY_LIMIT} lượt hôm nay"
+        return "không rõ lý do — xem tab Kho tài khoản"
+
+    def clear_cooldown(self, name: str) -> None:
+        """Bỏ trạng thái 'đang nghỉ' để chạy lại ngay (người dùng tự quyết định chấp nhận rủi ro)."""
+        self._conn.execute("UPDATE accounts_meta SET cooldown_until=0 WHERE name=?", (name,))
+        self._conn.commit()
+
     def set_scheduling(self, name: str, on: bool):
         self._conn.execute(
             "UPDATE accounts_meta SET scheduling=? WHERE name=?", (1 if on else 0, name))
@@ -336,6 +366,7 @@ class BrowserPool:
             "quota_blocked": a["quota_blocked"], "quota_blocked_until": a["quota_blocked_until"],
             "login_ok": a.get("login_ok"), "remaining": a.get("remaining"),
             "scheduling": a.get("scheduling", True), "cooling": a.get("cooling", False),
+            "cooldown_until": a.get("cooldown_until", 0),
             "busy": a.get("busy", False),
         } for a in self.list_accounts()]
 
@@ -443,9 +474,7 @@ class BrowserPool:
                 if match is None:
                     raise RuntimeError(f"Nick '{account}' không tồn tại")
                 if not self._schedulable(match):
-                    raise RuntimeError(
-                        f"Nick '{account}' không sẵn sàng (đã đăng xuất, hết lượt, hết điểm, "
-                        f"đang tắt lịch) — chọn nick khác hoặc để Tự động")
+                    raise RuntimeError(f"Nick '{account}' không chạy được: {self.blocked_reason(match)}")
                 if self._locks.setdefault(account, asyncio.Lock()).locked():
                     raise RuntimeError(
                         f"Nick '{account}' đang bận tạo video khác — chờ video hiện tại xong rồi chạy tiếp.")

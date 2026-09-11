@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Play, RotateCw, Settings, Trash2, FolderOpen, Copy, ArrowDown, Repeat, Stethoscope, Square, RefreshCw, Eraser, Power } from "lucide-react";
+import { Play, RotateCw, Settings, Trash2, FolderOpen, Copy, ArrowDown, Repeat, Stethoscope, Square, RefreshCw, Eraser, Power, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { SelectNative } from "@/components/ui/select-native";
-import { api, cfg, submitJob, pollJob, fmtError, creditCost, firstLine, fnameFromUrl, sttFromUrl, accState, canRunAccount, ACC_BADGE, deleteAccount, STAGE_TEXT, riskyPrompt, deadNicks, setConcurrency, patchAccount } from "@/lib/api";
+import { api, cfg, submitJob, pollJob, fmtError, creditCost, firstLine, fnameFromUrl, sttFromUrl, accState, canRunAccount, ACC_BADGE, deleteAccount, STAGE_TEXT, riskyPrompt, deadNicks, setConcurrency, patchAccount, wakeAccount } from "@/lib/api";
 
 const MODELS = ["seedance-2.0", "seedance-2.5"];
 const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"];
@@ -110,6 +110,17 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     const bad = run.filter((_, i) => res[i] === false);
     setGen(bad.length ? `Xong ${run.length - bad.length}/${run.length} nick. Lỗi: ${bad.join(", ")}.` : `Xong ${run.length} nick.`);
   }
+  // Cooldown chống risk-control giữ nick 30 phút; không có nút này thì chỉ còn cách ngồi chờ.
+  async function wakeAllCooling() {
+    const cooling = accounts.filter((a) => a.cooling).map((a) => a.account);
+    if (!cooling.length) { setGen("Không có nick nào đang nghỉ."); return; }
+    setGen(`Đang bỏ nghỉ ${cooling.length} nick…`);
+    const res = await Promise.all(cooling.map((n) => wakeAccount(n).then(() => true).catch(() => false)));
+    const ok = res.filter(Boolean).length;
+    setGen(`✓ Bỏ nghỉ ${ok}/${cooling.length} nick. Lưu ý: nick nghỉ vì Dola bắt captcha — chạy lại ngay có thể bị bắt tiếp.`);
+    onRefresh();
+  }
+
   async function enableAllScheduling() {
     const off = accounts.filter((a) => a.scheduling === false).map((a) => a.account);
     if (!off.length) { setGen("Không có nick nào đang tắt lịch."); return; }
@@ -169,6 +180,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
           <Button variant="outline" size="sm" onClick={syncDef}><Repeat className="h-3.5 w-3.5" />Đồng bộ mặc định</Button>
           <Button variant="outline" size="sm" onClick={verifyAll}><Stethoscope className="h-3.5 w-3.5" />Kiểm tra tất cả</Button>
           <Button variant="outline" size="sm" onClick={enableAllScheduling}><Power className="h-3.5 w-3.5" />Bật lịch tất cả</Button>
+          <Button variant="outline" size="sm" onClick={wakeAllCooling}><Clock className="h-3.5 w-3.5" />Bỏ nghỉ tất cả</Button>
           <span className="flex-1" />
           <Button variant="outline" size="sm" onClick={runReady}><Play className="h-3.5 w-3.5" />Chạy sẵn sàng</Button>
           <Button variant="outline" size="sm" onClick={retryFailed}><RefreshCw className="h-3.5 w-3.5" />Chạy lại lỗi</Button>
@@ -179,7 +191,9 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
           <span>Luồng: tối đa <b className="text-foreground">{accounts.filter(canRun).length}</b> video song song (1 video/nick)
             {health?.pending_tasks ? ` · ${health.pending_tasks} job đang chạy/chờ` : ""}
             {accounts.filter((a) => a.scheduling === false).length
-              ? ` · ${accounts.filter((a) => a.scheduling === false).length} nick đang tắt lịch (bỏ không)` : ""}</span>
+              ? ` · ${accounts.filter((a) => a.scheduling === false).length} nick tắt lịch` : ""}
+            {accounts.filter((a) => a.cooling).length
+              ? ` · ${accounts.filter((a) => a.cooling).length} nick đang nghỉ (risk-control)` : ""}</span>
           <span className="flex-1" />
           <span>Nick gửi cùng lúc</span>
           <Input className="h-8 w-16" type="number" min={1} max={health?.max_browser_slots || 24}
@@ -211,6 +225,10 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
                   <td className="px-3 py-2.5">
                     <div className="font-semibold">{n}</div>
                     <div className="mt-1">{pill(a)}</div>
+                    {a.cooling && a.cooldown_until > 0 && (
+                      <div className="mt-0.5 text-[10.5px] text-amber-400">
+                        nghỉ còn {Math.max(1, Math.ceil((a.cooldown_until - Date.now() / 1000) / 60))} phút</div>
+                    )}
                     <div className="mt-1 text-[10.5px] text-muted-foreground">{a.used_today}/{a.limit} hôm nay{a.remaining != null ? ` · còn ${a.remaining}` : ""}</div>
                   </td>
                   <td className="px-3"><Input value={s.prompt} placeholder={`prompt cho ${n}…`} onChange={(e) => setRow(n, { prompt: e.target.value })} /></td>

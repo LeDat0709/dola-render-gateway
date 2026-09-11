@@ -50,7 +50,9 @@ export function fmtError(raw) {
   if (/ERR_INTERNET|ERR_NETWORK|ERR_CONNECTION|ERR_PROXY|ERR_TIMED_OUT|ERR_NAME_NOT|mất mạng|net::/i.test(r)) return T("🌐", "Mất mạng tạm thời", "Kiểm tra internet/proxy rồi chạy lại.");
   if (/đang bận|đang tạo video khác/i.test(r)) return A("⏳", "Nick đang bận", "Chờ video hiện tại xong rồi chạy tiếp.");
   if (/không tồn tại/i.test(r)) return T("👻", "Nick không còn trong pool", "Bảng đang cũ (đã tự làm mới) — nick có thể vừa bị xoá.");
-  if (/không sẵn sàng|tắt lịch/i.test(r)) return A("⏸", "Nick đang tắt lịch", 'Bấm "Bật lịch tất cả" rồi chạy lại.');
+  if (/đang nghỉ chống risk-control/i.test(r)) return A("⏰", "Nick đang nghỉ", r.replace(/^.*?còn/, "Còn").slice(0, 60));
+  if (/tắt lịch/i.test(r)) return A("⏸", "Nick đang tắt lịch", 'Bấm "Bật lịch tất cả" rồi chạy lại.');
+  if (/không chạy được|không sẵn sàng/i.test(r)) return A("🚫", "Nick chưa chạy được", r.split(":").pop().trim().slice(0, 60));
   if (/no available accounts|no accounts|không có nick/i.test(r)) return T("🚦", "Hết nick chạy được", "Chờ nick rảnh, hoặc bật lịch thêm nick.");
   if (/hết lượt tạo video hôm nay|daily limit|本日は|上限/i.test(r)) return A("📅", "Hết lượt hôm nay", "Mai chạy lại, hoặc dùng nick khác.");
   if (/không đủ lượt|hết điểm|insufficient|đủ điểm|quota|クレジット|残り|lượt cho video/i.test(r)) return A("💳", "Không đủ lượt/điểm", "Giảm giây hoặc đổi nick khác.");
@@ -180,6 +182,8 @@ export async function patchAccount(name, body) {
 // "Cookie chết" là CÂU TRẢ LỜI hợp lệ của /verify ({ok:false}), không phải lỗi gọi API.
 export const verifyAccount = async (n) => ({ ok: true, alive: !!(await adminFetch(n, "/verify")).ok });
 export const openProfile = (n) => adminFetch(n, "/open");
+// Bỏ "đang nghỉ" (cooldown 30' sau khi captcha trượt) để chạy lại ngay.
+export const wakeAccount = (n) => adminFetch(n, "/wake");
 // Xoá nick / xoá cookie PHẢI đi qua server: pool trả 409 khi nick đang render, và
 // clear-cookies còn đặt login_ok=False để pool ngừng xếp lịch nick vừa bị xoá cookie.
 export const deleteAccount = (n) => adminFetch(n, "", "DELETE");

@@ -121,8 +121,24 @@ def test_answered_memory_survives_reopen():
     assert out2.get("handoff") is True          # hết việc phải làm thì nhả trình duyệt
 
 
+def test_blocked_reason_says_one_thing():
+    """Nick không chạy được thì phải nói ĐÚNG lý do — trước đây liệt kê cả 4 nên hướng dẫn sai."""
+    import time as _t
+    from browser_pool import BrowserPool
+    r = BrowserPool.blocked_reason
+    base = {"login_ok": 1, "scheduling": True, "cooling": False, "rate_limited": False,
+            "quota_blocked": False, "credit_balance": 4, "used_today": 0, "cooldown_until": 0}
+    assert "cookie chết" in r(None, {**base, "login_ok": 0})
+    assert "tắt lịch" in r(None, {**base, "scheduling": False})
+    assert "nghỉ" in r(None, {**base, "cooling": True, "cooldown_until": _t.time() + 600})
+    assert "hết lượt" in r(None, {**base, "rate_limited": True})
+    assert "hết điểm" in r(None, {**base, "credit_balance": 0})
+    # nick lành thì không được coi là bị chặn
+    assert "không rõ" in r(None, base)
+
+
 if __name__ == "__main__":
     setup_module(); test_no_question_hands_off(); test_pending_question_is_answered_first()
     test_late_questions_reopen_browser(); test_duration_cap_is_not_content_policy()
     test_reply_uses_dola_cap_not_30s(); test_own_directive_is_ignored()
-    test_answered_memory_survives_reopen(); print("OK")
+    test_answered_memory_survives_reopen(); test_blocked_reason_says_one_thing(); print("OK")

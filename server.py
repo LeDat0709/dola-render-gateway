@@ -610,6 +610,16 @@ class AccountProxy(BaseModel):
     proxy: str = ""   # "" clears -> back to global DOLA_PROXY
 
 
+@app.post("/api/admin/accounts/{name}/wake")
+async def admin_account_wake(name: str, x_admin_key: str | None = Header(default=None)):
+    """Bỏ 'đang nghỉ' (cooldown chống risk-control) để chạy lại ngay."""
+    _admin_auth(x_admin_key)
+    if name not in pool.accounts:
+        raise HTTPException(404, "account not found")
+    pool.clear_cooldown(name)
+    return {"ok": True}
+
+
 @app.post("/api/admin/accounts/{name}/proxy")
 async def admin_account_proxy(name: str, body: AccountProxy, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
