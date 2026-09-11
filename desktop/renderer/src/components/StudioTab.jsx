@@ -75,15 +75,9 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         + "Viết lại cho nhẹ chữ không giúp: Dola duyệt nội dung, không duyệt từ khoá.\n\nVẫn gửi thử?"));
       if (!riskAns.current.get(prompt)) { setRow(n, { phase: "idle", status: "⏸ chưa gửi (prompt dễ bị chặn)" }); return false; }
     }
+    // Server tự co các mốc thời gian trong prompt về đúng thời lượng (fit_prompt_to_duration) — chỉ báo, không chặn.
     const over = durationMismatch(prompt, s.dur);
-    if (over) {
-      const k = prompt + "|" + s.dur;
-      if (!riskAns.current.has(k)) riskAns.current.set(k, window.confirm(
-        `Prompt mô tả tới ~${over} giây nhưng đang chọn ${s.dur}s.\n\n`
-        + "Dola sẽ hỏi lại thời lượng (mất 1–2 phút mỗi vòng, dễ lỗi) và có thể làm bản dài hơn rồi tính credit cao hơn. "
-        + `Nên rút các mốc thời gian trong prompt về ${s.dur}s, hoặc chọn thời lượng khớp.\n\nVẫn gửi ${s.dur}s?`));
-      if (!riskAns.current.get(k)) { setRow(n, { phase: "idle", status: `⏸ chưa gửi (prompt ~${over}s ≠ ${s.dur}s)` }); return false; }
-    }
+    if (over) setRow(n, { status: `⏱ prompt ~${over}s → tự co về ${s.dur}s` });
     if (acc && acc.remaining != null) {
       const need = creditCost(s.dur);
       if (acc.remaining < need) { setRow(n, { phase: "error", errorRaw: `Không đủ điểm cho ${s.dur}s (cần ${need}, còn ${acc.remaining}). Giảm còn 10–15s hoặc đổi nick.` }); return false; }

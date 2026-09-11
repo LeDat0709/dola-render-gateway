@@ -125,6 +125,25 @@ def test_unclear_prompt_is_not_a_credit_problem():
     assert not vw.PROMPT_UNCLEAR_PATTERN.search(credit)      # thiếu credit thật thì vẫn là thiếu credit
 
 
+def test_prompt_marks_are_scaled_to_duration():
+    """Log 11/9: kịch bản 8 cảnh 30s mà chọn 10s → Dola hỏi lại 369 vòng. Co mốc về thang 10s trước khi gửi."""
+    p = "镜头1，0–3.5秒 — 开场。镜头8，25-30秒 — 结尾。总时长30秒，9:16，30fps，1080p。"
+    out = vw.fit_prompt_to_duration(p, 10)
+    assert "0–1.2秒" in out and "8.3-10秒" in out and "总时长10秒" in out, out
+    assert "9:16" in out and "30fps" in out and "1080p" in out            # không phải giây thì không đụng
+    same = "một cô gái đi dưới mưa, cảnh 8 giây, 9:16"
+    assert vw.fit_prompt_to_duration(same, 10) == same                      # trong thời lượng thì giữ nguyên
+    assert vw.fit_prompt_to_duration(p, None) == p
+
+
+def test_parse_credit_need_from_dola_message():
+    ja = "現在のパラメーターで生成すると、4動画クレジットが使用されます。 本日は残り2のみです。パラメーターを変更してもう一度お試しください。"
+    assert vw._parse_credit_need(ja) == (4, 2)
+    assert vw._parse_credit_need("エラーが発生しました。") == (None, None)
+    err = vw._param_change_error(ja)
+    assert (err.need, err.left) == (4, 2) and isinstance(err, vw.ParameterChangeError)
+
+
 def test_generation_started_is_status_not_refusal():
     """Log 11/9 16:51: '直接生成を開始します' = Dola bắt đầu tạo — từng bị coi là từ chối, job chết sau 20s."""
     assert vw._is_status_text("このリクエストは安全チェックの対象外です。直接生成を開始します。")

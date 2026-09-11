@@ -10,7 +10,7 @@ from pathlib import Path
 
 import browser_pool
 from browser_pool import BrowserPool
-from video_worker_ui import AccountLimitedError, TransientDolaError
+from video_worker_ui import AccountLimitedError, ParameterChangeError, TransientDolaError
 
 
 # Test không cần giãn nhịp thật (mặc định 3–6s mỗi lần gửi); test riêng bên dưới bật lại.
@@ -145,7 +145,32 @@ def test_unpinned_job_stops_after_max_rotate():
         assert len(gen.calls) == 3, gen.calls                       # dừng ở 3, không sang n3..n5
 
 
+def test_credit_cost_learned_and_enforced():
+    """Log 11/9: Dola "4動画クレジット… 残り2" — trước đây nick "còn 2" vẫn bị gửi lại rồi lỗi (23 lần/ngày)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp)
+        (Path(tmp) / "accounts" / "n1").mkdir(parents=True)
+        err = ParameterChangeError("Không đủ lượt cho video này")
+        err.need, err.left = 4, 2
+        gen = _fake_gen(err)
+        browser_pool.generate_video = gen
+        try:
+            asyncio.run(pool.generate_video("p", "9:16", 10, model="seedance_v2.5", account="n1"))
+            assert False, "phải ném lỗi"
+        except ParameterChangeError:
+            pass
+        assert pool._cost_for("seedance_v2.5", 10) == 4                 # học được giá video
+        assert pool._meta("n1")["credit_balance"] == 2                  # và credit còn lại của nick
+        try:
+            asyncio.run(pool.generate_video("p", "9:16", 10, model="seedance_v2.5", account="n1"))
+            assert False, "phải chặn trước khi mở Chrome"
+        except RuntimeError as e:
+            assert "còn 2 credit" in str(e) and "cần 4" in str(e), str(e)
+        assert len(gen.calls) == 1                                       # lần 2 không gửi gì lên Dola
+
+
 if __name__ == "__main__":
+    test_credit_cost_learned_and_enforced()
     test_status_for_unknown_nick_is_kept()
     test_new_profile_dir_shows_up_without_restart()
     test_timeout_in_retry_does_not_rotate()

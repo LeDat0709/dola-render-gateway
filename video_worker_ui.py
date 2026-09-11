@@ -25,6 +25,60 @@ from video_worker import (POLL_JS, SUBMIT_JS, RiskControlError, SubmitDelivered,
 # Daily limit pattern matching response text (JA / ZH / EN / VI)
 # Dola không hiểu prompt (vd prompt "con mefo"): "意味不明なため直接生成できません". Phải xét TRƯỚC
 # CREDIT_FAIL_PATTERN — chữ "生成できません" trong câu này từng bị bắt thành "hết điểm" → nick hết lượt oan (log 11/9 16:51).
+# Mốc thời gian trong prompt: "0–3.5秒", "25-30秒", "30s", "8 giây". Nhóm: 1=đầu, 2=dấu nối, 3=cuối, 4=đơn vị.
+_TIME_MARK = re.compile(
+    r"(\d+(?:[.,]\d+)?)(?:(\s*[–\-~〜至到]\s*)(\d+(?:[.,]\d+)?))?\s*(秒|giây|sec(?:ond)?s?\b|s\b)", re.IGNORECASE)
+
+
+def _fmt_sec(v: float) -> str:
+    return str(int(round(v))) if abs(v - round(v)) < 0.05 else f"{v:.1f}"
+
+
+def fit_prompt_to_duration(prompt: str, duration, account: str = "") -> str:
+    """Prompt mô tả dài hơn thời lượng chọn (mốc "25–30秒" mà chọn 10s) → co mọi mốc về thang 0..duration.
+
+    Đây là nguồn của 369 vòng "Dola hỏi lại thời lượng" trong log 11/9: Dola đọc kịch bản 30s, tưởng
+    xin 30s, hỏi "15s nhé?" rồi vòng vo 1–2 phút. Mốc khớp thời lượng thì Dola hết cớ hỏi.
+    """
+    if not prompt or not duration:
+        return prompt
+    marks = list(_TIME_MARK.finditer(prompt))
+    if not marks:
+        return prompt
+    top = max(float((m.group(3) or m.group(1)).replace(",", ".")) for m in marks)
+    if top <= float(duration) * 1.2:
+        return prompt
+    f = float(duration) / top
+
+    def repl(m):
+        a = _fmt_sec(float(m.group(1).replace(",", ".")) * f)
+        if m.group(3):
+            return f"{a}{m.group(2)}{_fmt_sec(float(m.group(3).replace(',', '.')) * f)}{m.group(4)}"
+        return f"{a}{m.group(4)}"
+
+    print(f"[{account}] prompt mô tả ~{_fmt_sec(top)}s → co mốc thời gian về {duration}s", flush=True)
+    return _TIME_MARK.sub(repl, prompt)
+
+
+# "現在のパラメーターで生成すると、4動画クレジットが使用されます。本日は残り2のみです" → (cần 4, còn 2).
+_NEED_RE = re.compile(r"(\d+)\s*(?:動画クレジット|クレジット|credits?|积分|视频点数|điểm|lượt)", re.IGNORECASE)
+_LEFT_RE = re.compile(r"(?:残り|remaining|left|剩余|còn(?: lại)?)\s*[:：]?\s*(\d+)|(\d+)\s*(?:credits?|クレジット)?\s*(?:remaining|left)",
+                      re.IGNORECASE)
+
+
+def _parse_credit_need(text: str):
+    need = _NEED_RE.search(text or "")
+    left = _LEFT_RE.search(text or "")
+    return (int(need.group(1)) if need else None,
+            int(left.group(1) or left.group(2)) if left else None)
+
+
+def _param_change_error(text: str):
+    err = ParameterChangeError(_CREDIT_SHORT_MSG + text[:150])
+    err.need, err.left = _parse_credit_need(text)   # pool học chi phí (model, giây) + credit còn lại của nick
+    return err
+
+
 PROMPT_UNCLEAR_PATTERN = re.compile(
     r"意味不明|内容が不明|内容が不足|具体的に指定|指示内容として認識できません|有効な指示|プロンプトを補完|"
     r"无法理解|内容不明确|not a valid (?:prompt|instruction)|too vague|unclear prompt|"
@@ -1122,7 +1176,7 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
                     raise PortraitProtectionError(
                         "Dola chặn (bảo vệ chân dung): model chỉ tạo video với ảnh MẶT CỦA CHÍNH BẠN.\n↳ Dola: " + text[:160])
                 if PARAMETER_CHANGE_PATTERN.search(text):
-                    raise ParameterChangeError(_CREDIT_SHORT_MSG + text[:150])
+                    raise _param_change_error(text)
                 if DAILY_LIMIT_PATTERN.search(text):
                     raise AccountLimitedError(f"Hết lượt tạo video hôm nay. Dola: {text[:140]}")
                 if PROMPT_UNCLEAR_PATTERN.search(text):
@@ -1230,7 +1284,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                     "Ảnh người khác đôi khi bị chặn (cả 2.0 lẫn 2.5). Không mất lượt — thử lại hoặc đổi ảnh/model."
                     f"\n↳ Dola: {text[:160]}")
             if PARAMETER_CHANGE_PATTERN.search(text):
-                raise ParameterChangeError(_CREDIT_SHORT_MSG + text[:150])
+                raise _param_change_error(text)
             if DAILY_LIMIT_PATTERN.search(text):
                 raise AccountLimitedError(f"Hết lượt tạo video hôm nay. Dola: {text[:140]}")
             if PROMPT_UNCLEAR_PATTERN.search(text):
@@ -1340,6 +1394,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                          on_submitted=None, on_browser_free=None, on_browser_hold=None,
                          reference_image_paths: list[str] | None = None) -> dict:
     """Full generation flow: signed in-page fetch first (config.SUBMIT_MODE), UI automation otherwise."""
+    prompt = fit_prompt_to_duration(prompt, duration, account)
     timeout = timeout or config.VIDEO_TIMEOUT
     model_key = model.lower().replace("-", "_")
     if model_key in ("seedance_2.5", "seedance_v2.5", "seedance_25", "seedance_v25"):

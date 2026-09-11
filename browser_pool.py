@@ -87,6 +87,11 @@ class BrowserPool:
             "CREATE TABLE IF NOT EXISTS usage (account TEXT, day TEXT, used INTEGER, "
             "PRIMARY KEY(account, day))"
         )
+        # Chi phí credit Dola học được từ câu "N動画クレジットが使用されます" theo (model, giây).
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS credit_cost (model TEXT, duration INTEGER, credits INTEGER, "
+            "PRIMARY KEY(model, duration))"
+        )
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS accounts_meta (
@@ -336,6 +341,27 @@ class BrowserPool:
 
     # ===== Scheduling =====
 
+    def _remember_cost(self, model: str, duration: int, credits: int):
+        self._conn.execute(
+            "INSERT OR REPLACE INTO credit_cost(model, duration, credits) VALUES (?,?,?)",
+            (model, int(duration), int(credits)))
+        self._conn.commit()
+
+    def _cost_for(self, model: str, duration) -> int | None:
+        if not duration:
+            return None
+        row = self._conn.execute(
+            "SELECT credits FROM credit_cost WHERE model=? AND duration=?", (model, int(duration))).fetchone()
+        return row[0] if row else None
+
+    def _credit_short(self, a: dict, need, duration, model) -> str | None:
+        """Nick biết credit thật mà ít hơn giá video này → nói trước, khỏi mở Chrome rồi mới bị Dola từ chối."""
+        cb = a["credit_balance"]
+        if need and cb is not None and cb < need:
+            return (f"Nick '{a['name']}' còn {cb} credit, video {duration}s ({model}) cần {need} "
+                    f"— chọn nick khác hoặc giảm thời lượng")
+        return None
+
     def _set_credit_balance(self, account: str, balance: int, source: str = ""):
         self._conn.execute(
             "UPDATE accounts_meta SET credit_balance=?, credit_checked_at=? WHERE name=?",
@@ -501,12 +527,16 @@ class BrowserPool:
             last_err = None
             pinned = account is not None
             tried: set[str] = set()
+            need = self._cost_for(model, duration)
             if account is not None:
                 match = next((a for a in self.list_accounts() if a["name"] == account), None)
                 if match is None:
                     raise RuntimeError(f"Nick '{account}' không tồn tại")
                 if not self._schedulable(match):
                     raise RuntimeError(f"Nick '{account}' không chạy được: {self.blocked_reason(match)}")
+                short = self._credit_short(match, need, duration, model)
+                if short:
+                    raise RuntimeError(short)
                 if self._locks.setdefault(account, asyncio.Lock()).locked():
                     raise RuntimeError(
                         f"Nick '{account}' đang bận tạo video khác — chờ video hiện tại xong rồi chạy tiếp.")
@@ -521,6 +551,10 @@ class BrowserPool:
                         f"Đã thử {len(tried)} nick ({', '.join(sorted(tried))}) đều lỗi — dừng để không đốt lượt. "
                         f"Lỗi cuối: {last_err}")
                 if not self._schedulable(a):
+                    continue
+                short = self._credit_short(a, need, duration, model)
+                if short:
+                    last_err = RuntimeError(short)
                     continue
                 account = a["name"]
                 lock = self._locks.setdefault(account, asyncio.Lock())
@@ -565,6 +599,13 @@ class BrowserPool:
                         last_err = e
                         continue
                     except ParameterChangeError as e:
+                        # Học từ câu Dola: giá video này (model, giây) và credit còn lại của nick → lần sau
+                        # bỏ qua nick không đủ credit ngay từ trước khi mở Chrome.
+                        need_now, left_now = getattr(e, "need", None), getattr(e, "left", None)
+                        if need_now and duration:
+                            self._remember_cost(model, duration, need_now)
+                        if left_now is not None:
+                            self._set_credit_balance(account, left_now, "param")
                         # This specific video costs more credits than remain (e.g. 3 needed, 2 left).
                         # The account can still make SHORTER videos today, so do NOT block it — and
                         # rotating to other free nicks (same low credits) just wastes launches.
