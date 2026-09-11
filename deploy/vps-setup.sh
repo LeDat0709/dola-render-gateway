@@ -1,19 +1,30 @@
 #!/usr/bin/env bash
-# Cài gateway lên VPS Ubuntu 22.04/24.04 đặt ở Nhật hoặc Hàn (Vultr Tokyo/Osaka/Seoul…) để nhiều máy ở VN dùng chung.
-# Chạy trên VPS (user thường có sudo). Chạy lại = cập nhật code + khởi động lại.
+# Cài gateway lên VPS Ubuntu 20.04+ (x86-64) để nhiều máy ở VN dùng chung. VPS nên ở Nhật/Hàn;
+# ở nơi khác (VN…) BẮT BUỘC truyền proxy Nhật/Hàn qua DOLA_PROXY=.
+# Chạy trên VPS (user thường có sudo, hoặc root). Chạy lại = cập nhật code + đổi cổng/proxy + khởi động lại.
 #   bash <(curl -fsSL https://raw.githubusercontent.com/LeDat0709/dola-render-gateway/main/deploy/vps-setup.sh)
+#   DOLA_PORT=8010 DOLA_PROXY=http://user:pass@host:port bash <(curl -fsSL .../deploy/vps-setup.sh)
 # Xong nó in 3 dòng (địa chỉ, API key, Admin key) → dán vào app: Cài đặt → "Máy chủ render từ xa".
 set -euo pipefail
 REPO="${DOLA_REPO:-https://github.com/LeDat0709/dola-render-gateway.git}"
 DIR="${DOLA_DIR:-$HOME/dola-render-gateway}"
 PORT="${DOLA_PORT:-8000}"
+SUDO="$([ "$(id -u)" = 0 ] && echo "" || echo sudo)"
+
+echo "==> Cổng $PORT có rảnh không"
+OWNER="$($SUDO ss -ltnp 2>/dev/null | awk -v p=":$PORT" 'index($4, p) == length($4) - length(p) + 1 {print $NF}' | head -1)"
+if [ -n "$OWNER" ] && ! printf '%s' "$OWNER" | grep -q "python\|uvicorn"; then
+  echo "❌ Cổng $PORT đang bị dịch vụ khác chiếm: $OWNER"
+  echo "   Chạy lại với cổng khác, ví dụ:  DOLA_PORT=8010 bash <(curl -fsSL .../deploy/vps-setup.sh)"
+  exit 1
+fi
 
 echo "==> Gói hệ thống + Google Chrome (worker mở Chrome thật — giả lập tốt hơn Chromium kèm theo)"
-sudo apt-get update -qq
-sudo apt-get install -y -qq git python3 python3-venv python3-pip curl openssl >/dev/null
+$SUDO apt-get update -qq
+$SUDO apt-get install -y -qq git python3 python3-venv python3-pip curl openssl >/dev/null
 if ! command -v google-chrome >/dev/null; then
   curl -fsSL -o /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-  sudo apt-get install -y -qq /tmp/chrome.deb >/dev/null
+  $SUDO apt-get install -y -qq /tmp/chrome.deb >/dev/null
   rm -f /tmp/chrome.deb
 fi
 
@@ -24,7 +35,7 @@ cd "$DIR"
 .venv/bin/pip install -q --upgrade pip
 .venv/bin/pip install -q -r requirements.txt
 
-echo "==> Khoá + .env.local (chỉ sinh lần đầu; chạy lại không đổi khoá)"
+echo "==> .env.local (khoá chỉ sinh lần đầu; cổng / địa chỉ / proxy cập nhật theo lần chạy này)"
 PUBLIC_IP="$(curl -fsS --max-time 8 https://api.ipify.org || hostname -I | awk '{print $1}')"
 if [ ! -f .env.local ]; then
   # dola.com chỉ mở cho IP Nhật/Hàn. VPS ở nơi khác (VN…) phải đi qua proxy Nhật, nếu không mọi nick lỗi ngay.
@@ -34,6 +45,9 @@ if [ ! -f .env.local ]; then
     echo "   Chạy lại kèm proxy Nhật/Hàn:  DOLA_PROXY=http://user:pass@host:port bash <(curl -fsSL .../deploy/vps-setup.sh)"
     exit 1
   fi
+  # Mỗi Chrome ≈ 1.2 GB lúc gửi lệnh. Số luồng theo RAM trống, 1–4. Chỉnh tay trong app sau nếu muốn.
+  AVAIL_MB="$(free -m | awk '/^Mem:/{print $7}')"
+  CONC=$(( ${AVAIL_MB:-0} / 1200 )); [ "$CONC" -lt 1 ] && CONC=1; [ "$CONC" -gt 4 ] && CONC=4
   cat > .env.local <<EOF
 # Sinh bởi deploy/vps-setup.sh. KHÔNG commit, KHÔNG chia sẻ.
 DOLA_HOST=0.0.0.0
@@ -44,14 +58,23 @@ DOLA_ADMIN_KEY=$(openssl rand -hex 20)
 # VPS ở Nhật/Hàn → để trống (nối thẳng). VPS nơi khác → proxy Nhật/Hàn (truyền qua DOLA_PROXY=... lúc cài).
 DOLA_PROXY=${DOLA_PROXY:-}
 DOLA_HEADLESS=1
-DOLA_MAX_CONCURRENCY=2
-DOLA_LOGIN_CONCURRENCY=2
+DOLA_MAX_CONCURRENCY=$CONC
+DOLA_LOGIN_CONCURRENCY=$CONC
 EOF
   chmod 600 .env.local
+  echo "   RAM trống ${AVAIL_MB:-?} MB → $CONC luồng gửi cùng lúc"
 fi
+# Chạy lại với DOLA_PORT / DOLA_PROXY khác → ghi đè đúng 3 khoá này, giữ nguyên khoá bí mật.
+upsert() {
+  local v; v="$(printf '%s' "$2" | sed 's/[&|\\]/\\&/g')"
+  if grep -q "^$1=" .env.local; then sed -i "s|^$1=.*|$1=$v|" .env.local; else echo "$1=$2" >> .env.local; fi
+}
+upsert DOLA_PORT "$PORT"
+upsert DOLA_PUBLIC_BASE "http://$PUBLIC_IP:$PORT"
+[ -n "${DOLA_PROXY:-}" ] && upsert DOLA_PROXY "$DOLA_PROXY"
 
 echo "==> systemd: dola-gateway (tự chạy lại khi lỗi và khi VPS khởi động)"
-sudo tee /etc/systemd/system/dola-gateway.service >/dev/null <<EOF
+$SUDO tee /etc/systemd/system/dola-gateway.service >/dev/null <<EOF
 [Unit]
 Description=Dola render gateway
 After=network-online.target
@@ -67,20 +90,21 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 EOF
-sudo systemctl daemon-reload
-sudo systemctl enable dola-gateway >/dev/null
-sudo systemctl restart dola-gateway
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable dola-gateway >/dev/null
+$SUDO systemctl restart dola-gateway
 
 sleep 4
-if curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null; then
+# Phải là JSON của CHÍNH gateway (có "accounts"), kẻo dịch vụ khác cùng cổng "qua mặt" (đã gặp: Django/gunicorn ở 8000).
+if curl -fsS "http://127.0.0.1:$PORT/health" 2>/dev/null | grep -q '"accounts"'; then
   echo
   echo "✅ Gateway đang chạy. Dán 3 dòng này vào app (Cài đặt → Máy chủ render từ xa):"
   echo "   Địa chỉ  : http://$PUBLIC_IP:$PORT"
   echo "   API key  : $(grep '^DOLA_API_KEYS=' .env.local | cut -d= -f2-)"
   echo "   Admin key: $(grep '^DOLA_ADMIN_KEY=' .env.local | cut -d= -f2-)"
+  echo "   Proxy    : $(grep '^DOLA_PROXY=' .env.local | cut -d= -f2- | sed 's#//[^@]*@#//***@#')"
   echo
-  echo "Mở cổng $PORT trên firewall của nhà cung cấp VPS (Vultr: Firewall → TCP $PORT) nếu chưa."
-  echo "Xem log: journalctl -u dola-gateway -f"
+  echo "Mở cổng $PORT trên firewall của nhà cung cấp VPS nếu chưa. Xem log: journalctl -u dola-gateway -f"
 else
-  echo "❌ Gateway chưa lên. Xem: journalctl -u dola-gateway -n 50"; exit 1
+  echo "❌ Gateway chưa lên ở cổng $PORT. Xem: journalctl -u dola-gateway -n 50 --no-pager"; exit 1
 fi
