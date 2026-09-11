@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { SelectNative } from "@/components/ui/select-native";
-import { api, cfg, submitJob, pollJob, fmtError, creditCost, firstLine, fnameFromUrl, sttFromUrl, accState, canRunAccount, ACC_BADGE, deleteAccount, STAGE_TEXT, riskyPrompt, deadNicks, setConcurrency, patchAccount, wakeAccount } from "@/lib/api";
+import { api, cfg, submitJob, pollJob, fmtError, creditCost, firstLine, fnameFromUrl, sttFromUrl, accState, canRunAccount, ACC_BADGE, deleteAccount, STAGE_TEXT, riskyPrompt, deadNicks, setConcurrency, patchAccount, wakeAccount, inflightTasks, accState as accStateOf } from "@/lib/api";
 
 const MODELS = ["seedance-2.0", "seedance-2.5"];
 const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"];
@@ -26,6 +26,19 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const vidDir = useRef("");
 
   useEffect(() => { api.getVideoDir?.().then((r) => (vidDir.current = r?.abs || "")).catch(() => {}); }, []);
+  // Mở app lên mà server vẫn đang render dở: bám lại job đó, đừng để bảng trống trông như treo.
+  useEffect(() => {
+    (async () => {
+      for (const t of await inflightTasks()) {
+        const n = t.account;
+        if (!n || inflight.current.has(n)) continue;
+        inflight.current.add(n);
+        setRow(n, { prompt: t.prompt || "", phase: "running", stage: t.status === "queued" ? "queued" : "rendering",
+                    startedAt: (t.started_at || t.created_at || Date.now() / 1000) * 1000, errorRaw: "", videoUrl: "" });
+        watchJob(n, t.id).finally(() => inflight.current.delete(n));
+      }
+    })();
+  }, []);
   // Ô số luồng: chỉ điền khi đang trống, không giật giá trị lúc người dùng đang gõ.
   useEffect(() => {
     if (!health) return;
@@ -69,15 +82,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     setRow(n, { prompt, phase: "running", stage: "queued", startedAt: Date.now(), errorRaw: "", videoUrl: "" });
     try {
       const id = await submitJob(prompt, { model: s.model, duration: parseInt(s.dur, 10), ratio: s.ratio, account: n });
-      let stage = "queued";
-      while (true) {
-        await new Promise((r) => setTimeout(r, 3000));
-        if (stop.current) { setRow(n, { phase: "idle", status: "⏸ đã dừng theo dõi" }); return true; }
-        const pj = await pollJob(id);
-        if (pj.status === "completed") { setRow(n, { phase: "done", videoUrl: pj.video_url }); return true; }
-        if (pj.status === "failed") { setRow(n, { phase: "error", errorRaw: pj.error || "?" }); return false; }
-        if (pj.stage && pj.stage !== stage) { stage = pj.stage; setRow(n, { stage }); }
-      }
+      return await watchJob(n, id);
     } catch (e) {
       const msg = e?.message || String(e);
       setRow(n, { phase: "error", errorRaw: msg });
@@ -86,22 +91,47 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     }
     finally { inflight.current.delete(n); }
   }
+  // Theo dõi một job đã có id — dùng cho cả job vừa gửi và job đang chạy dở từ lần mở app trước.
+  async function watchJob(n, id) {
+    let stage = "queued";
+    while (true) {
+      await new Promise((r) => setTimeout(r, 3000));
+      if (stop.current) { setRow(n, { phase: "idle", status: "⏸ đã dừng theo dõi" }); return true; }
+      const pj = await pollJob(id);
+      if (pj.status === "completed") { setRow(n, { phase: "done", videoUrl: pj.video_url }); return true; }
+      if (pj.status === "failed") { setRow(n, { phase: "error", errorRaw: pj.error || "?" }); return false; }
+      if (pj.stage && pj.stage !== stage) { stage = pj.stage; setRow(n, { stage }); }
+    }
+  }
+
   // "Chạy sẵn sàng" = đúng nick badge xanh, dùng chung accState (đã tính cả busy/cooling/scheduling).
   const canRun = canRunAccount;
   const readyNicks = () => accounts.filter(canRun).map((a) => a.account);
   async function runBatch(ns, empty) {
     if (!ns.length) { setGen(empty); return; }
     stop.current = false;
+    // Phản hồi ngay trên từng dòng: trước đây bấm Chạy là bảng đứng im tới 12s (chờ verify)
+    // nên trông như tool không nhận lệnh.
+    ns.forEach((n) => setRow(n, { phase: "running", stage: "checking", startedAt: Date.now(), errorRaw: "", videoUrl: "" }));
     setGen("Kiểm tra phiên đăng nhập trước khi chạy…");
     const dead = await deadNicks(ns);
     dead.forEach((n) => setRow(n, { phase: "error", errorRaw: "Cookie hết hạn — đăng nhập lại nick này rồi chạy lại." }));
     const blocked = ns.filter((n) => {
       const a = accounts.find((x) => x.account === n);
-      return a && !canRun(a) && accState(a) !== "busy";     // busy = đang chạy, không tính là chặn
+      return a && !canRun(a) && accStateOf(a) !== "busy";   // busy = đang chạy, không tính là chặn
+    });
+    // Nick bị chặn cũng phải hiện lý do NGAY TRÊN DÒNG, không chỉ một dòng chữ nhỏ ở cuối bảng.
+    blocked.forEach((n) => {
+      const a = accounts.find((x) => x.account === n) || {};
+      const why = { off: "nick đang tắt lịch — bấm 'Bật lịch tất cả'",
+                    cooling: "nick đang nghỉ (risk-control) — bấm 'Bỏ nghỉ tất cả'",
+                    quota: "hết lượt/điểm hôm nay", dead: "cookie chết — đăng nhập lại nick" }[accStateOf(a)]
+                 || "nick chưa chạy được";
+      setRow(n, { phase: "error", errorRaw: why });
     });
     const run = ns.filter((n) => !dead.includes(n) && !blocked.includes(n));
     if (!run.length) {
-      setGen(`Không nick nào chạy được: ${dead.length} cookie chết · ${blocked.length} tắt lịch/hết lượt.`);
+      setGen(`Không nick nào chạy được: ${dead.length} cookie chết · ${blocked.length} tắt lịch/nghỉ/hết lượt.`);
       return;
     }
     const skipped = [dead.length ? `${dead.length} cookie chết` : "", blocked.length ? `${blocked.length} tắt lịch/hết lượt` : ""].filter(Boolean).join(" · ");

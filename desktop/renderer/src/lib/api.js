@@ -71,7 +71,7 @@ export function fmtError(raw) {
 // Giai đoạn job (server trả ở field `stage`) — gửi và render giờ chạy chồng nhau nên phải
 // nói rõ nick đang ở khúc nào.
 export const STAGE_TEXT = {
-  queued: "đang xếp hàng…", opening: "đang mở nick…", submitting: "đang gửi prompt…",
+  checking: "đang kiểm tra nick…", queued: "đang xếp hàng…", opening: "đang mở nick…", submitting: "đang gửi prompt…",
   rendering: "Dola đang dựng video…", processing: "đang tạo…",
 };
 
@@ -184,6 +184,17 @@ export const verifyAccount = async (n) => ({ ok: true, alive: !!(await adminFetc
 export const openProfile = (n) => adminFetch(n, "/open");
 // Bỏ "đang nghỉ" (cooldown 30' sau khi captcha trượt) để chạy lại ngay.
 export const wakeAccount = (n) => adminFetch(n, "/wake");
+
+// Job đang chạy trên server (kể cả do lần mở app trước gửi): dùng để bám lại, nếu không thì
+// bảng hiện "—" trong khi nick vẫn đang render → trông như treo.
+export async function inflightTasks() {
+  await ensureConfig();
+  try {
+    const r = await fetch(cfg.base + "/api/admin/tasks?limit=100", { headers: adminHeaders(), cache: "no-store" });
+    if (!r.ok) return [];
+    return ((await r.json()).tasks || []).filter((t) => t.status === "queued" || t.status === "processing");
+  } catch { return []; }
+}
 // Xoá nick / xoá cookie PHẢI đi qua server: pool trả 409 khi nick đang render, và
 // clear-cookies còn đặt login_ok=False để pool ngừng xếp lịch nick vừa bị xoá cookie.
 export const deleteAccount = (n) => adminFetch(n, "", "DELETE");
