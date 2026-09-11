@@ -28,10 +28,30 @@ if ! command -v google-chrome >/dev/null; then
   rm -f /tmp/chrome.deb
 fi
 
-echo "==> Mã nguồn + Python"
+echo "==> Python ≥ 3.10 (code dùng 'str | None' ở chữ ký hàm; Ubuntu 20.04 chỉ có 3.8)"
+PY=""
+for c in python3.12 python3.11 python3.10 python3; do
+  if command -v "$c" >/dev/null && "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then PY="$c"; break; fi
+done
+if [ -z "$PY" ]; then
+  echo "   python3 hệ thống quá cũ ($(python3 --version 2>&1)) → cài python3.11 từ deadsnakes"
+  $SUDO apt-get install -y -qq software-properties-common >/dev/null
+  $SUDO add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1
+  $SUDO apt-get update -qq
+  $SUDO apt-get install -y -qq python3.11 python3.11-venv python3.11-dev >/dev/null
+  PY=python3.11
+fi
+echo "   dùng $PY ($("$PY" --version 2>&1))"
+
+echo "==> Mã nguồn + venv"
 if [ -d "$DIR/.git" ]; then git -C "$DIR" pull -q; else git clone -q "$REPO" "$DIR"; fi
 cd "$DIR"
-[ -d .venv ] || python3 -m venv .venv
+# venv tạo bởi lần chạy trước bằng python cũ → bỏ, tạo lại (chỉ là thư viện, cài lại được).
+if [ -d .venv ] && ! .venv/bin/python -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+  echo "   .venv cũ là $(.venv/bin/python --version 2>&1) → tạo lại"
+  rm -rf .venv
+fi
+[ -d .venv ] || "$PY" -m venv .venv
 .venv/bin/pip install -q --upgrade pip
 .venv/bin/pip install -q -r requirements.txt
 
