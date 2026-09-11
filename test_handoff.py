@@ -171,6 +171,57 @@ def test_option_list_gets_a_letter_not_yes():
     assert vw._answer_key(vw._NeedsBrowser(STREAM_MENU).full) in shared
 
 
+def _http_poll(texts, shared):
+    """poll_conversation_http với aiohttp giả: lượt 1 chỉ có `texts`, lượt 2 có thêm video."""
+    import json as _j
+
+    def msg(text=None, video=None):
+        blocks = []
+        if text:
+            blocks.append({"content": {"text_block": {"text": text}}})
+        if video:
+            blocks.append({"block_type": 2074, "content": {"creation_block": {"creations": [
+                {"type": 2, "video": {"download_url": video, "video_model": ""}}]}}})
+        return {"content": _j.dumps(blocks)}
+
+    def page(*msgs):
+        return {"downlink_body": {"pull_singe_chain_downlink_body": {"messages": list(msgs)}}}
+
+    pages = [page(*[msg(t) for t in texts]),
+             page(*[msg(t) for t in texts], msg(video="https://x/v.mp4"))]
+
+    class Resp:
+        status = 200
+        def __init__(self, data): self.data = data
+        async def json(self, **_): return self.data
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+
+    class Session:
+        def post(self, *a, **k): return Resp(pages.pop(0) if len(pages) > 1 else pages[0])
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+
+    real = vw.aiohttp.ClientSession
+    vw.aiohttp.ClientSession = Session
+    try:
+        return asyncio.run(vw.poll_conversation_http("acc1", "c=1", "", "", "77", 60, answered=shared))
+    finally:
+        vw.aiohttp.ClientSession = real
+
+
+def test_http_poll_skips_answered_question():
+    """Sau khi nhả nick, câu ĐÃ trả lời vẫn nằm trong 20 tin gần nhất — HTTP poll phải bỏ qua và
+    chờ video, không được ném _NeedsBrowser (→ "hỏi đi hỏi lại", job chết oan sau 60s)."""
+    out = _http_poll([CONFIRM], {vw._answer_key(CONFIRM)})
+    assert out["conversation_id"] == "77" and out.get("local_path"), "câu cũ đã trả lời mà vẫn đòi mở lại nick"
+    try:                                   # câu MỚI (chưa trả lời) thì vẫn phải xin mở lại nick
+        _http_poll([CONFIRM], set())
+        assert False, "câu chưa trả lời phải ném _NeedsBrowser"
+    except vw._NeedsBrowser:
+        pass
+
+
 def test_blocked_reason_says_one_thing():
     """Nick không chạy được thì phải nói ĐÚNG lý do — trước đây liệt kê cả 4 nên hướng dẫn sai."""
     import time as _t
@@ -192,4 +243,5 @@ if __name__ == "__main__":
     test_late_questions_reopen_browser(); test_duration_cap_is_not_content_policy()
     test_reply_uses_dola_cap_not_30s(); test_own_directive_is_ignored()
     test_answered_memory_survives_reopen(); test_streaming_message_is_answered_once()
-    test_option_list_gets_a_letter_not_yes(); test_blocked_reason_says_one_thing(); print("OK")
+    test_option_list_gets_a_letter_not_yes(); test_http_poll_skips_answered_question()
+    test_blocked_reason_says_one_thing(); print("OK")

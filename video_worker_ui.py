@@ -945,7 +945,7 @@ async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, dura
                     on_browser_free()
                 try:
                     return await poll_conversation_http(account, cookie_header, ms_token, fp, conv_id,
-                                                        remaining, on_poll, on_balance)
+                                                        remaining, on_poll, on_balance, answered=answered)
                 except _NeedsBrowser as ask:
                     if _answer_key(ask.full) in answered:
                         # Đã trả lời câu này rồi mà Dola vẫn lặp lại → mở nick nữa cũng vô ích.
@@ -1021,7 +1021,8 @@ def _parse_single(data: dict) -> dict:
 
 
 async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: str,
-                                 conversation_id: str, timeout: int, on_poll=None, on_balance=None) -> dict:
+                                 conversation_id: str, timeout: int, on_poll=None, on_balance=None,
+                                 answered: set | None = None) -> dict:
     """Poll /im/chain/single over PLAIN HTTP (no browser) until a video appears, then download.
 
     The browser is only needed for the signed submission; polling + download work with cookies
@@ -1041,6 +1042,7 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
     last_msg = ""
     stale_msg, stale_n = "", 0
     image_polls = 0
+    answered = set() if answered is None else answered
     async with aiohttp.ClientSession() as session:
         while time.time() - start < timeout:
             await asyncio.sleep(5)
@@ -1087,6 +1089,10 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
                         "Dola gặp lỗi tạm thời (hệ thống Dola báo lỗi, cần thử lại). Tự thử lại / xoay nick."
                         f"\n↳ Dola: {text[:140]}")
                 if _question_needs_browser(text):
+                    # Câu đã trả lời trong trang vẫn nằm trong 20 tin gần nhất suốt đời hội thoại;
+                    # không bỏ qua thì ngay poll HTTP đầu tiên sau khi nhả nick đã "hỏi đi hỏi lại".
+                    if _answer_key(text) in answered:
+                        continue
                     raise _NeedsBrowser(text)
                 tt = (text or "").strip()
                 if len(tt) > 8 and not _is_status_text(tt) and not tt.startswith("生成された"):
