@@ -258,12 +258,16 @@ class BrowserPool:
             "UPDATE accounts_meta SET scheduling=? WHERE name=?", (1 if on else 0, name))
         self._conn.commit()
 
+    # Nick vừa được tạo bởi import cookie chưa có dòng meta (chỉ được tạo khi ai đó đọc .accounts)
+    # → UPDATE rơi vào khoảng không, trạng thái đăng nhập vừa kiểm tra bị mất. Đăng ký trước.
     def set_email(self, name: str, email: str):
+        self._ensure_meta(name)
         self._conn.execute(
             "UPDATE accounts_meta SET email=? WHERE name=?", (email, name))
         self._conn.commit()
 
     def set_login_status(self, name: str, ok: bool):
+        self._ensure_meta(name)
         self._conn.execute(
             "UPDATE accounts_meta SET login_ok=?, login_checked_at=? WHERE name=?",
             (1 if ok else 0, time.time(), name),
