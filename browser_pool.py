@@ -15,6 +15,7 @@ from video_worker_ui import (
     LoggedOutError,
     ParameterChangeError,
     PortraitProtectionError,
+    PromptUnclearError,
     RiskControlError,
     TransientDolaError,
     generate_video,
@@ -525,7 +526,7 @@ class BrowserPool:
                             (time.time(), account))
                         self._conn.commit()
                         return result
-                    except (ContentPolicyViolationError, PortraitProtectionError) as e:
+                    except (ContentPolicyViolationError, PortraitProtectionError, PromptUnclearError) as e:
                         # Prompt/image problem, not an account problem: no rotation helps.
                         print(f"[pool] {account} rejected due to content policy: {e}", flush=True)
                         raise
@@ -587,7 +588,7 @@ class BrowserPool:
                                 (time.time(), account))
                             self._conn.commit()
                             raise
-                        except (ContentPolicyViolationError, PortraitProtectionError, ParameterChangeError):
+                        except (ContentPolicyViolationError, PortraitProtectionError, PromptUnclearError, ParameterChangeError):
                             raise   # lỗi của prompt / kích cỡ video này, không phải của nick → xoay vô ích
                         except Exception as e2:
                             # Job ghim nick thì không có nick nào để xoay — nói đúng để người dùng khỏi hiểu nhầm.

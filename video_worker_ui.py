@@ -23,6 +23,15 @@ from video_worker import (POLL_JS, SUBMIT_JS, RiskControlError, SubmitDelivered,
                           _check_submit, _download, extract_unwatermarked_url)
 
 # Daily limit pattern matching response text (JA / ZH / EN / VI)
+# Dola không hiểu prompt (vd prompt "con mefo"): "意味不明なため直接生成できません". Phải xét TRƯỚC
+# CREDIT_FAIL_PATTERN — chữ "生成できません" trong câu này từng bị bắt thành "hết điểm" → nick hết lượt oan (log 11/9 16:51).
+PROMPT_UNCLEAR_PATTERN = re.compile(
+    r"意味不明|内容が不明|内容が不足|具体的に指定|指示内容として認識できません|有効な指示|プロンプトを補完|"
+    r"无法理解|内容不明确|not a valid (?:prompt|instruction)|too vague|unclear prompt|"
+    r"please (?:provide|specify) (?:a |the )?(?:video )?(?:content|description)",
+    re.IGNORECASE,
+)
+
 DAILY_LIMIT_PATTERN = re.compile(
     r"動画生成の\s*1日あたりの上限|(?:每日|今日|今天)(?:视频|影片)?生成.*(?:上限|限额|额度)|"
     r"daily.*(?:limit|quota)|(?:limit|quota).*per\s*day|"
@@ -80,6 +89,8 @@ _STATUS_MARKERS = (
     "アップロード", "%", "generating", "rendering", "uploading", "đang tạo", "đang tải", "生成されます",
     "完成します", "完成予定", "お送りします", "完了したら", "クレジットを使用", "分後に", "只需", "分钟后",
     "will be generated", "will complete", "will send", "i'll send", "i'll start", "minutes", "残っています",
+    # "安全チェックの対象外です。直接生成を開始します" = Dola BẮT ĐẦU tạo — từng bị coi là từ chối, job chết sau 20s
+    "生成を開始", "開始します", "安全チェックの対象外", "start generating", "starting generation", "开始生成",
 )
 
 # Dola asks to confirm a (different) supported length before rendering, e.g.
@@ -123,6 +134,10 @@ class ContentPolicyViolationError(Exception):
 
 class PortraitProtectionError(Exception):
     """Portrait / identity protection triggered."""
+
+
+class PromptUnclearError(Exception):
+    """Dola không hiểu prompt — lỗi của prompt, không phải của nick: không xoay, không trừ lượt."""
 
 
 class ParameterChangeError(Exception):
@@ -1110,6 +1125,9 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
                     raise ParameterChangeError(_CREDIT_SHORT_MSG + text[:150])
                 if DAILY_LIMIT_PATTERN.search(text):
                     raise AccountLimitedError(f"Hết lượt tạo video hôm nay. Dola: {text[:140]}")
+                if PROMPT_UNCLEAR_PATTERN.search(text):
+                    raise PromptUnclearError(
+                        "Dola không hiểu prompt — viết mô tả cảnh quay cụ thể (không mất lượt).\n↳ Dola: " + text[:140])
                 if CREDIT_FAIL_PATTERN.search(text):
                     raise CreditError(f"Không đủ điểm/quota. Dola: {text[:120]}")
                 if _is_transient_error(text):
@@ -1215,6 +1233,9 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 raise ParameterChangeError(_CREDIT_SHORT_MSG + text[:150])
             if DAILY_LIMIT_PATTERN.search(text):
                 raise AccountLimitedError(f"Hết lượt tạo video hôm nay. Dola: {text[:140]}")
+            if PROMPT_UNCLEAR_PATTERN.search(text):
+                raise PromptUnclearError(
+                    "Dola không hiểu prompt — viết mô tả cảnh quay cụ thể (không mất lượt).\n↳ Dola: " + text[:140])
             if CREDIT_FAIL_PATTERN.search(text):
                 raise CreditError(f"Không đủ điểm/quota. Dola: {text[:120]}")
             if _is_transient_error(text):

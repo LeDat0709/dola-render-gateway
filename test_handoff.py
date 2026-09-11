@@ -111,6 +111,26 @@ def test_short_job_keeps_its_duration_when_dola_offers_cap():
     assert ans != "はい" and "10秒" in ans and "9:16" in ans, ans
 
 
+def test_unclear_prompt_is_not_a_credit_problem():
+    """Log 11/9 16:51: prompt 'con mefo' → Dola '意味不明なため直接生成できません' → từng bị gắn 'Không đủ điểm/quota' → nick hết lượt oan."""
+    unclear = [
+        "「con mefo」が意味不明なため直接生成できません。正しいプロンプトを補完してください。",
+        "プロンプトが「con mefo」だけでは内容が不明瞭なため、安全に生成できません。",
+        "動画生成リクエストを受け付けました。ただし、「con mefo」は有効な指示内容として認識できません。",
+        "実行する内容が不足しています。ビデオの内容を具体的に指定してください。",
+    ]
+    for m in unclear:
+        assert vw.PROMPT_UNCLEAR_PATTERN.search(m), m[:30]
+    credit = "現在のパラメーターで生成すると、4動画クレジットが使用されます。 本日は残り2のみです。"
+    assert not vw.PROMPT_UNCLEAR_PATTERN.search(credit)      # thiếu credit thật thì vẫn là thiếu credit
+
+
+def test_generation_started_is_status_not_refusal():
+    """Log 11/9 16:51: '直接生成を開始します' = Dola bắt đầu tạo — từng bị coi là từ chối, job chết sau 20s."""
+    assert vw._is_status_text("このリクエストは安全チェックの対象外です。直接生成を開始します。")
+    assert not vw._is_status_text("30秒の動画生成はできません。対応範囲は4～15秒です。")   # từ chối thật vẫn là từ chối
+
+
 def test_own_directive_is_ignored():
     own = "【この仕様で直接生成してください（30秒・アスペクト比9:16（縦））。長さ・比率は変更せず、追加の確認は不要です】"
     assert vw._is_own_message(own)                     # tin của chính mình, không phải Dola hỏi
