@@ -222,6 +222,34 @@ def test_http_poll_skips_answered_question():
         pass
 
 
+def test_http_error_is_not_risk_control():
+    """Dola/WAF/proxy trả HTTP lỗi ≠ captcha: không được gắn cooldown 30 phút cho nick.
+
+    Ảnh 14:10: cả loạt nick "đang nghỉ (risk-control)" với 0/4 lượt — vì mọi status ≠ 200
+    đều bị coi là risk control."""
+    import video_worker as vwk
+    assert vwk._check_submit({"convId": "1", "status": 200, "errors": ["x"]}) == "1"
+    for res in ({"status": 403, "errors": ["<html>Forbidden</html>"]},
+                {"status": 502, "errors": []}, {"status": 0, "errors": []}):
+        try:
+            vwk._check_submit(res)
+            assert False, f"phải ném lỗi cho {res}"
+        except vwk.SubmitRejected as e:
+            assert str(res["status"]) in str(e)
+        except vwk.RiskControlError:
+            assert False, f"HTTP {res['status']} bị coi là risk-control → nick nghỉ 30 phút oan"
+    try:                                        # captcha thật thì vẫn là risk control
+        vwk._check_submit({"status": 200, "errors": ['{"error_code":710022004}']})
+        assert False
+    except vwk.RiskControlError:
+        pass
+    try:                                        # 200 mà không có convId → đã gửi, không gửi lại
+        vwk._check_submit({"status": 200, "errors": [], "events": []})
+        assert False
+    except vwk.SubmitDelivered:
+        pass
+
+
 def test_blocked_reason_says_one_thing():
     """Nick không chạy được thì phải nói ĐÚNG lý do — trước đây liệt kê cả 4 nên hướng dẫn sai."""
     import time as _t
@@ -244,4 +272,4 @@ if __name__ == "__main__":
     test_reply_uses_dola_cap_not_30s(); test_own_directive_is_ignored()
     test_answered_memory_survives_reopen(); test_streaming_message_is_answered_once()
     test_option_list_gets_a_letter_not_yes(); test_http_poll_skips_answered_question()
-    test_blocked_reason_says_one_thing(); print("OK")
+    test_http_error_is_not_risk_control(); test_blocked_reason_says_one_thing(); print("OK")

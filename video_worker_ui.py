@@ -19,7 +19,7 @@ from gap import find_gap_x
 import config
 from browser import cookie_value, launch_account_context, pin_session_cookies
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
-from video_worker import (POLL_JS, SUBMIT_JS, RiskControlError, SubmitDelivered,
+from video_worker import (POLL_JS, SUBMIT_JS, RiskControlError, SubmitDelivered, SubmitRejected,
                           _check_submit, _download, extract_unwatermarked_url)
 
 # Daily limit pattern matching response text (JA / ZH / EN / VI)
@@ -875,6 +875,12 @@ async def _submit_via_fetch(page, context, account: str, prompt: str, ratio: str
         raise _FetchSubmitFailed(f"submit call failed: {str(exc)[:160]}") from exc
     try:
         return _check_submit(result)
+    except SubmitRejected as exc:
+        # Dola/WAF/proxy trả HTTP lỗi, chưa nhận lệnh, chưa trừ lượt → thử lại như lỗi mạng,
+        # KHÔNG cho nick nghỉ 30 phút (trước đây cả loạt nick bị "risk-control" oan vì 1 lỗi mạng).
+        if on_submitted:
+            on_submitted(account, False)
+        raise _FetchSubmitFailed(f"Dola từ chối lệnh ({exc}) — kiểm tra mạng/proxy/cookie") from exc
     except SubmitDelivered:
         # Delivered but no id parsed: find the conversation Dola just created (do NOT re-submit).
         for _ in range(6):

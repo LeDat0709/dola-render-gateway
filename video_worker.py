@@ -238,6 +238,15 @@ class SubmitDelivered(Exception):
     """
 
 
+class SubmitRejected(Exception):
+    """Dola answered /chat/completion with a non-2xx status and no risk-control code.
+
+    Nothing was accepted or charged, and it is not the account's fault (WAF/proxy/5xx).
+    Before this class every such reply was RiskControlError → 30-minute cooldown, so one
+    bad proxy or a Dola outage benched EVERY nick with 0 videos used.
+    """
+
+
 def _check_submit(result: dict) -> str:
     """Returns conversation_id, or raises. A parsed convId wins over any incidental event."""
     conv_id = result.get("convId") or ""
@@ -251,11 +260,11 @@ def _check_submit(result: dict) -> str:
             raise RiskControlError(f"Rate limited: {err[:300]}")
 
     status = result.get("status")
-    if status == 200:
+    if status and 200 <= status < 300:
         # Delivered but no convId in the stream — do NOT re-submit; recover instead.
         raise SubmitDelivered(json.dumps(result.get("events", []), ensure_ascii=False)[:300])
-    raise RiskControlError(
-        f"Submission failed HTTP {status}: {json.dumps(result.get('events', []), ensure_ascii=False)[:300]}")
+    body = "; ".join(result.get("errors") or []) or json.dumps(result.get("events", []), ensure_ascii=False)
+    raise SubmitRejected(f"HTTP {status}: {body[:200]}")
 
 
 _STT_LOCK = asyncio.Lock()
