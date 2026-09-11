@@ -100,7 +100,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
       await new Promise((r) => setTimeout(r, 3000));
       if (stop.current) { setRow(n, { phase: "idle", status: "⏸ đã dừng theo dõi" }); return true; }
       const pj = await pollJob(id);
-      if (pj.status === "completed") { setRow(n, { phase: "done", videoUrl: pj.video_url }); return true; }
+      if (pj.status === "completed") { setRow(n, { phase: "done", videoUrl: pj.video_url }); api.saveVideo?.(pj.video_url); return true; }
       if (pj.status === "failed") { setRow(n, { phase: "error", errorRaw: pj.error || "?" }); return false; }
       if (pj.stage && pj.stage !== stage) { stage = pj.stage; setRow(n, { stage }); }
     }

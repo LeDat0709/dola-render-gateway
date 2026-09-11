@@ -17,6 +17,7 @@ const DATA_DIR = PACKAGED ? app.getPath("userData") : REPO_ROOT;
 const { fetchGenerate } = require("./fetch-generate.cjs");
 const { applyProxy, attachLoadErrorHandler, preflightDola, readEnvLocal: _readEnvLocal,
         parseProxy, globalProxy, testProxy, PROXY_FORMATS } = require("./proxy.cjs");
+const { gatewayBase, normalizeRemoteBase, testRemote } = require("./remote.cjs");
 const _IS_WIN = process.platform === "win32";
 const _VENV_BIN = _IS_WIN ? "Scripts" : "bin";   // Windows: .venv\\Scripts, macOS/Linux: .venv/bin
 const VENV_PY = PACKAGED
@@ -73,14 +74,16 @@ const readEnvLocal = () => _readEnvLocal(DATA_DIR);
 
 function config() {
   const env = readEnvLocal();
-  const port = env.DOLA_PORT || "8000";
+  const { base, remote } = gatewayBase(env);
   const apiKey = (env.DOLA_API_KEYS || "").split(",").map((s) => s.trim()).filter(Boolean)[0] || "";
   const downloadsDir = path.isAbsolute(env.DOLA_DOWNLOAD_DIR || "")
     ? env.DOLA_DOWNLOAD_DIR
     : path.join(DATA_DIR, env.DOLA_DOWNLOAD_DIR || "downloads");
   const adminKey = env.DOLA_ADMIN_KEY || "";
-  return { base: `http://127.0.0.1:${port}`, apiKey, adminKey, downloadsDir };
+  return { base, remote, apiKey, adminKey, downloadsDir };
 }
+const isRemote = () => config().remote;
+const REMOTE_ONLY = { ok: false, error: "Đang dùng máy chủ từ xa — thao tác này cần Python trên máy này. Dùng \"Đăng nhập\" (cửa sổ app) hoặc dán cookie: nick sẽ tự được đẩy lên máy chủ." };
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -123,6 +126,7 @@ ipcMain.handle("video:fetchGenerate", async (_e, { name, prompt, model, duration
 });
 
 ipcMain.handle("gateway:start", async () => {
+  if (isRemote()) return { ok: true, remote: true };   // server chạy trên VPS, máy này không spawn Python
   if (gatewayProc) return { ok: true, already: true };
   if (!fs.existsSync(VENV_PY)) {
     return { ok: false, error: `Không thấy Python tại ${VENV_PY} — chạy setup trước (bản dev) hoặc cài lại app.` };
@@ -143,13 +147,35 @@ ipcMain.handle("gateway:start", async () => {
 
 ipcMain.handle("gateway:stop", () => {
   if (gatewayProc) { gatewayProc.kill(); gatewayProc = null; }
-  return { ok: true };
+  return { ok: true, remote: isRemote() };
 });
 
 const NAME_RE = /^[A-Za-z0-9_-]{1,32}$/;
 
+// Máy chủ từ xa: máy này không có Python/profile — đẩy cookie lên VPS qua /api/admin/accounts/import-cookie
+// (server tự nạp vào profile nick và kiểm tra phiên). Cùng dạng trả về với runImport để mọi luồng đăng nhập không đổi.
+async function runImportRemote(name, file, lang) {
+  const c = config();
+  const headers = { "Content-Type": "application/json" };
+  if (c.apiKey) headers.Authorization = "Bearer " + c.apiKey;
+  if (c.adminKey) headers["x-admin-key"] = c.adminKey;
+  try {
+    const r = await fetch(c.base + "/api/admin/accounts/import-cookie", {
+      method: "POST", headers,
+      body: JSON.stringify({ name, cookies: fs.readFileSync(file, "utf8"), ui_lang: lang || "ja" }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
+    if (!j.ok) return { ok: false, error: j.message || "máy chủ không nhận cookie (phiên Dola không hợp lệ)" };
+    return { ok: true, output: j.message || `Đã đẩy cookie nick ${name} lên máy chủ ${c.base}`, error: "" };
+  } catch (e) {
+    return { ok: false, error: `Không nối được máy chủ ${c.base}: ${String((e && e.message) || e).slice(0, 120)}` };
+  }
+}
+
 // Inject a Netscape cookie file into accounts/<name> via import_cookies.py.
 function runImport(name, file, lang) {
+  if (isRemote()) return runImportRemote(name, file, lang);
   const args = ["import_cookies.py", name, file, lang || "ja"];
   return new Promise((resolve) => {
     const proc = spawnPy(args);
@@ -203,6 +229,7 @@ ipcMain.handle("account:importText", async (_e, { name, cookies, lang }) => {
 
 // Facebook OAuth import using facebook_login.py
 ipcMain.handle("account:importFacebook", async (_e, { name, line }) => {
+  if (isRemote()) return REMOTE_ONLY;
   if (!NAME_RE.test(name || "")) return { ok: false, error: "Tên nick chỉ gồm chữ, số, _ hoặc - (1-32 ký tự)" };
   if (!line || !line.trim()) return { ok: false, error: "Chưa nhập chuỗi cookie / tài khoản Facebook" };
   const tmpFile = path.join(os.tmpdir(), `dola-fb-${name}-${Date.now()}.txt`);
@@ -709,6 +736,7 @@ ipcMain.handle("account:loginElectron", async (_e, { name, lang }) => {
 // Manual login: open accounts/<name> in a headed browser; you log in by hand,
 // login_profile.py auto-captures the cookies. Gateway must release the profile first.
 ipcMain.handle("account:login", async (_e, { name, lang }) => {
+  if (isRemote()) return REMOTE_ONLY;
   if (!name || !/^[A-Za-z0-9_-]{1,32}$/.test(name)) {
     return { ok: false, error: "Tên nick chỉ gồm chữ, số, _ hoặc - (1-32 ký tự)" };
   }
@@ -729,6 +757,7 @@ ipcMain.handle("account:login", async (_e, { name, lang }) => {
 // Wipe a nick's cookies (reset to logged-out); profile kept. Fails if the profile is
 // currently open in a live Chromium window (assert_profile_free in clear_cookies.py).
 ipcMain.handle("account:clearCookies", async (_e, { name }) => {
+  if (isRemote()) return REMOTE_ONLY;
   if (!name || !/^[A-Za-z0-9_-]{1,32}$/.test(name)) {
     return { ok: false, error: "Tên nick chỉ gồm chữ, số, _ hoặc - (1-32 ký tự)" };
   }
@@ -798,6 +827,7 @@ ipcMain.handle("account:setProxy", (_e, { name, proxy }) => {
 });
 
 ipcMain.handle("account:bulkImport", async (_e, { json, verify }) => {
+  if (isRemote()) return REMOTE_ONLY;
   const text = (json || "").trim();
   if (!text) return { ok: false, error: "Chưa dán nội dung JSON export" };
   try { JSON.parse(text); } catch (e) { return { ok: false, error: "JSON không hợp lệ: " + String(e).slice(0, 80) }; }
@@ -836,6 +866,47 @@ ipcMain.handle("proxy:setGlobal", (_e, { proxy }) => {
 });
 ipcMain.handle("proxy:test", async (_e, { proxy }) => {
   try { return await testProxy(proxy); } catch (e) { return { ok: false, error: String(e) }; }
+});
+
+// Máy chủ từ xa: DOLA_REMOTE_BASE + cùng bộ khoá DOLA_API_KEYS / DOLA_ADMIN_KEY (server cục bộ cũng đọc
+// bộ khoá này nên đổi qua lại không lệch khoá). Trống = chạy server trên máy này như cũ.
+ipcMain.handle("remote:get", () => {
+  const env = readEnvLocal();
+  return { ok: true, base: normalizeRemoteBase(env.DOLA_REMOTE_BASE),
+           apiKey: (env.DOLA_API_KEYS || "").split(",")[0].trim(), adminKey: env.DOLA_ADMIN_KEY || "" };
+});
+ipcMain.handle("remote:set", (_e, { base, apiKey, adminKey }) => {
+  const b = normalizeRemoteBase(base);
+  if (String(base || "").trim() && !b) return { ok: false, error: "Địa chỉ máy chủ sai (vd: http://45.77.1.2:8000)" };
+  try {
+    upsertEnvLocal("DOLA_REMOTE_BASE", b);
+    if (String(apiKey || "").trim()) upsertEnvLocal("DOLA_API_KEYS", String(apiKey).trim());
+    if (String(adminKey || "").trim()) upsertEnvLocal("DOLA_ADMIN_KEY", String(adminKey).trim());
+  } catch (e) { return { ok: false, error: String(e) }; }
+  if (b && gatewayProc) { gatewayProc.kill(); gatewayProc = null; }   // server cục bộ không còn được dùng
+  return { ok: true, base: b || "(máy này)" };
+});
+ipcMain.handle("remote:test", async (_e, { base, apiKey, adminKey }) => {
+  try { return await testRemote(base, apiKey, adminKey); } catch (e) { return { ok: false, error: String(e) }; }
+});
+
+// Máy chủ từ xa: video nằm trên VPS — tải về thư mục video của máy này để "Mở thư mục" vẫn có file.
+// Cục bộ thì server đã ghi thẳng vào thư mục đó → bỏ qua.
+ipcMain.handle("video:save", async (_e, { url }) => {
+  if (!isRemote()) return { ok: true, skipped: true };
+  try {
+    const u = new URL(String(url || ""));
+    const name = path.basename(u.pathname);
+    if (!/^[\w.-]+\.mp4$/i.test(name)) return { ok: false, error: "tên file lạ: " + name };
+    const c = config();
+    fs.mkdirSync(c.downloadsDir, { recursive: true });
+    const dest = path.join(c.downloadsDir, name);
+    if (fs.existsSync(dest)) return { ok: true, path: dest, existed: true };
+    const r = await fetch(u.toString(), { headers: c.apiKey ? { Authorization: "Bearer " + c.apiKey } : {} });
+    if (!r.ok) return { ok: false, error: "HTTP " + r.status };
+    fs.writeFileSync(dest, Buffer.from(await r.arrayBuffer()));
+    return { ok: true, path: dest };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e).slice(0, 160) }; }
 });
 
 ipcMain.handle("open:downloads", () => shell.openPath(config().downloadsDir));
