@@ -55,9 +55,11 @@ def push(base: str, admin_key: str, items: list[tuple], post=_post, dry_run: boo
             print("  [thử] " + tag)
             continue
         try:
-            _, res = post(base, admin_key, "/api/admin/accounts/import-cookie", {"name": n, "cookies": raw})
+            # Proxy TRƯỚC, cookie SAU: bước nhập cookie mở Chrome của nick để kiểm tra phiên, phải đi
+            # qua đúng proxy riêng của nick (server tự tạo thư mục nick khi ghi proxy.txt).
             if proxy:
                 post(base, admin_key, f"/api/admin/accounts/{n}/proxy", {"proxy": proxy})
+            _, res = post(base, admin_key, "/api/admin/accounts/import-cookie", {"name": n, "cookies": raw})
             ok += 1
             print(f"  ✅ {tag} login_ok={res.get('ok')}")
         except urllib.error.HTTPError as e:
@@ -86,8 +88,8 @@ def _selftest():
         calls.append((path, body.get("proxy")))
         return 200, {"ok": True}
     assert push("http://x", "k", items, post=fake) == 3
-    assert calls[0] == ("/api/admin/accounts/import-cookie", None) and calls[1] == ("/api/admin/accounts/n1/proxy", "http://p1:1")
-    assert len(calls) == 6                                    # 3 nick × (nhập cookie + đặt proxy)
+    assert calls[0] == ("/api/admin/accounts/n1/proxy", "http://p1:1") and calls[1] == ("/api/admin/accounts/import-cookie", None)
+    assert len(calls) == 6                                    # 3 nick × (đặt proxy rồi nhập cookie)
     assert push("http://x", "k", items, post=fake, dry_run=True) == 0 and len(calls) == 6
     print("OK")
 
