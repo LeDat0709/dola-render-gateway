@@ -891,9 +891,11 @@ async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, dura
                 # Ở trong trang đủ lâu để trả lời các câu Dola hỏi lại (xác nhận 30s, menu thông
                 # số) — chỉ trang web ký được tin nhắn trả lời. Hết hỏi thì đóng trình duyệt và
                 # theo dõi bằng HTTP thuần: mỗi nick giữ Chrome ~1 phút thay vì suốt 3–15 phút.
+                answered: set = set()   # nhớ câu đã trả lời, dùng lại khi phải mở nick lần nữa
                 early = await poll_conversation(account, page, context, conv_id, timeout, on_poll,
                                                 on_balance, ratio, duration,
-                                                handoff_after=config.HTTP_POLL_AFTER_SEC)
+                                                handoff_after=config.HTTP_POLL_AFTER_SEC,
+                                                answered=answered)
                 if not early.get("handoff"):
                     return early                     # video xong ngay trong lúc còn trình duyệt
                 remaining = max(30, int(deadline - time.time()))
@@ -909,12 +911,19 @@ async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, dura
                     return await poll_conversation_http(account, cookie_header, ms_token, fp, conv_id,
                                                         remaining, on_poll, on_balance)
                 except _NeedsBrowser as ask:
+                    if str(ask) in answered:
+                        # Đã trả lời câu này rồi mà Dola vẫn lặp lại → mở nick nữa cũng vô ích.
+                        raise RuntimeError(
+                            "Dola hỏi đi hỏi lại cùng một câu (thường vì prompt mô tả video dài hơn "
+                            "mức Dola cho phép) — rút ngắn kịch bản cho khớp số giây."
+                            f"\n↳ Dola: {ask}") from ask
                     print(f"[{account}] Dola hỏi lại muộn → mở lại nick để trả lời: {ask}", flush=True)
                     if on_browser_hold:
                         await on_browser_hold()      # xin lại slot Chrome trước khi mở
                     left = max(60, int(deadline - time.time()))
                     return await resume_video(account, conv_id, left, on_poll=on_poll,
-                                              on_balance=on_balance, ratio=ratio, duration=duration)
+                                              on_balance=on_balance, ratio=ratio, duration=duration,
+                                              answered=answered)
             return await poll_conversation(account, page, context, conv_id, timeout, on_poll, on_balance, ratio, duration)
         finally:
             if not closed:
@@ -1079,7 +1088,7 @@ HANDOFF_QUIET_AFTER_QA_SEC = 60   # đã phải trả lời: chờ lâu hơn, h�
 async def poll_conversation(account: str, page, context, conversation_id: str,
                             timeout: int, on_poll=None, on_balance=None,
                             ratio: str | None = None, duration: int | None = None,
-                            handoff_after: float | None = None) -> dict:
+                            handoff_after: float | None = None, answered: set | None = None) -> dict:
     """Polls the accepted conversation until a video appears.
 
     Whatever Dola says, surface it: besides the specific handlers (daily limit, credits,
@@ -1091,8 +1100,9 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
     start = time.time()
     last_callback = 0.0
-    answered_duration = False
-    answered_specs = set()   # nội dung menu thông số đã tự trả lời (khỏi trả lời lại)
+    # Bộ nhớ "đã trả lời" dùng chung với các lần mở lại nick: không thì mỗi lần mở lại sẽ trả lời
+    # lại đúng câu cũ còn nằm trong hội thoại → ping-pong vô tận (log 11:03–11:14: 20 lần mở lại).
+    answered_specs = set() if answered is None else answered
     last_answer_at = start   # lần cuối phải trả lời Dola → mốc để biết đã hết hỏi
     want_duration = duration # Dola bảo chỉ tới 15s thì trả lời 15s, đừng đòi lại 30s
     image_polls = 0
@@ -1145,13 +1155,13 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 want_duration = _capped_seconds(text) or want_duration
                 # Dola chặn thời lượng dài (30s) -> chấp nhận mức tối đa họ cho (15s) để có video
                 if await _reply_yes(page):
-                    answered_specs.add(text); answered_duration = True
+                    answered_specs.add(text)
                     stale_msg, stale_n = "", 0
                     last_answer_at = time.time()
                     print(f"[{account}] Dola chặn thời lượng dài → chấp nhận mức tối đa (はい): {text[:80]}", flush=True)
                 continue
-            if not answered_duration and _is_duration_confirm(text):
-                answered_duration = True
+            if _is_duration_confirm(text) and text not in answered_specs:
+                answered_specs.add(text)
                 last_answer_at = time.time()
                 if await _reply_yes(page):
                     print(f"[{account}] Dola hỏi thời lượng → tự trả lời Có: {text[:80]}", flush=True)
@@ -1206,7 +1216,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
 
 async def resume_video(account: str, conversation_id: str, timeout: int,
                        on_poll=None, on_balance=None, ratio: str | None = None,
-                       duration: int | None = None) -> dict:
+                       duration: int | None = None, answered: set | None = None) -> dict:
     """Recovers accepted session after server restart without re-sending prompt."""
     async with async_playwright() as p:
         # 30s unlock now works headless via the fetch hijack (config.SKILLPACK_HIJACK); only the
@@ -1217,7 +1227,8 @@ async def resume_video(account: str, conversation_id: str, timeout: int,
             page = context.pages[0] if context.pages else await context.new_page()
             await _goto_dola(page, f"https://www.dola.com/chat/{conversation_id}")
             await page.wait_for_timeout(5000)
-            return await poll_conversation(account, page, context, conversation_id, timeout, on_poll, on_balance, ratio, duration)
+            return await poll_conversation(account, page, context, conversation_id, timeout, on_poll,
+                                           on_balance, ratio, duration, answered=answered)
         finally:
             await _persist_before_close(context, account)
             await context.close()

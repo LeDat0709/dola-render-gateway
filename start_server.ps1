@@ -14,4 +14,4 @@ Start-Process -FilePath 'py.exe' -ArgumentList '-3','-m','uvicorn','server:app',
 
 Start-Sleep -Seconds 3
 Write-Host "Server running at http://127.0.0.1:8000" -ForegroundColor Green
-Write-Host "Admin dashboard available at http://127.0.0.1:8000/web" -ForegroundColor Yellow
+Write-Host "Admin dashboard available at http://127.0.0.1:8000/" -ForegroundColor Yellow

@@ -16,11 +16,11 @@ class FakePage:
         return self.polls.pop(0) if len(self.polls) > 1 else self.polls[0]
 
 
-def _run(polls, quiet, answered):
+def _run(polls, quiet, answered, shared=None):
     async def main():
         page = FakePage(polls)
         return await vw.poll_conversation("acc1", page, FakeCtx(), "77", timeout=60,
-                                          handoff_after=0)
+                                          handoff_after=0, answered=shared)
 
     class FakeCtx:
         async def cookies(self, *a): return []
@@ -106,7 +106,23 @@ def test_own_directive_is_ignored():
     assert not vw._is_own_message(CAP_MSGS[0])
 
 
+def test_answered_memory_survives_reopen():
+    """Mở lại nick không được trả lời lại câu cũ — đó là vòng lặp đã đốt 20 lần mở nick."""
+    answered = set()
+    polls = [{"ok": True, "texts": [CONFIRM], "videos": [], "images": []}, VIDEO]
+    out = _run(polls, quiet=30, answered=[], shared=answered)
+    assert CONFIRM in answered, "phải nhớ là đã trả lời câu này"
+
+    # lần mở lại nick (poll mới, cùng bộ nhớ): câu cũ vẫn còn trong hội thoại → KHÔNG trả lời nữa
+    again = []
+    out2 = _run([{"ok": True, "texts": [CONFIRM], "videos": [], "images": []}],
+                quiet=0, answered=again, shared=answered)
+    assert not again, "đã trả lời lại câu cũ → ping-pong"
+    assert out2.get("handoff") is True          # hết việc phải làm thì nhả trình duyệt
+
+
 if __name__ == "__main__":
     setup_module(); test_no_question_hands_off(); test_pending_question_is_answered_first()
     test_late_questions_reopen_browser(); test_duration_cap_is_not_content_policy()
-    test_reply_uses_dola_cap_not_30s(); test_own_directive_is_ignored(); print("OK")
+    test_reply_uses_dola_cap_not_30s(); test_own_directive_is_ignored()
+    test_answered_memory_survives_reopen(); print("OK")

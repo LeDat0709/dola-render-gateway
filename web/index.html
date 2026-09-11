@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -111,7 +111,11 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
     <div class="card">
       <div class="toolbar">
         <h3 style="margin:0">Account List</h3>
-        <button class="btn btn-p" onclick="openAddAccount()">＋ Add Account</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-p" style="background:#1877f2;border-color:#1877f2" onclick="openFacebookModal()">🔵 Thêm bằng Facebook</button>
+          <button class="btn btn-p" onclick="openImportCookieModal()">🍪 Nhập Cookie Dola</button>
+          <button class="btn" onclick="openAddAccount()">＋ Google OAuth</button>
+        </div>
       </div>
       <div id="accountsTable"></div>
     </div>
@@ -248,8 +252,10 @@ async function loadAccounts(){
   const jobs=j.jobs||{};
   const rows=a.accounts.map(x=>{
     const jb=jobs[x.name];
-    const badge=(jb&&jb.kind==='add'&&jb.status==='running')?'<span class="badge b-blue">Adding</span>'
+    const badge=(jb&&jb.kind==='add'&&jb.status==='running')?'<span class="badge b-blue">Adding…</span>'
+      :(jb&&jb.kind==='add_facebook'&&jb.status==='running')?`<span class="badge b-blue" title="${esc(jb.step||'')}">FB: ${esc((jb.step||'Đang chạy…').slice(0,60))}</span>`
       :(jb&&jb.kind==='add'&&jb.status==='failed')?'<span class="badge b-red">Add Failed</span>'
+      :(jb&&jb.kind==='add_facebook'&&jb.status==='failed')?`<span class="badge b-red" title="${esc(jb.error||'')}">FB Failed</span>`
       :statusBadge(x);
     const warn=(jb&&jb.status==='failed')?' <span class="tiny" title="'+esc(jb.error)+'">⚠</span>':'';
     return [
@@ -260,10 +266,172 @@ async function loadAccounts(){
       `<b>${x.used_today}</b> / ${x.limit}`,
       fmt(x.last_used_at),
       fmt(x.created_at),
-      `<button class="btn" style="margin-right:6px" onclick="verify('${x.name}',this)">Verify</button><button class="btn btn-danger" onclick="delAccount('${x.name}')">Delete</button>`
+      `<button class="btn" style="margin-right:6px" title="Cập nhật / Nạp Cookie" onclick="openImportCookieModal('${x.name}')">🍪 Cookie</button><button class="btn" style="margin-right:6px" title="Mở Dola có giao diện" onclick="openBrowser('${x.name}')">Mở Dola</button><button class="btn" style="margin-right:6px" onclick="verify('${x.name}',this)">Verify</button><button class="btn btn-danger" style="margin-right:6px" title="Xóa cookie/phiên, giữ profile" onclick="clearCookies('${x.name}',this)">Xóa cookie</button><button class="btn btn-danger" onclick="delAccount('${x.name}')">Delete</button>`
     ];
   });
   q('#accountsTable').innerHTML=table(['Account ID','Name','Status','Dispatch','Remaining','Last Used','Created At','Actions'],rows);
+}
+
+function openFacebookModal(presetName){
+  let def = presetName || '';
+  if(!def){
+    try{
+      const n = document.querySelectorAll('#accountsTable tbody tr').length;
+      def = 'fb' + (n + 1);
+    }catch(e){ def = 'fb1'; }
+  }
+  showDlg(`<div style="min-width:400px">
+    <h2>🔵 Đăng Nhập Dola Bằng Facebook Cookie</h2>
+    <div class="hint" style="margin-bottom:12px">
+      Dán dòng tài khoản Facebook dạng <code>UID|PASS|2FA|COOKIE|UA</code> hoặc chuỗi cookie (cần có <code>c_user</code> và <code>xs</code>). Hệ thống sẽ tự động mở Dola, xử lý OAuth và cấp phiên làm việc.
+    </div>
+    <label>Tên tài khoản (Account ID)</label>
+    <input id="fb_name" value="${esc(def)}" ${presetName ? 'readonly style="background:#f5f7f6"' : ''}>
+    <label>Ghi chú / Nhãn (tùy chọn)</label>
+    <input id="fb_note" placeholder="ví dụ: Nick FB số 1">
+    <label>Dòng tài khoản hoặc Chuỗi Cookie Facebook</label>
+    <textarea id="fb_content" rows="6" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:monospace;margin-bottom:8px" placeholder="Dán dòng tài khoản UID|PASS|2FA|COOKIE|UA hoặc datr=...;c_user=...;xs=..."></textarea>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-weight:normal"><input type="checkbox" id="fb_visible" checked> Hiện cửa sổ Chrome để theo dõi (debug)</label>
+    <div id="fb_status" style="font-size:12px;margin:8px 0;display:none;padding:8px;border-radius:6px;white-space:pre-wrap"></div>
+    <div class="row">
+      <button class="btn" onclick="hide('dlg')">Hủy</button>
+      <button id="fb_btn" class="btn btn-p" style="background:#1877f2;border-color:#1877f2" onclick="submitFacebookAdd()">🚀 Bắt đầu OAuth Dola</button>
+    </div>
+  </div>`);
+}
+
+async function submitFacebookAdd(){
+  const name = q('#fb_name').value.trim();
+  const cookie_line = q('#fb_content').value.trim();
+  const note = q('#fb_note').value.trim();
+  const st = q('#fb_status');
+  const btn = q('#fb_btn');
+
+  if(!name || !cookie_line){
+    alert('Vui lòng nhập tên tài khoản và dán thông tin Facebook cookie!');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Đang kích hoạt...';
+  st.style.display = 'block';
+  st.style.background = '#e8f1fe';
+  st.style.color = '#2563eb';
+  st.textContent = 'Đã gửi yêu cầu đăng nhập. Tiến trình đang chạy ngầm trong nền...';
+
+  try {
+    const visible = q('#fb_visible') ? q('#fb_visible').checked : true;
+    await api('/api/admin/accounts/add-facebook', {
+      method: 'POST',
+      body: { name, cookie_line, note, visible }
+    });
+    btn.textContent = 'Đang chạy…';
+    st.textContent = 'Đã khởi động. Từng bước sẽ hiện ở đây' + (visible ? ' và trong cửa sổ Chrome vừa mở.' : '.');
+    const t0 = Date.now();
+    const poll = setInterval(async () => {
+      let jb = null;
+      try { jb = ((await api('/api/admin/jobs')).jobs || {})[name]; } catch(e) { return; }
+      if (!q('#fb_status')) { clearInterval(poll); return; }   // modal closed by the user
+      const secs = Math.round((Date.now() - t0) / 1000);
+      if (!jb || jb.status === 'running') {
+        st.textContent = `[${secs}s] ${(jb && jb.step) || 'Đang khởi chạy…'}`;
+        return;
+      }
+      clearInterval(poll);
+      if (jb.status === 'success') {
+        st.style.background = '#e6f7ee'; st.style.color = '#0f7a3c';
+        st.textContent = '✓ ' + (jb.step || 'Đăng nhập Dola qua Facebook thành công!');
+        setTimeout(() => { hide('dlg'); refresh(); }, 2000);
+      } else {
+        btn.disabled = false; btn.textContent = 'Thử lại';
+        st.style.background = '#fdeaea'; st.style.color = '#c03237';
+        st.textContent = 'Lỗi: ' + (jb.error || jb.step || 'không rõ') + '\nẢnh màn hình lúc lỗi: fb_fail_' + name + '.png (thư mục server).';
+        refresh();
+      }
+    }, 2000);
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = 'Thử lại';
+    st.style.background = '#fdeaea';
+    st.style.color = '#c03237';
+    st.textContent = 'Lỗi: ' + e.message;
+  }
+}
+
+function openImportCookieModal(presetName){
+  let def = presetName || '';
+  if(!def){
+    try{
+      const n = document.querySelectorAll('#accountsTable tbody tr').length;
+      def = 'acc' + (n + 1);
+    }catch(e){ def = 'acc1'; }
+  }
+  showDlg(`<div style="min-width:380px">
+    <h2>🍪 Đăng Nhập Dola Bằng Cookie</h2>
+    <div class="hint" style="margin-bottom:12px">
+      Hỗ trợ chuỗi cookie dạng <code>sessionid=...</code>, hoặc chuỗi tài khoản <code>UID|PASS||COOKIE|||UA</code>, hoặc định dạng Netscape. Hệ thống sẽ tự nạp vào profile và kích hoạt phiên Dola.
+    </div>
+    <label>Tên tài khoản (Account ID)</label>
+    <input id="ck_name" value="${esc(def)}" ${presetName ? 'readonly style="background:#f5f7f6"' : ''}>
+    <label>Email / Ghi chú (tùy chọn)</label>
+    <input id="ck_email" placeholder="ví dụ: nick1@gmail.com hoặc UID Facebook">
+    <label>Chuỗi Cookie</label>
+    <textarea id="ck_content" rows="6" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:monospace;margin-bottom:8px" placeholder="Dán cookie tại đây (sessionid=... hoặc datr=...;c_user=...;xs=...)"></textarea>
+    <div id="ck_status" style="font-size:12px;margin:8px 0;display:none;padding:8px;border-radius:6px"></div>
+    <div class="row">
+      <button class="btn" onclick="hide('dlg')">Hủy</button>
+      <button id="ck_btn" class="btn btn-p" onclick="submitImportCookie()">🚀 Lưu & Đăng nhập ngay</button>
+    </div>
+  </div>`);
+}
+
+async function submitImportCookie(){
+  const name = q('#ck_name').value.trim();
+  const cookies = q('#ck_content').value.trim();
+  const email = q('#ck_email').value.trim();
+  const st = q('#ck_status');
+  const btn = q('#ck_btn');
+
+  if(!name || !cookies){
+    alert('Vui lòng nhập tên tài khoản và dán chuỗi cookie!');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Đang đăng nhập Dola...';
+  st.style.display = 'block';
+  st.style.background = '#e8f1fe';
+  st.style.color = '#2563eb';
+  st.textContent = 'Đang khởi chạy trình duyệt ngầm, nạp cookie và kiểm tra phiên Dola... Vui lòng đợi 5-10 giây.';
+
+  try {
+    const res = await api('/api/admin/accounts/import-cookie', {
+      method: 'POST',
+      body: { name, cookies, email }
+    });
+    st.style.background = res.ok ? '#e6f7f0' : '#fef4e6';
+    st.style.color = res.ok ? '#00945f' : '#c77a00';
+    st.textContent = (res.ok ? '✓ ' : '⚠ ') + (res.message || 'Hoàn tất!');
+    setTimeout(() => {
+      hide('dlg');
+      refresh();
+    }, 1600);
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = 'Thử lại';
+    st.style.background = '#fdeaea';
+    st.style.color = '#c03237';
+    st.textContent = 'Lỗi: ' + e.message;
+  }
+}
+
+async function openBrowser(name){
+  try {
+    const r = await api('/api/admin/accounts/' + encodeURIComponent(name) + '/open', {method: 'POST'});
+    alert(r.message || 'Đang mở cửa sổ trình duyệt cho ' + name);
+  } catch(e) {
+    alert('Không thể mở trình duyệt: ' + e.message);
+  }
 }
 
 async function verify(name,btn){
@@ -274,6 +442,16 @@ async function verify(name,btn){
   btn.disabled=false;btn.textContent=old;refresh();
 }
 
+async function clearCookies(name,btn){
+  if(!confirm('Xóa toàn bộ cookie của '+name+'?\nAccount sẽ về trạng thái đăng xuất; profile vẫn được giữ để đăng nhập lại.'))return;
+  btn.disabled=true;const old=btn.textContent;btn.textContent='Đang xóa…';
+  try{
+    const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/clear-cookies',{method:'POST'});
+    alert('Đã xóa cookie của '+name+' (còn lại '+r.remaining+' cookie).');
+  }catch(e){alert('Lỗi xóa cookie: '+e.message);}
+  btn.disabled=false;btn.textContent=old;refresh();
+}
+
 async function delAccount(name){
   if(!confirm('Delete account '+name+'? This will remove its profile directory.'))return;
   try{await api('/api/admin/accounts/'+name,{method:'DELETE'});}catch(e){alert(e.message);}refresh();
@@ -281,7 +459,7 @@ async function delAccount(name){
 
 function openAddAccount(){
   let def='acc2';try{const n=document.querySelectorAll('#accountsTable tbody tr').length;def='acc'+(n+1);}catch(e){}
-  showDlg(`<h2>Add Account</h2>
+  showDlg(`<h2>Add Account (Google OAuth)</h2>
     <label>Account Name</label><input id="f_name" value="${def}">
     <label>Google Email</label><input id="f_email" placeholder="xxx@yy.asia">
     <label>Password</label><input id="f_pass" type="password">
