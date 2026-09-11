@@ -43,8 +43,9 @@ LOGIN_CONCURRENCY = int(os.getenv("DOLA_LOGIN_CONCURRENCY", "3"))
 # Global pending task queue limit (queued + processing), 0 = unlimited
 MAX_PENDING_TASKS = int(os.getenv("DOLA_MAX_PENDING_TASKS", "100"))
 
-# Video generation timeout in seconds
-VIDEO_TIMEOUT = int(os.getenv("DOLA_VIDEO_TIMEOUT", "300"))
+# Video generation timeout in seconds. Đo thực tế 11/9 (19 video seedance 2.5, 10s): 147–743s, trung vị 281s;
+# 300s trừ ~60s Dola hỏi lại chỉ còn ~230s → quá nửa video "quá giờ" dù Dola vẫn dựng xong (cháy credit).
+VIDEO_TIMEOUT = int(os.getenv("DOLA_VIDEO_TIMEOUT", "900"))
 
 # Tự xóa watermark "Dola AI" ngay khi tải video xong (BẬT mặc định; DOLA_AUTO_REMOVE_WM=0 để tắt)
 AUTO_REMOVE_WM = os.getenv("DOLA_AUTO_REMOVE_WM", "1").strip().lower() not in ("0", "false", "no", "off", "")

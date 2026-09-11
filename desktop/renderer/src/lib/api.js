@@ -88,6 +88,19 @@ export function riskyPrompt(p) {
   return "";
 }
 
+// Prompt mô tả tới giây thứ N ("0–3.5秒", "25-30秒", "30s", "30 giây") nhưng chọn thời lượng ngắn hơn
+// → Dola hỏi lại thời lượng vòng vo (369 vòng trong log 11/9) và có khi làm bản dài hơn rồi tính credit
+// cao hơn. Phát hiện trước khi gửi. Trả về số giây prompt mô tả nếu vượt quá thời lượng chọn, else 0.
+export function promptSeconds(p) {
+  let max = 0;
+  for (const m of String(p || "").matchAll(/(\d+(?:[.,]\d+)?)\s*(?:秒|giây|sec(?:ond)?s?\b|s\b)/gi)) max = Math.max(max, parseFloat(m[1].replace(",", ".")));
+  return max;
+}
+export function durationMismatch(p, dur) {
+  const s = promptSeconds(p);
+  return s > Number(dur) * 1.2 ? Math.round(s) : 0;
+}
+
 // Cookie chết là lý do hỏng job hay gặp nhất — loại trước khi chạy, thay vì mở nick rồi mới báo.
 // Quá 12s (nick phải mở Chrome để kiểm tra) thì chạy luôn, không bắt người dùng chờ.
 export async function deadNicks(names) {

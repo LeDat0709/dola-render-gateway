@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { SelectNative } from "@/components/ui/select-native";
-import { api, cfg, submitJob, pollJob, fmtError, creditCost, firstLine, fnameFromUrl, sttFromUrl, accState, canRunAccount, ACC_BADGE, deleteAccount, STAGE_TEXT, riskyPrompt, deadNicks, setConcurrency, patchAccount, wakeAccount, inflightTasks, accState as accStateOf } from "@/lib/api";
+import { api, cfg, submitJob, pollJob, fmtError, creditCost, firstLine, fnameFromUrl, sttFromUrl, accState, canRunAccount, ACC_BADGE, deleteAccount, STAGE_TEXT, riskyPrompt, durationMismatch, deadNicks, setConcurrency, patchAccount, wakeAccount, inflightTasks, accState as accStateOf } from "@/lib/api";
 
 const MODELS = ["seedance-2.0", "seedance-2.5"];
 const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"];
@@ -74,6 +74,15 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         + "Bị chặn thì không trừ lượt, nhưng cũng không ra video — phải đổi NỘI DUNG cảnh quay. "
         + "Viết lại cho nhẹ chữ không giúp: Dola duyệt nội dung, không duyệt từ khoá.\n\nVẫn gửi thử?"));
       if (!riskAns.current.get(prompt)) { setRow(n, { phase: "idle", status: "⏸ chưa gửi (prompt dễ bị chặn)" }); return false; }
+    }
+    const over = durationMismatch(prompt, s.dur);
+    if (over) {
+      const k = prompt + "|" + s.dur;
+      if (!riskAns.current.has(k)) riskAns.current.set(k, window.confirm(
+        `Prompt mô tả tới ~${over} giây nhưng đang chọn ${s.dur}s.\n\n`
+        + "Dola sẽ hỏi lại thời lượng (mất 1–2 phút mỗi vòng, dễ lỗi) và có thể làm bản dài hơn rồi tính credit cao hơn. "
+        + `Nên rút các mốc thời gian trong prompt về ${s.dur}s, hoặc chọn thời lượng khớp.\n\nVẫn gửi ${s.dur}s?`));
+      if (!riskAns.current.get(k)) { setRow(n, { phase: "idle", status: `⏸ chưa gửi (prompt ~${over}s ≠ ${s.dur}s)` }); return false; }
     }
     if (acc && acc.remaining != null) {
       const need = creditCost(s.dur);

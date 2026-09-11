@@ -371,7 +371,7 @@ def _task_reference_images(raw) -> list[str]:
 
 MAX_AUTO_REQUEUE = 2          # số lần tự chạy lại một job bị restart cắt ngang
 STALE_REQUEUE_SEC = 6 * 3600  # job cũ hơn mức này thì không tự chạy lại nữa (prompt đã lỗi thời)
-STALE_RESUME_SEC = 12 * 60  # job "processing" cũ hơn mức này khi khởi động = treo → bỏ, KHÔNG resume (kẻo khoá nick mãi)
+STALE_RESUME_SEC = 20 * 60  # job "processing" cũ hơn mức này khi khởi động = treo → bỏ, KHÔNG resume (kẻo khoá nick mãi); phải > VIDEO_TIMEOUT (900s) + thời gian hỏi lại
 
 
 def _restart_action(row: dict, now: float) -> tuple[str, str | None]:

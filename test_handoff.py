@@ -100,6 +100,17 @@ def test_reply_uses_dola_cap_not_30s():
     assert vw._capped_seconds("生成中です") is None
 
 
+def test_short_job_keeps_its_duration_when_dola_offers_cap():
+    """Log 11/9 15:49: job 10s, Dola mời 15s, tool trả 'はい' → video 15s → credit 15s → 'không đủ lượt' ×23."""
+    cap = "30秒の動画生成は現在サポートしていません。最短4秒、最長15秒まで対応可能です。"
+    assert vw._effective_duration(30, 15) == 15            # xin 30 → hạ xuống 15 như trước
+    assert vw._effective_duration(10, 15) == 10            # xin 10 → GIỮ 10, không nâng lên 15
+    assert vw._effective_duration(None, 15) == 15
+    assert vw._capped_reply(cap, "9:16", 30) == "はい"
+    ans = vw._capped_reply(cap, "9:16", 10)
+    assert ans != "はい" and "10秒" in ans and "9:16" in ans, ans
+
+
 def test_own_directive_is_ignored():
     own = "【この仕様で直接生成してください（30秒・アスペクト比9:16（縦））。長さ・比率は変更せず、追加の確認は不要です】"
     assert vw._is_own_message(own)                     # tin của chính mình, không phải Dola hỏi

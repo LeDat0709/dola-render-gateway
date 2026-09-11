@@ -369,6 +369,28 @@ def _spec_menu_answer(text: str, ratio, duration) -> str:
     return "はい"
 
 
+def _effective_duration(want: int | None, capped: int | None) -> int | None:
+    """Dola nói "chỉ tới N giây": job xin NHIỀU hơn thì hạ xuống N; job xin ÍT hơn thì giữ nguyên.
+
+    Trước đây job 10s bị nâng lên 15s → Dola làm 15s → tính credit 15s → "không đủ lượt"
+    (log 11/9 15:49: 23 lần). Prompt mô tả 30s nên Dola tưởng xin 30s, nhưng job vẫn là 10s.
+    """
+    if capped and (not want or want > capped):
+        return capped
+    return want
+
+
+def _capped_reply(text: str, ratio, want: int | None) -> str:
+    """Câu trả lời khi Dola chặn thời lượng dài và mời mức tối đa (vd 15s).
+
+    Xin >= mức đó → 'はい' (nhận 15s). Xin ít hơn → nói rõ số giây + tỉ lệ mình muốn.
+    """
+    capped = _capped_seconds(text)
+    if capped and want and want < capped:
+        return _spec_menu_answer(text, ratio, want)
+    return "はい"
+
+
 def _is_status_text(text: str) -> bool:
     low = (text or "").lower()
     return any(m in text or m in low for m in _STATUS_MARKERS)
@@ -1200,18 +1222,21 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                     "Dola gặp lỗi tạm thời (hệ thống Dola báo lỗi, cần thử lại). Tự thử lại / xoay nick."
                     f"\n↳ Dola: {text[:140]}")
             key = _answer_key(text)
-            # Dola nói "chỉ tới 15s" thì mọi câu trả lời sau phải dùng 15s, đừng đòi lại 30s
+            # Dola nói "chỉ tới 15s": job 30s hạ xuống 15s; job 10s GIỮ 10s (không nâng lên 15s)
             if _is_duration_capped(text) or _is_duration_confirm(text):
-                want_duration = _capped_seconds(text) or want_duration
+                want_duration = _effective_duration(want_duration, _capped_seconds(text))
             # Câu có menu A/B thì bỏ qua 2 nhánh 'はい', xuống nhánh menu đáp chữ cái
             yes_ok = not _lists_options(text)
             if yes_ok and _is_duration_capped(text) and key not in answered_specs:
-                # Dola chặn thời lượng dài (30s) -> chấp nhận mức tối đa họ cho (15s) để có video
-                if await _reply_yes(page):
+                # Dola chặn thời lượng dài (30s): job >= mức tối đa thì nhận (はい); job ngắn hơn thì nói rõ số giây
+                ans = _capped_reply(text, ratio, want_duration)
+                sent = await _reply_yes(page) if ans == "はい" else await _reply_text(page, ans)
+                if sent:
                     answered_specs.add(key)
                     stale_msg, stale_n = "", 0
                     last_answer_at = time.time()
-                    print(f"[{account}] Dola chặn thời lượng dài → chấp nhận mức tối đa (はい): {text[:80]}", flush=True)
+                    how = "chấp nhận mức tối đa (はい)" if ans == "はい" else f"giữ {want_duration}s, trả lời '{ans}'"
+                    print(f"[{account}] Dola chặn thời lượng dài → {how}: {text[:80]}", flush=True)
                 continue
             if yes_ok and _is_duration_confirm(text) and key not in answered_specs:
                 answered_specs.add(key)

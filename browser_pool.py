@@ -482,6 +482,7 @@ class BrowserPool:
 
         try:
             last_err = None
+            pinned = account is not None
             if account is not None:
                 match = next((a for a in self.list_accounts() if a["name"] == account), None)
                 if match is None:
@@ -573,6 +574,17 @@ class BrowserPool:
                                 (time.time(), account))
                             self._conn.commit()
                             return result
+                        except TimeoutError:
+                            # Đã có conversation_id → Dola vẫn đang dựng. Xoay nick ở đây = gửi lần 2 =
+                            # trừ lượt 2 lần (log 11/9 11:09, 15:40). Xử lý y như nhánh ngoài.
+                            self._claim(account)
+                            self._conn.execute(
+                                "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
+                                (time.time(), account))
+                            self._conn.commit()
+                            raise
+                        except (ContentPolicyViolationError, PortraitProtectionError, ParameterChangeError):
+                            raise   # lỗi của prompt / kích cỡ video này, không phải của nick → xoay vô ích
                         except Exception as e2:
                             print(f"[pool] {account} vẫn lỗi sau khi thử lại, xoay nick: {e2}", flush=True)
                             last_err = e2
@@ -598,6 +610,10 @@ class BrowserPool:
                         print(f"[pool] {account} profile missing, skipping: {e}", flush=True)
                         last_err = e
                         continue
+            if pinned and last_err is not None:
+                # Job trỏ đúng 1 nick: nói lý do thật ("Hết lượt hôm nay…"). Bọc thành "No available
+                # accounts" thì giao diện dịch ra "Hết nick chạy được" trong khi nick đang "sẵn sàng".
+                raise last_err
             if self.all_accounts_quota_blocked:
                 raise AllAccountsQuotaBlockedError(
                     f"429: All schedulable accounts have insufficient points: {last_err or 'No accounts'}"
