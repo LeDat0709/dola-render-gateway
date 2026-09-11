@@ -32,10 +32,8 @@ $env:PLAYWRIGHT_BROWSERS_PATH = $browsers
 # Chốt kiểm tra: nạp thử server bằng đúng runtime sắp đóng gói. Nếu thiếu/lệch module thì
 # build phải đỏ ở đây, chứ không đóng gói ra một file .exe crash ngay khi mở.
 Write-Host "==> Kiểm tra runtime nạp được server"
-Push-Location $root
-& "$py\python.exe" -c "import server, video_worker_ui, browser_pool; print('server import OK')"
-if ($LASTEXITCODE -ne 0) { Pop-Location; throw "Runtime khong nap duoc server.py - thieu module hoac module cu." }
-Pop-Location
+& "$py\python.exe" (Join-Path $root "scripts\smoke_import.py")
+if ($LASTEXITCODE -ne 0) { throw "Runtime khong nap duoc server.py - thieu module hoac module cu." }
 
 Write-Host "==> Build giao diện + đóng gói .exe"
 npm --prefix (Join-Path $root "desktop\renderer") ci
