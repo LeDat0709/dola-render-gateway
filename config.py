@@ -5,15 +5,16 @@ from pathlib import Path
 
 def _load_local_env():
     """Load ignored .env.local for local/tunnel runs; real environment wins."""
-    path = Path(__file__).with_name(".env.local")
-    if not path.exists():
-        return
-    for raw in path.read_text(encoding="utf-8-sig").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    # Bản đóng gói: mã nằm trong Program Files (chỉ đọc), app ghi .env.local vào DATA_DIR = cwd.
+    for path in (Path.cwd() / ".env.local", Path(__file__).with_name(".env.local")):
+        if not path.exists():
             continue
-        key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        for raw in path.read_text(encoding="utf-8-sig").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
 _load_local_env()

@@ -424,6 +424,7 @@ async def lifespan(app: FastAPI):
             row["id"], row["model"], row["prompt"], ratio, row["duration"],
             _task_reference_images(row.get("reference_images")), _task_client(row),
         ))
+    print(f"[gateway] proxy chung: {config.PROXY or '(không — nối thẳng)'}", flush=True)
     yield
 
 
