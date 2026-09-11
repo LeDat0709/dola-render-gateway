@@ -1,15 +1,18 @@
 import { cva } from "class-variance-authority";
 import { cn } from "@/lib/utils";
+// Chip trạng thái theo bản Stitch: xanh lá = sẵn sàng, tím = đang chạy, đỏ = hết credit/cookie chết,
+// hổ phách = hết lượt ngày, xanh dương = đang nghỉ, xám = tắt lịch.
 const badgeVariants = cva(
-  "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold transition-colors focus:outline-none",
+  "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11.5px] font-semibold transition-colors focus:outline-none",
   { variants: { variant: {
-      default: "border-transparent bg-primary text-primary-foreground",
-      secondary: "border-transparent bg-secondary text-secondary-foreground",
+      default: "border-transparent bg-primary/15 text-primary",
+      secondary: "border-transparent bg-surface-highest text-muted-foreground",
       destructive: "border-transparent bg-destructive text-destructive-foreground",
       outline: "text-foreground",
-      success: "border-emerald-500/30 bg-emerald-500/15 text-emerald-400",
-      warn: "border-amber-500/30 bg-amber-500/15 text-amber-400",
-      danger: "border-red-500/30 bg-red-500/15 text-red-400",
+      success: "border-tertiary/25 bg-tertiary/15 text-tertiary",
+      warn: "border-warn/30 bg-warn/15 text-warn",
+      danger: "border-error/25 bg-error-container/30 text-error",
+      info: "border-info/25 bg-info/15 text-info",
   } }, defaultVariants: { variant: "default" } }
 );
 export function Badge({ className, variant, ...props }) {

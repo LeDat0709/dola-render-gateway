@@ -2,23 +2,33 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Bảng màu theo bản thiết kế Stitch (Material 3 tối, tím #d0bcff / xanh lá #4edea3 / đỏ #ffb4ab).
+   Biến shadcn giữ nguyên tên để mọi component cũ đổi màu theo mà không phải sửa. */
 :root, .dark {
-  --background: 240 10% 3.9%; --foreground: 0 0% 98%;
-  --card: 240 10% 3.9%; --card-foreground: 0 0% 98%;
-  --popover: 240 10% 3.9%; --popover-foreground: 0 0% 98%;
-  --primary: 0 0% 98%; --primary-foreground: 240 5.9% 10%;
-  --secondary: 240 3.7% 15.9%; --secondary-foreground: 0 0% 98%;
-  --muted: 240 3.7% 15.9%; --muted-foreground: 240 5% 64.9%;
-  --accent: 240 3.7% 15.9%; --accent-foreground: 0 0% 98%;
-  --destructive: 0 62.8% 30.6%; --destructive-foreground: 0 0% 98%;
-  --border: 240 3.7% 15.9%; --input: 240 3.7% 15.9%; --ring: 240 4.9% 83.9%;
+  --background: 222 31% 6%;      /* surface-container-lowest #0b0e15 */
+  --foreground: 230 24% 90%;     /* on-surface #e0e2ec */
+  --card: 222 17% 12%;           /* surface-container-low #191c23 */
+  --card-foreground: 230 24% 90%;
+  --popover: 222 15% 13%;        /* surface-container #1d2027 */
+  --popover-foreground: 230 24% 90%;
+  --primary: 258 100% 87%;       /* #d0bcff */
+  --primary-foreground: 265 100% 28%; /* on-primary #3c0091 */
+  --secondary: 222 11% 17%;      /* surface-container-high #272a31 */
+  --secondary-foreground: 230 24% 90%;
+  --muted: 222 15% 13%;
+  --muted-foreground: 262 14% 68%;
+  --accent: 222 11% 17%;
+  --accent-foreground: 230 24% 90%;
+  --destructive: 356 100% 29%;   /* error-container #93000a */
+  --destructive-foreground: 6 100% 92%;
+  --border: 224 10% 20%; --input: 224 10% 22%; --ring: 258 100% 87%;
   --radius: 0.5rem;
 }
 * { border-color: hsl(var(--border)); }
-body { margin: 0; background: hsl(var(--background)); color: hsl(var(--foreground)); font-feature-settings: "rlig" 1, "calt" 1; }
+body { margin: 0; background: hsl(var(--background)); color: hsl(var(--foreground)); font-feature-settings: "rlig" 1, "calt" 1; overscroll-behavior: none; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: hsl(240 3.7% 20%); border-radius: 8px; border: 2px solid hsl(var(--background)); }
-::-webkit-scrollbar-thumb:hover { background: hsl(240 3.7% 28%); }
+::-webkit-scrollbar-thumb { background: #32353c; border-radius: 8px; border: 2px solid hsl(var(--background)); }
+::-webkit-scrollbar-thumb:hover { background: #494454; }
 @keyframes slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(360%); } }
 
 /* forceMount giữ mọi tab mount (không mất state khi chuyển tab); ẩn tab không active */

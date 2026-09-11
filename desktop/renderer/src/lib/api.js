@@ -215,6 +215,44 @@ export async function inflightTasks() {
 export const deleteAccount = (n) => adminFetch(n, "", "DELETE");
 export const clearCookies = (n) => adminFetch(n, "/clear-cookies");
 
+// ── Proxy & job (Tổng quan / Kho / tab Proxy) ─────────────────────
+// Che mật khẩu proxy khi hiện lên màn hình: scheme://user:•••@host:port hoặc host:port:user:•••
+export const maskProxy = (raw) => {
+  const s = String(raw || "").trim(); if (!s) return "";
+  const m = s.match(/^(\w+:\/\/)?([^:@/]+):([^@/]+)@(.+)$/);
+  if (m) return `${m[1] || ""}${m[2]}:•••@${m[4]}`;
+  const p = s.replace(/^\w+:\/\//, "").split(":");
+  if (p.length >= 4) return `${p[0]}:${p[1]}:${p[2]}:•••`;
+  return s;
+};
+export const proxyHost = (raw) => {
+  const s = String(raw || "").replace(/^\w+:\/\//, ""); const at = s.lastIndexOf("@");
+  return at >= 0 ? s.slice(at + 1) : s.split(":").slice(0, 2).join(":");
+};
+export async function recentTasks(limit = 200) {
+  await ensureConfig();
+  try {
+    const r = await fetch(cfg.base + `/api/admin/tasks?limit=${limit}`, { headers: adminHeaders(), cache: "no-store" });
+    if (!r.ok) return [];
+    return (await r.json()).tasks || [];
+  } catch { return []; }
+}
+// Chip trạng thái theo bản Stitch: tách "hết credit" với "hết lượt hôm nay", ghi giờ hết nghỉ.
+export function accChip(a) {
+  const st = accState(a);
+  if (st === "quota") {
+    const dayFull = a.rate_limited || (a.limit != null && a.used_today >= a.limit);
+    return dayFull ? { st, variant: "warn", text: "Hết lượt hôm nay" } : { st, variant: "danger", text: "Hết credit" };
+  }
+  if (st === "cooling") {
+    const t = a.cooldown_until ? new Date(a.cooldown_until * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "";
+    return { st, variant: "info", text: "Nghỉ" + (t ? ` đến ${t}` : "") };
+  }
+  const M = { ready: ["success", "Sẵn sàng"], busy: ["default", "Đang chạy"], off: ["secondary", "Tắt lịch"], dead: ["secondary", "⚠ Chưa đăng nhập"] };
+  return { st, variant: M[st][0], text: M[st][1] };
+}
+export const fmtSec = (s) => { s = Math.round(s || 0); return s >= 60 ? `${Math.floor(s / 60)}p ${String(s % 60).padStart(2, "0")}s` : `${s}s`; };
+
 // "5 phút trước" dạng ngắn: 45s · 12p · 3g · 2n
 export const timeAgo = (ts) => {
   if (!ts) return "—";

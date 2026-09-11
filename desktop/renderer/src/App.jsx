@@ -1,19 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Clapperboard, User, Settings2, BarChart3 } from "lucide-react";
+import { Clapperboard, Users, Settings2, LayoutDashboard, Network } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import Header from "@/components/Header";
 import StudioTab from "@/components/StudioTab";
 import AccountsTab from "@/components/AccountsTab";
 import SettingsTab from "@/components/SettingsTab";
-import ReportTab from "@/components/ReportTab";
+import OverviewTab from "@/components/OverviewTab";
+import ProxyTab from "@/components/ProxyTab";
 import { loadConfig, health as fetchHealth } from "@/lib/api";
 
 export default function App() {
   const [health, setHealth] = useState(null);
+  const [latency, setLatency] = useState(null);
   const [video, setVideo] = useState(null);
+  const [tab, setTab] = useState("overview");
   const typingRef = useRef(false);
-  const refresh = useCallback(async () => { setHealth(await fetchHealth()); }, []);
+  const refresh = useCallback(async () => {
+    const t0 = performance.now();
+    const h = await fetchHealth();
+    setHealth(h); setLatency(h ? Math.round(performance.now() - t0) : null);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -32,26 +39,27 @@ export default function App() {
   }, []);
 
   return (
-    <div className="min-h-screen">
-      <Header health={health} onRefresh={refresh} />
-      <main className="mx-auto max-w-[1500px] px-7 py-6">
-        <Tabs defaultValue="make">
-          <TabsList className="mb-5">
-            <TabsTrigger value="make"><Clapperboard className="h-4 w-4" />Tạo video</TabsTrigger>
-            <TabsTrigger value="acct"><User className="h-4 w-4" />Tài khoản</TabsTrigger>
-            <TabsTrigger value="report"><BarChart3 className="h-4 w-4" />Báo cáo</TabsTrigger>
-            <TabsTrigger value="settings"><Settings2 className="h-4 w-4" />Cài đặt</TabsTrigger>
-          </TabsList>
-          <TabsContent value="make" forceMount>
-            <div className="rounded-xl border bg-card p-6">
-              <h2 className="mb-4 text-sm font-semibold text-muted-foreground">STUDIO — mỗi nick một dòng, prompt riêng</h2>
-              <StudioTab health={health} onRefresh={refresh} onPlay={(u) => setVideo(u)} />
-            </div>
-          </TabsContent>
-          <TabsContent value="acct" forceMount><AccountsTab onRefresh={refresh} /></TabsContent>
-          <TabsContent value="report" forceMount><ReportTab onPlay={(u) => setVideo(u)} /></TabsContent>
-          <TabsContent value="settings" forceMount><SettingsTab /></TabsContent>
-        </Tabs>
+    <Tabs value={tab} onValueChange={setTab} className="min-h-screen">
+      <Header health={health} latency={latency} onRefresh={refresh}>
+        <TabsList>
+          <TabsTrigger value="overview"><LayoutDashboard className="h-4 w-4" />Tổng quan</TabsTrigger>
+          <TabsTrigger value="make"><Clapperboard className="h-4 w-4" />Studio</TabsTrigger>
+          <TabsTrigger value="acct"><Users className="h-4 w-4" />Kho tài khoản</TabsTrigger>
+          <TabsTrigger value="proxy"><Network className="h-4 w-4" />Proxy</TabsTrigger>
+          <TabsTrigger value="settings"><Settings2 className="h-4 w-4" />Cài đặt</TabsTrigger>
+        </TabsList>
+      </Header>
+      <main className="mx-auto max-w-[1500px] px-6 py-5">
+        <TabsContent value="overview" forceMount><OverviewTab health={health} onPlay={(u) => setVideo(u)} onGo={setTab} /></TabsContent>
+        <TabsContent value="make" forceMount>
+          <div className="rounded-xl bg-surface-low p-5">
+            <h2 className="mb-4 font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Studio — mỗi nick một dòng, prompt riêng</h2>
+            <StudioTab health={health} onRefresh={refresh} onPlay={(u) => setVideo(u)} />
+          </div>
+        </TabsContent>
+        <TabsContent value="acct" forceMount><AccountsTab onRefresh={refresh} /></TabsContent>
+        <TabsContent value="proxy" forceMount><ProxyTab /></TabsContent>
+        <TabsContent value="settings" forceMount><SettingsTab /></TabsContent>
       </main>
 
       <Dialog open={!!video} onOpenChange={(o) => !o && setVideo(null)}>
@@ -59,6 +67,6 @@ export default function App() {
           {video && <video key={video} src={video} controls autoPlay playsInline className="max-h-[80vh] w-full rounded-md bg-black" />}
         </DialogContent>
       </Dialog>
-    </div>
+    </Tabs>
   );
 }

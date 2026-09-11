@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Facebook, Cookie, LogIn, FileText, Rocket } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -46,10 +46,13 @@ export default function AccountsTab({ onRefresh }) {
   async function fromFile() { const nm = name.trim(); if (!nm) { setMsg("Nhập tên nick."); return; } setBusy(true); try { const r = await api.importAccount?.(nm, lang); setMsg(r?.ok ? "✓ Đã nạp từ file" : "Lỗi: " + (r?.error || "?")); if (r?.ok) { setName(""); onRefresh(); } } finally { setBusy(false); } }
 
   const box = "mt-3 rounded-lg border p-3 space-y-2";
+  const addRef = useRef(null);
+  // Nút "Nhập cookie" / "Thêm bằng Facebook" trên thanh công cụ của kho: mở đúng ô nhập rồi cuộn tới.
+  const onAdd = (kind) => { setOpen(kind); setTimeout(() => addRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
   return (
     <div>
-      <AccountWarehouse onRefresh={onRefresh} />
-      <div className="mx-auto max-w-2xl">
+      <AccountWarehouse onRefresh={onRefresh} onAdd={onAdd} />
+      <div ref={addRef} className="mx-auto max-w-2xl">
       <Card>
         <CardHeader><CardTitle>Thêm / đăng nhập nick</CardTitle></CardHeader>
         <CardContent className="space-y-3">
