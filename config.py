@@ -51,6 +51,16 @@ VIDEO_TIMEOUT = int(os.getenv("DOLA_VIDEO_TIMEOUT", "900"))
 # không ghim nick. Tắt (DOLA_AUTO_RETRY=0) = lỗi là dừng ngay. Đổi được lúc chạy qua POST /api/admin/retry.
 AUTO_RETRY = os.getenv("DOLA_AUTO_RETRY", "1").strip().lower() not in ("0", "false", "no", "off")
 
+# Giãn nhịp giữa các lần gửi lệnh lên Dola (toàn server, mọi nick): cố định + ngẫu nhiên 0..JITTER giây.
+# Học từ DomixHub ("Nghỉ giữa các job" + jitter 2–5s). Bắn 10 nick trong cùng 1 giây là dấu hiệu bot rõ nhất
+# và trùng với các đợt "Dola lỗi tạm thời" (43 lần/ngày 11/9).
+SUBMIT_GAP_SEC = float(os.getenv("DOLA_SUBMIT_GAP", "3"))
+SUBMIT_JITTER_SEC = float(os.getenv("DOLA_SUBMIT_JITTER", "3"))
+
+# Job KHÔNG ghim nick: thử tối đa N nick rồi dừng (DomixHub: 3). Trước đây duyệt hết danh sách →
+# 1 lỗi hệ thống = mở Chrome trên cả chục nick, đốt sạch lượt.
+MAX_ROTATE = int(os.getenv("DOLA_MAX_ROTATE", "3"))
+
 # Tự xóa watermark "Dola AI" ngay khi tải video xong (BẬT mặc định; DOLA_AUTO_REMOVE_WM=0 để tắt)
 AUTO_REMOVE_WM = os.getenv("DOLA_AUTO_REMOVE_WM", "1").strip().lower() not in ("0", "false", "no", "off", "")
 

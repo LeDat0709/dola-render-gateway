@@ -13,8 +13,14 @@ from browser_pool import BrowserPool
 from video_worker_ui import AccountLimitedError, TransientDolaError
 
 
-def _pool(tmp: str) -> BrowserPool:
-    return BrowserPool(accounts_dir=str(Path(tmp) / "accounts"), db_path=str(Path(tmp) / "pool.db"))
+# Test không cần giãn nhịp thật (mặc định 3–6s mỗi lần gửi); test riêng bên dưới bật lại.
+browser_pool.config.SUBMIT_GAP_SEC = 0
+browser_pool.config.SUBMIT_JITTER_SEC = 0
+
+
+def _pool(tmp: str, conc: int = 1) -> BrowserPool:
+    return BrowserPool(accounts_dir=str(Path(tmp) / "accounts"), db_path=str(Path(tmp) / "pool.db"),
+                       max_concurrency=conc)
 
 
 def test_status_for_unknown_nick_is_kept():
@@ -99,10 +105,52 @@ def test_auto_retry_off_fails_fast():
             browser_pool.config.AUTO_RETRY = True
 
 
+def test_submits_are_paced():
+    """DomixHub: nghỉ + jitter giữa các job. 3 job song song không được gửi cùng một giây."""
+    import time
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp, conc=3)
+        for n in ("n1", "n2", "n3"):
+            (Path(tmp) / "accounts" / n).mkdir(parents=True)
+        stamps = []
+        async def gen(account, *a, **kw):
+            stamps.append(time.monotonic())
+            return {"ok": True}
+        browser_pool.generate_video = gen
+        browser_pool.config.SUBMIT_GAP_SEC = 0.3
+        try:
+            async def main():
+                await asyncio.gather(*(pool.generate_video("p", "9:16", 10, account=n) for n in ("n1", "n2", "n3")))
+            asyncio.run(main())
+        finally:
+            browser_pool.config.SUBMIT_GAP_SEC = 0
+        stamps.sort()
+        gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+        assert len(stamps) == 3 and all(g >= 0.25 for g in gaps), gaps
+
+
+def test_unpinned_job_stops_after_max_rotate():
+    """DomixHub xoay tối đa 3 nick. Trước đây duyệt hết danh sách → 1 lỗi = mở Chrome trên cả kho."""
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp)
+        for i in range(6):
+            (Path(tmp) / "accounts" / f"n{i}").mkdir(parents=True)
+        gen = _fake_gen(AccountLimitedError("Hết lượt tạo video hôm nay"))
+        browser_pool.generate_video = gen
+        try:
+            asyncio.run(pool.generate_video("p", "9:16", 10))       # không ghim nick
+            assert False, "phải ném lỗi"
+        except RuntimeError as e:
+            assert "Đã thử 3 nick" in str(e), str(e)
+        assert len(gen.calls) == 3, gen.calls                       # dừng ở 3, không sang n3..n5
+
+
 if __name__ == "__main__":
     test_status_for_unknown_nick_is_kept()
     test_new_profile_dir_shows_up_without_restart()
     test_timeout_in_retry_does_not_rotate()
     test_pinned_nick_reports_real_reason()
     test_auto_retry_off_fails_fast()
+    test_submits_are_paced()
+    test_unpinned_job_stops_after_max_rotate()
     print("OK")

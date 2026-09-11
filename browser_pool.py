@@ -1,5 +1,6 @@
 """Browser Account Pool: Manages accounts/ profiles with concurrency control and daily limits."""
 import asyncio
+import random
 import shutil
 import sqlite3
 import time
@@ -25,6 +26,21 @@ import config
 
 DAILY_LIMIT = config.DAILY_LIMIT
 COOLDOWN_SEC = 1800  # 30-minute cooldown on risk control
+
+# Cổng giãn nhịp: mỗi lần gửi lệnh lấy một "khe" cách khe trước >= SUBMIT_GAP + ngẫu nhiên. Khoá chỉ giữ lúc
+# tính khe, ngủ ở ngoài → N job song song tự xếp so le thay vì bắn cùng một giây.
+_PACE_LOCK = asyncio.Lock()
+_next_slot = 0.0
+
+
+async def _pace() -> None:
+    global _next_slot
+    async with _PACE_LOCK:
+        now = time.monotonic()
+        wait = max(0.0, _next_slot - now)
+        _next_slot = max(now, _next_slot) + config.SUBMIT_GAP_SEC + random.uniform(0, config.SUBMIT_JITTER_SEC)
+    if wait > 0:
+        await asyncio.sleep(wait)
 
 
 class AllAccountsLimitedError(RuntimeError):
@@ -484,6 +500,7 @@ class BrowserPool:
         try:
             last_err = None
             pinned = account is not None
+            tried: set[str] = set()
             if account is not None:
                 match = next((a for a in self.list_accounts() if a["name"] == account), None)
                 if match is None:
@@ -499,6 +516,10 @@ class BrowserPool:
             for a in candidates:
                 if not config.AUTO_RETRY and last_err is not None:
                     raise last_err   # người dùng tắt xoay nick: nick đầu hỏng là dừng, không thử nick khác
+                if not pinned and len(tried) >= config.MAX_ROTATE:
+                    raise RuntimeError(
+                        f"Đã thử {len(tried)} nick ({', '.join(sorted(tried))}) đều lỗi — dừng để không đốt lượt. "
+                        f"Lỗi cuối: {last_err}")
                 if not self._schedulable(a):
                     continue
                 account = a["name"]
@@ -509,10 +530,12 @@ class BrowserPool:
                 async with lock:
                     if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
                         continue  # State changed while waiting
+                    tried.add(account)
                     try:
                         def on_balance(balance, source=""):
                             self._set_credit_balance(account, balance, source)
 
+                        await _pace()
                         await _hold_browser()
                         result = await generate_video(
                             account, prompt, ratio, duration, model=model,
@@ -566,6 +589,7 @@ class BrowserPool:
                         print(f"[pool] {account} Dola lỗi tạm thời, thử lại 1 lần: {e}", flush=True)
                         try:
                             await asyncio.sleep(3)
+                            await _pace()
                             await _hold_browser()
                             result = await generate_video(
                                 account, prompt, ratio, duration, model=model,
