@@ -106,12 +106,14 @@ async def google_login(g, email: str, password: str, secret: str):
 
 async def add_account_flow(account: str, email: str, password: str, secret: str) -> bool:
     """Full account addition flow; returns True on success."""
-    profile_dir = Path("accounts") / account
+    profile_dir = config.ACCOUNTS_DIR / account
     profile_dir.mkdir(parents=True, exist_ok=True)
 
     async with async_playwright() as p:
         kwargs = {"headless": False, "args": LAUNCH_ARGS,
                   "locale": "ja-JP", "timezone_id": "Asia/Tokyo"}
+        if config.BROWSER_CHANNEL:
+            kwargs["channel"] = config.BROWSER_CHANNEL
         if config.PROXY:
             kwargs["proxy"] = {"server": config.PROXY}
         context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)

@@ -9,11 +9,20 @@ from pathlib import Path
 
 from dola_client import CreditError
 from video_worker_ui import (
-    AccountLimitedError, CreditInsufficientError, RiskControlError, generate_video, resume_video,
+    AccountLimitedError,
+    ContentPolicyViolationError,
+    CreditInsufficientError,
+    LoggedOutError,
+    ParameterChangeError,
+    PortraitProtectionError,
+    RiskControlError,
+    TransientDolaError,
+    generate_video,
+    resume_video,
 )
 import config
 
-DAILY_LIMIT = 2
+DAILY_LIMIT = config.DAILY_LIMIT
 COOLDOWN_SEC = 1800  # 30-minute cooldown on risk control
 
 
@@ -25,11 +34,30 @@ class AllAccountsQuotaBlockedError(RuntimeError):
     """All active schedulable accounts are known to have insufficient credits."""
 
 
+MAX_BROWSER_SLOTS = 24   # trần cứng: mỗi slot là một Chrome thật (~0.4GB)
+
+
+def resize_semaphore(sem: asyncio.Semaphore, delta: int) -> None:
+    """Đổi trần một semaphore đang chạy: cộng thì nhả thêm permit, trừ thì giữ bớt lại.
+
+    Job đang chạy không bị đụng tới; giảm trần chỉ có hiệu lực khi slot rảnh ra.
+    """
+    if delta > 0:
+        for _ in range(delta):
+            sem.release()
+    elif delta < 0:
+        async def park(n: int):
+            for _ in range(n):
+                await sem.acquire()
+        asyncio.create_task(park(-delta))
+
+
 class BrowserPool:
     def __init__(self, accounts_dir: str = "accounts", db_path: str = "pool_usage.db",
                  max_concurrency: int = 1):
         self.accounts_dir = Path(accounts_dir)
-        self.semaphore = asyncio.Semaphore(max_concurrency)
+        self.max_concurrency = max(1, max_concurrency)
+        self.semaphore = asyncio.Semaphore(self.max_concurrency)
         self._locks: dict[str, asyncio.Lock] = {}
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -185,7 +213,7 @@ class BrowserPool:
                 "credit_checked_at": m["credit_checked_at"] if m else 0,
                 "used_today": used,
                 "limit": DAILY_LIMIT,
-                "remaining": max(0, DAILY_LIMIT - used),
+                "remaining": (m["credit_balance"] if (m and m["credit_balance"] is not None) else max(0, DAILY_LIMIT - used)),
                 "busy": bool(lock and lock.locked()),
             })
         return out
@@ -211,6 +239,18 @@ class BrowserPool:
         self._conn.execute(
             "UPDATE accounts_meta SET note=? WHERE name=?", (note, name))
         self._conn.commit()
+
+    def assert_idle(self, name: str):
+        """Ném RuntimeError nếu nick đang render (đang giữ khoá pool).
+
+        Phải gọi TRƯỚC mọi thao tác đụng profile từ đường KHÔNG qua khoá pool
+        (xoá cookie, mở cửa sổ profile): assert_profile_free sẽ GIẾT tiến trình đang
+        giữ profile chứ không từ chối, nên nếu không chặn ở đây thì xoá cookie giữa
+        lúc render sẽ giết luôn video đang chạy.
+        """
+        lock = self._locks.get(name)
+        if lock and lock.locked():
+            raise RuntimeError(f"Nick '{name}' đang tạo video — chờ xong rồi hãy thao tác.")
 
     def delete_account(self, name: str):
         lock = self._locks.get(name)
@@ -257,9 +297,11 @@ class BrowserPool:
         return not row or row["credit_balance"] is None or row["credit_balance"] >= required
 
     def _schedulable(self, a: dict) -> bool:
+        cb = a["credit_balance"]
+        # Biết credit thật → dùng credit (còn >=1 là chạy được video ngắn); chưa biết → dùng cap ngày.
+        credit_ok = (a["used_today"] < DAILY_LIMIT) if cb is None else (cb >= 1)
         return (a["scheduling"] and not a["cooling"] and not a["rate_limited"]
-                and not a["quota_blocked"] and a["used_today"] < DAILY_LIMIT
-                and (a["credit_balance"] is None or a["credit_balance"] >= 2))
+                and not a["quota_blocked"] and a["login_ok"] != 0 and credit_ok)
 
     @property
     def all_accounts_limited(self) -> bool:
@@ -286,14 +328,65 @@ class BrowserPool:
         return len(self.accounts)
 
     def account_status(self) -> list:
+        # scheduling/cooling/busy phải có mặt: thiếu chúng thì tab Studio (đọc /health)
+        # vẽ nick đã tắt lịch hoặc đang nghỉ thành "sẵn sàng" và bắn job vào đó.
         return [{
             "account": a["name"], "used_today": a["used_today"], "limit": a["limit"],
             "rate_limited": a["rate_limited"], "rate_limited_until": a["rate_limited_until"],
             "quota_blocked": a["quota_blocked"], "quota_blocked_until": a["quota_blocked_until"],
+            "login_ok": a.get("login_ok"), "remaining": a.get("remaining"),
+            "scheduling": a.get("scheduling", True), "cooling": a.get("cooling", False),
+            "busy": a.get("busy", False),
         } for a in self.list_accounts()]
 
+    async def verify_account_http(self, name: str):
+        """Kiểm tra đăng nhập NHANH bằng cookies.json (không mở trình duyệt).
+
+        Trả True/False; None khi không có bản sao cookie để kiểm tra.
+        """
+        from browser import verify_cookie_http
+        import json as _json
+        f = self.accounts_dir / name / "cookies.json"
+        if not f.exists():
+            return None
+        try:
+            data = _json.loads(f.read_text(encoding="utf-8"))
+            cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in data
+                                   if c.get("name") and c.get("value"))
+        except Exception:
+            return None
+        if "sessionid" not in cookie_str and "sid_guard" not in cookie_str:
+            return None
+        ok, _ = await verify_cookie_http(cookie_str)
+        self.set_login_status(name, ok)
+        return ok
+
+    def set_max_concurrency(self, limit: int) -> int:
+        """Đổi số nick được gửi cùng lúc mà không cần khởi động lại server."""
+        limit = max(1, min(int(limit), MAX_BROWSER_SLOTS))
+        resize_semaphore(self.semaphore, limit - self.max_concurrency)
+        self.max_concurrency = limit
+        return limit
+
+    async def verify_all(self) -> list:
+        """Kiểm tra phiên mọi nick (ưu tiên HTTP nhanh, thiếu cookie backup thì dùng trình duyệt)."""
+        browser_slots = asyncio.Semaphore(config.LOGIN_CONCURRENCY)
+
+        async def check(name: str) -> dict:
+            r = None
+            try:
+                r = await self.verify_account_http(name)      # HTTP thuần: chạy song song thoải mái
+                if r is None:
+                    async with browser_slots:                 # phải mở Chrome: giới hạn cho khỏi nghẽn
+                        r = await self.verify_account(name)
+            except Exception as e:
+                print(f"[verify] {name} lỗi: {e}", flush=True)
+            return {"name": name, "ok": bool(r), "checked": r is not None}
+
+        return list(await asyncio.gather(*(check(n) for n in list(self.accounts))))
+
     async def resume_video(self, account: str, conversation_id: str, timeout: int,
-                           on_poll=None) -> dict:
+                           on_poll=None, ratio: str | None = None, duration: int | None = None) -> dict:
         """Resumes an accepted session without re-scheduling."""
         async with self.semaphore:
             lock = self._locks.setdefault(account, asyncio.Lock())
@@ -302,7 +395,8 @@ class BrowserPool:
                     self._set_credit_balance(account, balance, source)
                 try:
                     result = await resume_video(account, conversation_id, timeout,
-                                                on_poll=on_poll, on_balance=on_balance)
+                                                on_poll=on_poll, on_balance=on_balance,
+                                                ratio=ratio, duration=duration)
                     self._claim(account)
                     self._conn.execute(
                         "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
@@ -316,12 +410,49 @@ class BrowserPool:
 
     async def generate_video(self, prompt: str, ratio: str = None, duration: int = None,
                              model: str = "seedance_v2.0", on_conversation_id=None,
-                             on_poll=None, on_balance=None,
-                             reference_image_paths: list[str] | None = None) -> dict:
-        """Picks an idle schedulable account; automatically rotates on quota/risk limits."""
-        async with self.semaphore:
+                             on_poll=None, on_balance=None, on_submitted=None,
+                             reference_image_paths: list[str] | None = None,
+                             account: str | None = None) -> dict:
+        """Picks an idle schedulable account; automatically rotates on quota/risk limits.
+
+        account: when set, only that nick is used (no rotation). Raises if it does not
+        exist or is not currently usable.
+        """
+        # Semaphore = số Chrome chạy cùng lúc (RAM), KHÔNG phải số video cùng lúc: khi bật
+        # DOLA_HTTP_POLL worker gọi on_browser_free ngay sau khi gửi xong (~20s) nên slot được trả
+        # lại trong lúc video vẫn đang render → nhiều nick chạy song song mà không tốn thêm RAM.
+        await self.semaphore.acquire()
+        browser_held = True
+
+        def _release_browser():
+            nonlocal browser_held
+            if browser_held:
+                browser_held = False
+                self.semaphore.release()
+
+        async def _hold_browser():
+            nonlocal browser_held
+            if not browser_held:
+                await self.semaphore.acquire()
+                browser_held = True
+
+        try:
             last_err = None
-            for a in self.list_accounts():
+            if account is not None:
+                match = next((a for a in self.list_accounts() if a["name"] == account), None)
+                if match is None:
+                    raise RuntimeError(f"Nick '{account}' không tồn tại")
+                if not self._schedulable(match):
+                    raise RuntimeError(
+                        f"Nick '{account}' không sẵn sàng (đã đăng xuất, hết lượt, hết điểm, "
+                        f"đang tắt lịch) — chọn nick khác hoặc để Tự động")
+                if self._locks.setdefault(account, asyncio.Lock()).locked():
+                    raise RuntimeError(
+                        f"Nick '{account}' đang bận tạo video khác — chờ video hiện tại xong rồi chạy tiếp.")
+                candidates = [match]
+            else:
+                candidates = self.list_accounts()
+            for a in candidates:
                 if not self._schedulable(a):
                     continue
                 account = a["name"]
@@ -336,21 +467,41 @@ class BrowserPool:
                         def on_balance(balance, source=""):
                             self._set_credit_balance(account, balance, source)
 
+                        await _hold_browser()
                         result = await generate_video(
                             account, prompt, ratio, duration, model=model,
                             on_conversation_id=on_conversation_id, on_poll=on_poll,
-                            on_balance=on_balance, reference_image_paths=reference_image_paths)
+                            on_balance=on_balance, on_submitted=on_submitted,
+                            on_browser_free=_release_browser, on_browser_hold=_hold_browser,
+                            reference_image_paths=reference_image_paths)
                         self._claim(account)
                         self._conn.execute(
                             "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
                             (time.time(), account))
                         self._conn.commit()
                         return result
+                    except (ContentPolicyViolationError, PortraitProtectionError) as e:
+                        # Prompt/image problem, not an account problem: no rotation helps.
+                        print(f"[pool] {account} rejected due to content policy: {e}", flush=True)
+                        raise
+                    except LoggedOutError as e:
+                        print(f"[pool] {account} logged out (session invalid), disabling until re-login: {e}", flush=True)
+                        self.set_login_status(account, False)
+                        last_err = e
+                        continue
                     except CreditInsufficientError as e:
-                        print(f"[pool] {account} insufficient points before generation, skipping: {e}", flush=True)
+                        # Pre-flight balance too low for any generation: block until reset, rotate.
+                        print(f"[pool] {account} insufficient points, skipping: {e}", flush=True)
                         self._mark_quota_blocked(account, str(e))
                         last_err = e
                         continue
+                    except ParameterChangeError as e:
+                        # This specific video costs more credits than remain (e.g. 3 needed, 2 left).
+                        # The account can still make SHORTER videos today, so do NOT block it — and
+                        # rotating to other free nicks (same low credits) just wastes launches.
+                        # Surface Dola's clear "reduce duration" message straight to the caller.
+                        print(f"[pool] {account} needs more credits for this video size (not blocking): {e}", flush=True)
+                        raise
                     except AccountLimitedError as e:
                         print(f"[pool] {account} reached daily limit, rotating: {e}", flush=True)
                         self._mark_daily_limit(account, str(e))
@@ -361,6 +512,29 @@ class BrowserPool:
                         self._claim(account)
                         last_err = e
                         continue
+                    except TransientDolaError as e:
+                        # Dola lỗi tạm thời (không phải lỗi tài khoản, thường không trừ lượt) → thử lại
+                        # chính nick này 1 lần; vẫn lỗi thì xoay sang nick khác.
+                        print(f"[pool] {account} Dola lỗi tạm thời, thử lại 1 lần: {e}", flush=True)
+                        try:
+                            await asyncio.sleep(3)
+                            await _hold_browser()
+                            result = await generate_video(
+                                account, prompt, ratio, duration, model=model,
+                                on_conversation_id=on_conversation_id, on_poll=on_poll,
+                                on_balance=on_balance, on_submitted=on_submitted,
+                                on_browser_free=_release_browser, on_browser_hold=_hold_browser,
+                                reference_image_paths=reference_image_paths)
+                            self._claim(account)
+                            self._conn.execute(
+                                "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
+                                (time.time(), account))
+                            self._conn.commit()
+                            return result
+                        except Exception as e2:
+                            print(f"[pool] {account} vẫn lỗi sau khi thử lại, xoay nick: {e2}", flush=True)
+                            last_err = e2
+                            continue
                     except RiskControlError as e:
                         print(f"[pool] {account} risk control triggered (30m cooldown), rotating: {e}", flush=True)
                         self._conn.execute(
@@ -391,3 +565,5 @@ class BrowserPool:
                     f"429: All schedulable accounts have reached Dola daily limit: {last_err or 'No accounts'}"
                 )
             raise RuntimeError(f"No available accounts in pool: {last_err or 'No accounts'}")
+        finally:
+            _release_browser()

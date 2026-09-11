@@ -69,6 +69,8 @@ class TaskStore:
                 ("started_at", "REAL"),
                 ("finished_at", "REAL"),
                 ("client_concurrency_limit", "INTEGER DEFAULT 0"),
+                ("submitted_at", "REAL"),
+                ("attempts", "INTEGER DEFAULT 0"),
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
@@ -240,6 +242,23 @@ class TaskStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def orphan_processing_tasks(self, keep_ids) -> list:
+        """Tasks stuck in 'processing' that can't be resumed (no conv/account) — handled on startup."""
+        with _LOCK:
+            rows = self._conn.execute("SELECT * FROM tasks WHERE status='processing'").fetchall()
+        keep = set(keep_ids)
+        return [dict(r) for r in rows if dict(r)["id"] not in keep]
+
+    def requeue(self, task_id):
+        """Puts an unstarted task back in the queue so startup re-runs it instead of failing it."""
+        with _LOCK:
+            self._conn.execute(
+                "UPDATE tasks SET status='queued', attempts=COALESCE(attempts,0)+1, "
+                "started_at=NULL, submitted_at=NULL, conversation_id=NULL, deadline_at=NULL, "
+                "error=NULL, failure_code=NULL, updated_at=? WHERE id=?",
+                (time.time(), task_id))
+            self._conn.commit()
+
     def recoverable_queued_tasks(self) -> list:
         """Recovers queued tasks without conversation_id after restart."""
         with _LOCK:
@@ -315,6 +334,62 @@ class TaskStore:
             "success_rate": round(completed / total, 3) if total else None,
             "per_day": per_day,
             "per_account_total": {r[0]: r[1] for r in per_account},
+        }
+
+    def report(self, recent_limit: int = 40) -> dict:
+        """Báo cáo đầy đủ: tổng, hôm nay, theo nick, theo model/giây, và video gần đây."""
+        today = datetime.date.today().isoformat()
+        with _LOCK:
+            ov = self._conn.execute(
+                "SELECT sum(status='completed') c, sum(status='failed') f, count(*) n FROM tasks"
+            ).fetchone()
+            td = self._conn.execute(
+                "SELECT sum(status='completed') c, sum(status='failed') f FROM tasks "
+                "WHERE date(created_at,'unixepoch','localtime')=?", (today,)
+            ).fetchone()
+            accs = self._conn.execute(
+                "SELECT account, "
+                "sum(status='completed') total, "
+                "sum(status='failed') failed, "
+                "sum(status='completed' AND date(created_at,'unixepoch','localtime')=?) today, "
+                "max(CASE WHEN status='completed' THEN finished_at END) last_at, "
+                "avg(CASE WHEN status='completed' THEN duration END) avg_dur "
+                "FROM tasks WHERE account IS NOT NULL GROUP BY account", (today,)
+            ).fetchall()
+            recent = self._conn.execute(
+                "SELECT account, model, duration, ratio, finished_at, video_url FROM tasks "
+                "WHERE status='completed' AND video_url IS NOT NULL "
+                "ORDER BY finished_at DESC LIMIT ?", (recent_limit,)
+            ).fetchall()
+            days = [(datetime.date.today() - datetime.timedelta(days=i)).isoformat() for i in range(6, -1, -1)]
+            per_day = []
+            for d in days:
+                dr = self._conn.execute(
+                    "SELECT sum(status='completed'), sum(status='failed') FROM tasks "
+                    "WHERE date(created_at,'unixepoch','localtime')=?", (d,)
+                ).fetchone()
+                per_day.append({"day": d[5:], "completed": dr[0] or 0, "failed": dr[1] or 0})
+            by_model = self._conn.execute(
+                "SELECT model, count(*) FROM tasks WHERE status='completed' GROUP BY model"
+            ).fetchall()
+            by_dur = self._conn.execute(
+                "SELECT duration, count(*) FROM tasks WHERE status='completed' GROUP BY duration"
+            ).fetchall()
+        c, f = ov["c"] or 0, ov["f"] or 0
+        return {
+            "total_completed": c, "total_failed": f, "total_tasks": ov["n"] or 0,
+            "today_completed": td["c"] or 0, "today_failed": td["f"] or 0,
+            "success_rate": round(c / (c + f), 3) if (c + f) else None,
+            "per_account": [
+                {"account": r["account"], "total": r["total"] or 0, "failed": r["failed"] or 0,
+                 "today": r["today"] or 0, "last_at": r["last_at"],
+                 "avg_dur": round(r["avg_dur"], 1) if r["avg_dur"] else None}
+                for r in accs
+            ],
+            "recent": [dict(r) for r in recent],
+            "per_day": per_day,
+            "by_model": {(r[0] or "?"): r[1] for r in by_model},
+            "by_duration": {str(r[0]): r[1] for r in by_dur},
         }
 
     # ===== api keys =====

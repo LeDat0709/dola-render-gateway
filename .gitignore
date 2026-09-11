@@ -31,3 +31,20 @@ dl_now.py
 __pycache__/
 .venv/
 *.pyc
+
+# --- third-party binaries analysed locally (150MB) ---
+*.exe
+accounts_fb/
+logs/
+
+desktop/renderer/node_modules/
+desktop/node_modules/
+
+# Ban dong goi + runtime tai ve khi build
+dist-app/
+build/
+
+# Rác máy local / bản sao cấu hình / file của bên thứ ba
+.DS_Store
+*.bak
+DomixHub-Seedance.exe

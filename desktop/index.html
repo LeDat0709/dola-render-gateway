@@ -1,0 +1,982 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<title>Dola Studio</title>
+<style>
+  :root {
+    --bg:#0a0a0b; --bg2:#18181b; --panel:#0c0c0e; --panel2:#1c1c20; --line:#27272a;
+    --fg:#fafafa; --mut:#a1a1aa; --mut2:#71717a;
+    /* shadcn dark: primary = gần trắng, chữ đen (dấu ấn shadcn) */
+    --primary:#fafafa; --primary-fg:#18181b; --primary-hover:#e6e6e9;
+    --acc:#818cf8; --acc2:#a5b4fc; --acc-fade:rgba(250,250,250,.10); --ring:#52525b;
+    --fast:#8b5cf6; --fb:#1877f2;
+    --ok:#22c55e; --bad:#ef4444; --warn:#f59e0b;
+    --radius:8px; --shadow:0 1px 2px rgba(0,0,0,.4);
+  }
+  * { box-sizing:border-box; }
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background:#3f3f46; border-radius:8px; border:2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover { background:#52525b; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  body {
+    margin:0; color:var(--fg); font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    letter-spacing:-0.006em;
+    background:var(--bg);
+    -webkit-font-smoothing:antialiased;
+  }
+  header {
+    display:flex; align-items:center; gap:12px; padding:14px 24px;
+    background:color-mix(in srgb, var(--panel) 85%, transparent); border-bottom:1px solid var(--line);
+    position:sticky; top:0; z-index:10; backdrop-filter:blur(10px) saturate(1.2);
+  }
+  header h1 { font-size:16px; font-weight:650; margin:0; margin-right:auto; letter-spacing:.2px;
+    display:flex; align-items:center; gap:9px; }
+  header h1::before { content:"◆"; color:var(--acc2); font-size:13px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--mut2); display:inline-block; }
+  .dot.up { background:var(--ok); box-shadow:0 0 0 3px rgba(34,197,94,.18); }
+  .dot.down { background:var(--bad); box-shadow:0 0 0 3px rgba(239,68,68,.18); }
+  #gwLabel { font-size:12px; color:var(--mut); }
+
+  button {
+    display:inline-flex; align-items:center; justify-content:center; gap:6px;
+    background:var(--primary); color:var(--primary-fg); border:1px solid transparent; min-height:36px;
+    border-radius:6px; padding:0 15px; cursor:pointer; font-size:13.5px; font-weight:500; white-space:nowrap;
+    transition:background .15s ease, border-color .15s, box-shadow .15s, transform .05s;
+  }
+  button:hover:not(:disabled) { background:var(--primary-hover); }
+  button:active:not(:disabled) { transform:translateY(.5px); }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--fg); font-weight:500; }
+  button.ghost:hover:not(:disabled) { background:var(--panel2); border-color:#3f3f46; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+
+  main { display:block; padding:24px 28px; max-width:1500px; margin:0 auto; }
+  .tabbar { display:inline-flex; gap:4px; margin-bottom:22px; background:var(--panel2); padding:4px; border-radius:9px; border:1px solid var(--line); }
+  .tab { background:transparent; border:0; color:var(--mut); font-weight:550; padding:7px 15px; border-radius:6px; cursor:pointer; font-size:13px; transition:background .12s, color .12s; }
+  .tab:hover { color:var(--fg); background:transparent; box-shadow:none; }
+  .tab.active { color:var(--fg); background:var(--panel); box-shadow:0 1px 2px rgba(0,0,0,.35); }
+  .tabpanel[hidden] { display:none; }
+  /* Tab Tài khoản / Cài đặt: thẻ hẹp, căn giữa cho cân đối (như trang cài đặt) */
+  #tab-acct .tabinner, #tab-settings .tabinner { max-width:680px; margin:0 auto; }
+  @media (max-width:900px){ main{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:24px; box-shadow:var(--shadow); }
+  .card h2 { font-size:14px; letter-spacing:0; color:var(--fg); margin:0 0 4px; font-weight:600; }
+  .card > h2 + * { margin-top:14px; }
+
+  label { display:block; font-size:13px; color:var(--fg); margin:14px 0 6px; font-weight:500; letter-spacing:-.01em; }
+  input, select, textarea {
+    width:100%; background:var(--bg2); color:var(--fg); border:1px solid var(--line); min-height:36px;
+    border-radius:6px; padding:8px 12px; font:inherit; transition:border-color .12s, box-shadow .12s;
+  }
+  input::placeholder, textarea::placeholder { color:var(--mut2); }
+  input:focus, select:focus, textarea:focus { outline:0; border-color:var(--ring); box-shadow:0 0 0 2px var(--bg), 0 0 0 4px rgba(228,228,231,.25); }
+  textarea { resize:vertical; }
+  select { appearance:none; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='%238b93a7'><path d='M0 0l5 6 5-6z'/></svg>"); background-repeat:no-repeat; background-position:right 11px center; padding-right:28px; }
+  .row { display:flex; gap:12px; } .row > * { flex:1; min-width:0; }
+
+  .actions { margin-top:18px; display:flex; gap:10px; }
+  #gen { flex:1.2; } #genFast { flex:1; background:var(--fast); }
+  #genFast:hover:not(:disabled){ box-shadow:0 4px 14px rgba(139,92,246,.25); }
+
+  .status { font-size:12px; color:var(--mut); margin-top:12px; min-height:18px; line-height:1.5; }
+  video { width:100%; border-radius:10px; margin-top:14px; background:#000; box-shadow:var(--shadow); }
+
+  ul { list-style:none; margin:0; padding:0; }
+  .acc {
+    display:flex; align-items:center; gap:9px; padding:10px 11px; margin-bottom:8px; font-size:13px;
+    background:var(--bg2); border:1px solid var(--line); border-radius:var(--radius);
+  }
+  .acc b { font-weight:600; }
+  .acc small { color:var(--mut); margin-left:auto; white-space:nowrap; font-size:11.5px; }
+  .acc button { padding:5px 9px; font-size:11px; font-weight:500; }
+  .pill { font-size:10.5px; padding:2px 8px; border-radius:6px; font-weight:600; letter-spacing:.02em; border:1px solid transparent; }
+  .pill.ok { background:rgba(34,197,94,.12); color:#4ade80; border-color:rgba(34,197,94,.30); }
+  .pill.bad { background:rgba(239,68,68,.12); color:#f87171; border-color:rgba(239,68,68,.30); }
+  .pill.warn { background:rgba(245,158,11,.12); color:#fbbf24; border-color:rgba(245,158,11,.30); }
+  /* Popup xem video: overlay cố định, không đẩy layout, vừa màn hình */
+  .vmodal { position:fixed; inset:0; z-index:100; display:flex; align-items:center; justify-content:center;
+    background:rgba(0,0,0,.80); backdrop-filter:blur(3px); padding:24px; }
+  .vmodal[hidden] { display:none; }
+  .vmodal-box { position:relative; width:100%; max-width:min(92vw,960px); }
+  .vmodal-box video { width:100%; max-height:86vh; border-radius:12px; background:#000; box-shadow:var(--shadow); display:block; }
+  .vmodal-x { position:absolute; top:-14px; right:-14px; width:34px; height:34px; border-radius:50%;
+    background:var(--panel2); color:var(--fg); border:1px solid var(--line); font-size:15px; line-height:1;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .vmodal-x:hover { filter:brightness(1.25); }
+
+  .divider { height:1px; background:var(--line); margin:18px 0; }
+  .hint { font-size:11.5px; color:var(--mut2); line-height:1.5; margin-top:12px; }
+  .grp { background:var(--bg2); border:1px solid var(--line); border-radius:var(--radius); padding:12px; margin-top:10px; }
+
+  #jobs { margin-top:12px; }
+  .job { display:flex; align-items:center; gap:10px; padding:8px 10px; margin-bottom:6px; font-size:12px;
+    background:var(--bg2); border:1px solid var(--line); border-radius:8px; }
+  .job .p { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .job .st { color:var(--mut); white-space:nowrap; }
+  .job a { color:var(--acc2); cursor:pointer; text-decoration:none; }
+  .job.ok .st { color:#4ade80; } .job.err .st { color:#f87171; }
+  .toolbar { background:var(--bg2); border:1px solid var(--line); border-radius:var(--radius); padding:12px; margin-bottom:14px; }
+  .toolrow { display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+  .toolrow .inl { color:var(--mut); font-size:11px; }
+  .mini { width:auto; padding:7px 9px; font-size:12px; }
+  .tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:var(--radius); }
+  table#studio { width:100%; border-collapse:collapse; font-size:12.5px; }
+  #studio th { text-align:left; color:var(--mut); font-weight:500; font-size:12.5px; text-transform:none; letter-spacing:0; height:44px; padding:0 12px; border-bottom:1px solid var(--line); background:var(--panel2); }
+  #studio td { padding:11px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  #studio tbody tr { transition:background .1s; }
+  #studio tbody tr:hover td { background:rgba(255,255,255,.025); }
+  #studio tr:last-child td { border-bottom:0; }
+  #studio input, #studio select { padding:6px 8px; font-size:12px; border-radius:6px; }
+  #studio .rprompt { min-width:170px; }
+  .tiny { font-size:10.5px; color:var(--mut2); margin-top:2px; }
+  #studio .racts { white-space:nowrap; text-align:right; }
+  #studio .racts button { width:30px; height:30px; min-height:0; padding:0; font-size:13px; margin-left:5px; border-radius:6px; }
+  #studio .racts button, #studio .done button { display:inline-flex; align-items:center; justify-content:center; color:var(--mut); }
+  #studio .racts button:hover, #studio .done button:hover { color:var(--fg); }
+  #studio .racts button:first-child { margin-left:0; }
+  #studio .done button { width:28px; height:26px; min-height:0; padding:0; }
+  #studio .rst a { color:var(--acc2); cursor:pointer; }
+  /* Ghim cột chọn + Nick: luôn thấy được khi bảng cuộn ngang */
+  #studio th:first-child, #studio td:first-child { position:sticky; left:0; z-index:2; }
+  #studio th:nth-child(2), #studio td:nth-child(2) { position:sticky; left:46px; z-index:2; box-shadow:1px 0 0 var(--line); }
+  #studio tbody td:first-child, #studio tbody td:nth-child(2) { background:var(--panel); }
+  #studio tbody tr:hover td:first-child, #studio tbody tr:hover td:nth-child(2) { background:#141417; }
+  #studio thead th:first-child, #studio thead th:nth-child(2) { background:var(--panel2); z-index:3; }
+  /* Trạng thái chạy: đồng hồ + thanh tiến trình */
+  .rst .wait { display:flex; align-items:center; gap:6px; color:var(--acc2); font-variant-numeric:tabular-nums; }
+  .pbar { height:4px; background:var(--line); border-radius:3px; overflow:hidden; margin-top:5px; }
+  .pbar > i { display:block; height:100%; width:38%; border-radius:3px;
+    background:linear-gradient(90deg,var(--acc2),var(--acc)); animation:pslide 1.15s linear infinite; }
+  @keyframes pslide { 0%{transform:translateX(-110%)} 100%{transform:translateX(360%)} }
+  /* Xong: thumbnail + thao tác */
+  .done { display:flex; align-items:center; gap:6px; }
+  .done .thumb { width:48px; height:30px; object-fit:cover; border-radius:5px; background:#000; cursor:pointer; flex:0 0 auto; border:1px solid var(--line); }
+  .sttbadge { font-size:11px; font-weight:700; color:var(--acc2); background:var(--acc-fade); padding:2px 7px; border-radius:6px; cursor:help; font-variant-numeric:tabular-nums; }
+  .done button { padding:4px 7px; font-size:12px; }
+  /* Lỗi: icon + nguyên nhân + gợi ý */
+  .err { line-height:1.35; }
+  .err .head { cursor:help; }
+  .err.account .head { color:#fbbf24; }
+  .err.tool .head { color:#f87171; }
+  .err .hint { color:var(--mut); font-size:10.5px; margin-top:1px; }
+  .pill.warn { background:rgba(245,158,11,.15); color:#fbbf24; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Dola Studio</h1>
+  <span id="gwStatus" class="dot"></span>
+  <span id="gwLabel" style="font-size:12px;color:var(--mut)">…</span>
+  <button id="gwStart" class="ghost">Bật server</button>
+  <button id="gwStop" class="ghost">Tắt</button>
+  <button id="openDl" class="ghost">Thư mục video</button>
+  <button id="viewLog" class="ghost">📄 Log</button>
+</header>
+
+<main>
+  <div class="tabbar">
+    <button class="tab active" data-tab="make">🎬 Tạo video</button>
+    <button class="tab" data-tab="acct">👤 Tài khoản</button>
+    <button class="tab" data-tab="settings">⚙ Cài đặt</button>
+  </div>
+  <div class="tabpanel" id="tab-make">
+  <section class="card">
+    <h2>Studio — mỗi nick một dòng, prompt riêng</h2>
+    <div class="toolbar">
+      <textarea id="bulkPrompt" rows="4" placeholder="Nhiều prompt, mỗi dòng 1 cái:&#10;con mèo lướt sóng&#10;con chó chạy trên biển&#10;&#10;• Điền tất cả = cùng 1 prompt cho mọi nick • Mỗi dòng 1 nick = chia lần lượt theo thứ tự"></textarea>
+      <div class="toolrow">
+        <span class="inl">Mặc định:</span>
+        <select id="dModel" class="mini"><option>seedance-2.0</option><option>seedance-2.5</option></select>
+        <select id="dDur" class="mini"><option>10</option><option>15</option><option>30</option></select>
+        <select id="dRatio" class="mini"><option>16:9</option><option>9:16</option><option>1:1</option><option>4:3</option><option>3:4</option></select>
+        <button id="fillAll" class="ghost" title="Chép cùng 1 prompt (dòng đầu) cho mọi nick">⬇ Điền tất cả</button>
+        <button id="fillLines" class="ghost" title="Mỗi dòng ở ô trên là 1 prompt, chia lần lượt cho từng nick từ trên xuống">⬇ Mỗi dòng 1 nick</button>
+        <button id="syncDef" class="ghost" title="Áp model / tỉ lệ / giây mặc định cho MỌI nick">⇄ Đồng bộ mặc định</button>
+        <button id="verifyAll" class="ghost" title="Kiểm tra nhanh phiên đăng nhập mọi nick">🩺 Kiểm tra tất cả</button>
+        <span style="flex:1"></span>
+        <button id="runReady" class="ghost" title="Chạy mọi nick đang sẵn sàng">▶ Chạy sẵn sàng</button>
+        <button id="retryFail" class="ghost" title="Chạy lại các nick vừa lỗi">↻ Chạy lại lỗi</button>
+        <button id="stopAll" class="ghost" title="Ngừng theo dõi (video có thể vẫn chạy trên Dola)">⏹ Dừng</button>
+        <button id="runSel">▶ Chạy đã chọn</button>
+      </div>
+    </div>
+    <div class="tablewrap">
+      <table id="studio">
+        <thead><tr>
+          <th style="width:26px"><input type="checkbox" id="selAll"></th>
+          <th style="width:120px">Nick</th><th>Prompt</th>
+          <th style="width:118px">Model</th><th style="width:74px">Tỉ lệ</th><th style="width:60px">Giây</th>
+          <th style="width:130px">Trạng thái</th><th style="width:104px"></th>
+        </tr></thead>
+        <tbody id="studioBody"><tr><td colspan="8" class="status">Đang tải…</td></tr></tbody>
+      </table>
+    </div>
+    <div id="genStatus" class="status"></div>
+    <div class="status" style="opacity:.85;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span id="thruput"></span>
+      <label style="display:flex;gap:4px;align-items:center">Nick gửi cùng lúc
+        <input id="cSend" type="number" min="1" max="24" style="width:54px"></label>
+      <label style="display:flex;gap:4px;align-items:center">Đăng nhập cùng lúc
+        <input id="cLogin" type="number" min="1" max="12" style="width:54px"></label>
+      <button id="cApply" class="ghost">Áp dụng</button>
+      <span id="cMsg" style="color:var(--mut)"></span>
+    </div>
+    <div id="logWrap" hidden>
+      <div style="display:flex;gap:8px;align-items:center;margin:10px 0 4px">
+        <strong style="font-size:12px">Nhật ký gateway (mới nhất ở dưới, tự cập nhật)</strong>
+        <span style="flex:1"></span>
+        <button id="logOpen" class="ghost">Mở file log</button>
+        <button id="logClose" class="ghost">Đóng</button>
+      </div>
+      <pre id="logPanel" style="max-height:280px;overflow:auto;background:#0b0f17;color:#cbd5e1;font:11px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;padding:10px;border-radius:8px;white-space:pre-wrap;word-break:break-word;margin:0"></pre>
+    </div>
+  </section>
+  </div>
+
+  <div class="tabpanel" id="tab-acct" hidden>
+  <div class="tabinner">
+  <section class="card">
+    <h2>Thêm / đăng nhập nick</h2>
+    <label>Tên nick</label>
+    <input id="nickName" placeholder="acc3" />
+    <label>Ngôn ngữ giao diện Dola</label>
+    <select id="nickLang">
+      <option value="ja">ja (khuyên dùng — worker cần UI tiếng Nhật)</option>
+      <option value="vi">vi</option>
+      <option value="en">en</option>
+    </select>
+    <div class="row" style="margin-top:12px">
+      <button id="fbBtn" style="background:#1877f2">🔵 Thêm bằng Facebook</button>
+      <button id="pasteCookieBtn">🍪 Dán Cookie Dola</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="loginNick" class="ghost">Đăng nhập (cửa sổ app)</button>
+      <button id="addNick" class="ghost">Nạp từ file (.txt)</button>
+    </div>
+    <div id="fbBox" style="display:none;margin-top:10px;background:rgba(24,119,242,0.07);padding:12px;border-radius:8px;border:1px solid rgba(24,119,242,0.45)">
+      <label style="margin-top:0;color:#93c5fd">Cookie/dòng Facebook — dán NHIỀU DÒNG để nạp nhiều nick 1 lúc (mỗi dòng 1 nick, tên tự đặt fb&lt;UID&gt;)</label>
+      <textarea id="fbText" rows="6" placeholder="Mỗi dòng 1 tài khoản:&#10;datr=...;c_user=100000...;xs=...&#10;datr=...;c_user=100001...;xs=...&#10;(hoặc UID|PASS|2FA|COOKIE|UA)"></textarea>
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <button id="submitFbElectron" style="flex:1;background:#1877f2" title="Mở trong cửa sổ của app: nhìn thấy Facebook, tự xử lý nếu bị đòi đăng nhập / checkpoint">🪟 Đăng nhập trong cửa sổ app</button>
+        <button id="submitFb" class="ghost" style="flex:1" title="Chạy tự động bằng Chrome (patchright)">🤖 Tự động (Chrome)</button>
+        <button id="cancelFb" class="ghost">Hủy</button>
+      </div>
+    </div>
+    <div id="cookieBox" style="display:none;margin-top:10px;background:var(--bg2);padding:12px;border-radius:8px;border:1px solid var(--line)">
+      <label style="margin-top:0">Dán chuỗi Cookie</label>
+      <textarea id="cookieText" rows="4" placeholder="Dán cookie tại đây (sessionid=... hoặc datr=...;c_user=...;xs=...)"></textarea>
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <button id="submitCookie" style="flex:1">Xác nhận nạp</button>
+        <button id="cancelCookie" class="ghost">Hủy</button>
+      </div>
+    </div>
+    <button id="bulkBtn" class="ghost" style="width:100%;margin-top:10px">🚀 Nạp hàng loạt (JSON nhiều nick)</button>
+    <div id="bulkBox" class="grp" style="display:none;margin-top:10px">
+      <label style="margin-top:0">Dán JSON export (dạng {"tai_khoan":[...]}) — nạp tất cả nick một lần</label>
+      <textarea id="bulkText" rows="5" placeholder='{"tai_khoan":[{"name":"...","cookies":{...},"proxy":""}, ...]}'></textarea>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:normal;margin-top:8px"><input type="checkbox" id="bulkVerify"> Verify từng nick (chậm, mở trình duyệt) — bỏ chọn để nạp nhanh</label>
+      <div class="actions" style="margin-top:10px">
+        <button id="submitBulk" style="flex:1">Nạp tất cả</button>
+        <button id="cancelBulk" class="ghost">Đóng</button>
+      </div>
+    </div>
+    <div id="nickStatus" class="status"></div>
+    <p style="font-size:11px;color:var(--mut);margin:8px 0 0">
+      “Thêm bằng Facebook”: Tự động kết nối Dola qua OAuth bằng Cookie Facebook (c_user + xs).
+    </p>
+  </section>
+  </div>
+  </div>
+
+  <div class="tabpanel" id="tab-settings" hidden>
+  <div class="tabinner">
+  <section class="card">
+    <h2>Cài đặt</h2>
+    <div class="grp" style="margin-top:0">
+      <label style="margin-top:0">Thư mục lưu video (tên có số thứ tự)</label>
+      <div id="vidDir" class="tiny" style="word-break:break-all;color:var(--mut);margin:2px 0 8px">…</div>
+      <div style="display:flex;gap:6px">
+        <button id="chooseVidDir" class="ghost" style="flex:1">🎬 Chọn thư mục…</button>
+        <button id="openVidDir" class="ghost">Mở</button>
+      </div>
+    </div>
+    <div class="grp" style="margin-top:14px">
+      <label style="margin-top:0">Thư mục lưu profile nick</label>
+      <div id="accDir" class="tiny" style="word-break:break-all;color:var(--mut);margin:2px 0 8px">…</div>
+      <div style="display:flex;gap:6px">
+        <button id="chooseAccDir" class="ghost" style="flex:1">📁 Chọn thư mục…</button>
+        <button id="openAccDir" class="ghost">Mở</button>
+      </div>
+      <p class="tiny" style="color:var(--mut);margin:8px 0 0">Đổi xong bấm “Tắt” rồi “Bật server” để áp dụng.</p>
+    </div>
+  </section>
+  </div>
+  </div>
+</main>
+    <div id="vmodal" class="vmodal" hidden>
+      <div class="vmodal-box">
+        <button id="vmodalClose" class="vmodal-x" title="Đóng (Esc)">✕</button>
+        <video id="player" controls playsinline></video>
+      </div>
+    </div>
+
+<script>
+let cfg = { base: "http://127.0.0.1:8000", apiKey: "" };
+
+const $ = (id) => document.getElementById(id);
+const authHeaders = () => cfg.apiKey ? { Authorization: "Bearer " + cfg.apiKey } : {};
+
+async function health() {
+  try {
+    const r = await fetch(cfg.base + "/health", { cache: "no-store" });
+    if (!r.ok) throw 0;
+    return await r.json();
+  } catch { return null; }
+}
+
+const firstLine = (v) => (String(v||"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean)[0]) || "";
+// Nick mới tự lấy prompt "chuẩn mặc định" (dòng đầu ô Prompt chung) + model/tỉ lệ/giây mặc định.
+const DEF = () => ({ prompt:firstLine($("bulkPrompt").value), model:$("dModel").value, ratio:$("dRatio").value, dur:$("dDur").value, status:"" });
+const ROW = {};
+function optsHtml(arr, v){ return arr.map(o=>`<option ${String(o)===String(v)?"selected":""}>${o}</option>`).join(""); }
+function esc(x){ return String(x||"").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+// Icon nét đơn sắc kiểu shadcn (Lucide), thừa kế màu chữ của nút.
+const ICONS = {
+  play: '<path d="M6 3l14 9-14 9V3z" fill="currentColor" stroke="none"/>',
+  refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
+  folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>',
+  copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+};
+const ic = (n, sz=15) => `<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;pointer-events:none">${ICONS[n]||""}</svg>`;
+
+// ── Chuẩn hoá lỗi: icon + nguyên nhân ngắn + gợi ý; phân biệt lỗi tài khoản vs lỗi tool.
+function fmtError(raw){
+  const r=String(raw||""); const L=r.toLowerCase();
+  const A=(icon,short,hint)=>({icon,short,hint,kind:"account"});
+  const T=(icon,short,hint)=>({icon,short,hint,kind:"tool"});
+  if(/hết lượt tạo video hôm nay|daily limit|本日は|上限/i.test(r)) return A("📅","Hết lượt hôm nay","Mai chạy lại, hoặc dùng nick khác.");
+  if(/không đủ lượt|hết điểm|insufficient|đủ điểm|quota|クレジット|残り|lượt cho video/i.test(r)) return A("💳","Không đủ lượt/điểm","Giảm giây hoặc đổi nick khác.");
+  if(/chặn nội dung|content policy|bản quyền|ポリシー|著作/i.test(r)) return A("🚫","Bị chặn nội dung","Đổi prompt nhẹ hơn (không mất lượt).");
+  if(/chân dung|portrait|顔/i.test(r)) return A("🧑","Chặn bảo vệ chân dung","Dùng ảnh mặt của chính bạn.");
+  if(/đăng xuất|logged out|cookie.{0,10}chết|mất phiên|đăng nhập lại|log ?in/i.test(r)) return A("🔑","Cookie hết hạn","Bấm 🔄 ở dòng để đăng nhập lại.");
+  if(/lỗi tạm thời|エラーが発生|try again|システムエラー|問題が発生/i.test(r)) return T("⏳","Dola lỗi tạm thời","Đã tự thử lại; bấm ↻ nếu vẫn lỗi.");
+  if(/thời lượng 30|chip 30|video 30s/i.test(r)) return T("🎞","30s gửi chưa được","Kiểm tra mạng/proxy rồi thử lại.");
+  if(/traceback|exception|nameerror|attributeerror|keyerror/i.test(L)) return T("🐞","Lỗi tool","Xem 📄 Log, gửi cho dev.");
+  if(/chưa ra video|timeout|hết giờ|hết \d+s/i.test(r)) return T("⌛","Quá giờ chưa ra video","Thử lại; mạng có thể chậm.");
+  if(/failed to fetch|networkerror|load failed|fetch.*fail|ECONNREFUSED|net::ERR_CONNECTION_REFUSED/i.test(r)) return T("🔌","Chưa nối được server","Server đang bật lại hoặc tắt — chờ 2–3s rồi bấm ↻ chạy lại.");
+  if(/ERR_INTERNET|ERR_NETWORK|ERR_CONNECTION|ERR_PROXY|ERR_TIMED_OUT|ERR_NAME_NOT|mất mạng|net::/i.test(r)) return T("🌐","Mất mạng tạm thời","Kiểm tra internet/proxy rồi bấm ↻ chạy lại.");
+  if(/đang bận|đang tạo video khác/i.test(r)) return A("⏳","Nick đang bận","Chờ video hiện tại xong rồi chạy tiếp.");
+  if(/no available accounts|no accounts|không có nick|không sẵn sàng|không tồn tại/i.test(r)) return T("🚦","Nick chưa chạy được","Đang bận/khoá — chờ hoặc chọn nick khác.");
+  if(/server mới tắt|tự chạy lại \d+ lần|job quá cũ|khởi động lại server/i.test(r)) return T("🔁","Server tắt giữa lúc chạy","Kiểm tra dola.com; chưa có video thì bấm ↻ chạy lại.");
+  const m=r.replace(/^.*?Dola báo:\s*/i,"").replace(/\s+/g," ").trim();
+  return T("⚠",(m||r).slice(0,44),"Rê chuột để xem chi tiết.");
+}
+
+// Dola duyệt theo NỘI DUNG cảnh quay, không theo từ khoá — bảng này chỉ để cảnh báo sớm.
+// Đổi cách diễn đạt không giúp gì; muốn ra video thì phải đổi chính cảnh đang tả.
+const RISK_ANS = new Map();      // prompt -> người dùng đã chọn gửi thử hay chưa
+function riskyPrompt(p){
+  const t = String(p||"");
+  const kid = /(trẻ em|em bé|mẫu giáo|\b\d{1,2}\s*tuổi|幼儿园|儿童|小孩|男孩|女孩|child|children|kid|toddler|kindergarten|\bboy\b|\bgirl\b)/i;
+  const harm = /(đánh|đe doạ|đe dọa|bạo lực|hành hạ|dọa|khóc|sợ hãi|co rúm|殴打|抽打|打骂|威胁|恐吓|木尺|哭|吓|缩|abuse|beat|\bhit\b|threat|intimidat|scared|cry|slap|punish)/i;
+  if(kid.test(t) && harm.test(t)) return "trẻ em trong cảnh bạo lực/đe doạ";
+  if(/(máu me|giết|xác chết|tra tấn|đâm|súng|血腥|杀|尸体|拷问|枪|刺|gore|kill|murder|torture|stab|blood)/i.test(t)) return "bạo lực/máu me";
+  if(/(khoả thân|khỏa thân|khiêu dâm|裸|色情|性行为|nude|nsfw|erotic|sexual)/i.test(t)) return "nội dung người lớn";
+  if(/(tự tử|tự sát|tự hại|自杀|自残|suicide|self-harm)/i.test(t)) return "tự hại";
+  return "";
+}
+
+function openVideo(url){ if(!url) return; const m=$("vmodal"); if(!m) return; $("player").src=url; m.hidden=false; const p=$("player").play&&$("player").play(); if(p&&p.catch)p.catch(()=>{}); }
+function closeVideo(){ const m=$("vmodal"); if(!m||m.hidden) return; m.hidden=true; try{ $("player").pause(); $("player").removeAttribute("src"); $("player").load(); }catch(_){} }
+let VIDDIR = "";                 // thư mục video (đường dẫn tuyệt đối) để "copy đường dẫn"
+const TIMERS = {};               // đồng hồ đếm giây theo nick
+let STOP = false;                // "Dừng": ngừng theo dõi các job đang chạy
+const fnameFromUrl = (u)=> String(u||"").split("?")[0].split("#")[0].split("/").pop();
+function elapsed(ms){ const s=Math.max(0,Math.floor((Date.now()-ms)/1000)); return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`; }
+const STAGE_TEXT = { queued:"đang xếp hàng…", opening:"đang mở nick…", submitting:"đang gửi prompt…",
+                     rendering:"Dola đang dựng video…", processing:"đang tạo…" };
+function runCellHtml(startedAt, stage){ return `<div class="wait">⏳ ${elapsed(startedAt)}<span style="color:var(--mut);font-size:10.5px">${STAGE_TEXT[stage]||"đang tạo…"}</span></div><div class="pbar"><i></i></div>`; }
+function doneCellHtml(n){ const s=ROW[n]||{}; const u=esc(s.videoUrl||""); const fn=fnameFromUrl(s.videoUrl); const stt=(String(fn).match(/^(\d+)_/)||[])[1];
+  return `<div class="done"><video class="thumb rplay" src="${u}#t=0.6" muted preload="metadata" playsinline></video>`
+       + (stt?`<span class="sttbadge" title="${esc(fn)}">#${stt}</span>`:"")
+       + `<button class="ghost rplay" title="Xem">${ic('play',13)}</button><button class="ghost ropen" title="Mở thư mục">${ic('folder',13)}</button>`
+       + `<button class="ghost rcopy" title="Copy đường dẫn (rê để xem tên file)">${ic('copy',13)}</button></div>`; }
+function errCellHtml(n){ const s=ROW[n]||{}; const f=fmtError(s.errorRaw||s.status);
+  return `<div class="err ${f.kind}"><span class="head" title="${esc(s.errorRaw||"")}">${f.icon} ${esc(f.short)}</span><div class="hint">${esc(f.hint)}</div></div>`; }
+function stopTimer(n){ if(TIMERS[n]){ clearInterval(TIMERS[n]); delete TIMERS[n]; } }
+function startTimer(n){ stopTimer(n); TIMERS[n]=setInterval(()=>{ const s=ROW[n]; if(!s||s.phase!=="running"){ stopTimer(n); return; } s.status=runCellHtml(s.startedAt,s.stage); setCell(n,s.status); },1000); }
+
+function renderStudio(h){
+  const body = $("studioBody");
+  if(!h){ body.innerHTML='<tr><td colspan="8" class="status">Server chưa chạy — bấm "Bật server".</td></tr>'; return; }
+  const accs = h.accounts||[];
+  if(!accs.length){ body.innerHTML='<tr><td colspan="8" class="status">Chưa có nick — thêm ở panel bên phải.</td></tr>'; return; }
+  const checked = new Set([...document.querySelectorAll(".rsel:checked")].map(x=>x.value));
+  body.innerHTML = accs.map(a=>{
+    const n=a.account; const s=ROW[n]||(ROW[n]=DEF());
+    const pill = a.login_ok===0 ? '<span class="pill bad">cookie chết</span>'
+      : a.rate_limited ? '<span class="pill warn">hết lượt</span>'
+      : a.quota_blocked ? '<span class="pill warn">hết điểm</span>'
+      : '<span class="pill ok">sẵn sàng</span>';
+    const left = (a.remaining!=null) ? ` · còn ${a.remaining}` : "";
+    return `<tr data-n="${esc(n)}">
+      <td><input class="rsel" type="checkbox" value="${esc(n)}" ${checked.has(n)?"checked":""}></td>
+      <td><b>${esc(n)}</b> ${pill}<div class="tiny">${a.used_today}/${a.limit} hôm nay${left}</div></td>
+      <td><input class="rprompt" value="${esc(s.prompt)}" placeholder="prompt cho ${esc(n)}…"></td>
+      <td><select class="rmodel mini">${optsHtml(["seedance-2.0","seedance-2.5"],s.model)}</select></td>
+      <td><select class="rratio mini">${optsHtml(["16:9","9:16","1:1","4:3","3:4"],s.ratio)}</select></td>
+      <td><select class="rdur mini">${optsHtml(["10","15","30"],s.dur)}</select></td>
+      <td class="rst status">${s.status||"—"}</td>
+      <td class="racts"><button class="ghost rrun" title="Chạy nick này">${ic('play')}</button><button class="ghost rlogin" title="Đăng nhập lại (lấy cookie mới)">${ic('refresh')}</button><button class="ghost rproxy" title="Proxy riêng">${ic('gear')}</button><button class="ghost rdel" title="Xóa nick">${ic('trash')}</button></td>
+    </tr>`;
+  }).join("");
+}
+
+function saveRow(tr){ const n=tr.dataset.n; const s=ROW[n]||(ROW[n]=DEF());
+  const g=(c)=>{ const el=tr.querySelector(c); return el?el.value:""; };
+  s.prompt=g(".rprompt"); s.model=g(".rmodel"); s.ratio=g(".rratio"); s.dur=g(".rdur"); }
+
+let RUNNING = 0;
+let studioSig = "";           // chữ ký dữ liệu nick — chỉ dựng lại bảng khi thực sự đổi
+let studioNames = "";        // danh sách tên nick — đổi (thêm/bớt nick) thì dựng lại NGAY, kể cả đang chạy
+const INFLIGHT = new Set();   // nick đang gửi/chạy → không gửi lại (tránh tốn credit gấp đôi)
+function setCell(n, html){ const c=document.querySelector(`tr[data-n="${n}"] .rst`); if(c) c.innerHTML=html; }
+async function runOne(n){
+  const tr=document.querySelector(`tr[data-n="${n}"]`); if(tr) saveRow(tr);
+  const s=ROW[n]||(ROW[n]=DEF());
+  // Dùng prompt riêng của dòng; nếu trống thì lấy "Prompt chung" ở trên.
+  const prompt=((s.prompt||"").trim()) || (($("bulkPrompt").value.split(/\r?\n/).map(l=>l.trim()).filter(Boolean)[0])||"");
+  if(!prompt){ s.phase="idle"; s.status="⚠ nhập prompt"; setCell(n,s.status); return; }
+  const risky=riskyPrompt(prompt);
+  if(risky){
+    if(!RISK_ANS.has(prompt)) RISK_ANS.set(prompt, confirm(
+      `Prompt này Dola nhiều khả năng CHẶN (${risky}).\n\n`
+      + "Bị chặn thì không trừ lượt, nhưng cũng không ra video — phải đổi NỘI DUNG cảnh quay. "
+      + "Viết lại cho nhẹ đi không giúp: Dola duyệt nội dung, không duyệt từ khoá.\n\nVẫn gửi thử?"));
+    if(!RISK_ANS.get(prompt)){
+      s.phase="idle"; s.status="⏸ chưa gửi (prompt dễ bị chặn)"; setCell(n,s.status); return; }
+  }
+  // Chặn trước khi không đủ điểm: 30s tốn 2 credit, 10–15s tốn 1; free = 2 credit/ngày.
+  const _acc=(LASTH&&LASTH.accounts||[]).find(x=>x.account===n);
+  const _need=(parseInt(s.dur,10)>=30)?2:1;
+  if(_acc && _acc.remaining!=null && _acc.remaining < _need){
+    s.phase="error"; s.errorRaw=`Không đủ điểm cho ${s.dur}s (cần ${_need}, còn ${_acc.remaining}). Giảm còn 10–15s hoặc dùng nick khác.`;
+    s.status=errCellHtml(n); setCell(n,s.status); return;
+  }
+  if(INFLIGHT.has(n)){ setCell(n, s.status||"đang chạy…"); return; }  // đang chạy rồi, bỏ qua
+  INFLIGHT.add(n);
+  s.prompt=prompt; if(tr){ const el=tr.querySelector(".rprompt"); if(el && !el.value.trim()) el.value=prompt; }
+  RUNNING++;
+  s.phase="running"; s.startedAt=Date.now(); s.errorRaw=""; s.videoUrl="";
+  s.stage="queued"; s.status=runCellHtml(s.startedAt,s.stage); setCell(n,s.status); startTimer(n);
+  const body={ model:s.model, duration:parseInt(s.dur,10), ratio:s.ratio, account:n };
+  const setDone=(url)=>{ s.phase="done"; s.videoUrl=url; s.status=doneCellHtml(n); setCell(n,s.status); };
+  const setErr=(raw)=>{ s.phase="error"; s.errorRaw=String(raw||"?"); s.status=errCellHtml(n); setCell(n,s.status); };
+  try{
+    const id=await submitJob(prompt, body);
+    while(true){
+      await new Promise(r=>setTimeout(r,3000));
+      if(STOP){ s.phase="idle"; s.status="⏸ đã dừng theo dõi"; setCell(n,s.status); return; }
+      const pj=await (await fetch(cfg.base+"/v1/videos/"+id,{headers:authHeaders(),cache:"no-store"})).json();
+      if(pj.status==="completed"){ setDone(pj.video_url); return; }
+      if(pj.status==="failed"){ setErr(pj.error); return; }
+      s.stage=pj.stage||pj.status;
+      // vẫn đang chạy: đồng hồ tự cập nhật ô, không cần ghi đè
+    }
+  }catch(e){ setErr(e.message||e); }
+  finally{ RUNNING--; INFLIGHT.delete(n); stopTimer(n); }
+}
+
+async function reloginNick(n){
+  const tr=document.querySelector(`tr[data-n="${n}"]`); const st=tr&&tr.querySelector(".rst");
+  if(st) st.textContent="đang mở cửa sổ đăng nhập…";
+  try{
+    const res=await window.api.loginElectron(n, "ja");
+    if(st) st.textContent=res.ok?"✓ đăng nhập lại xong":("lỗi: "+(res.error||res.output||"?").slice(0,40));
+    pollHealth();
+  }catch(e){ if(st) st.textContent="lỗi: "+String(e.message||e).slice(0,40); }
+}
+
+function allNicks(){ return [...document.querySelectorAll("#studioBody tr[data-n]")].map(tr=>tr.dataset.n); }
+function readyNicks(){ return allNicks().filter(n=>{ const a=(LASTH&&LASTH.accounts||[]).find(x=>x.account===n); return a && !a.rate_limited && !a.quota_blocked && a.login_ok!==0; }); }
+function finishRunMsg(ns){ const bad=ns.filter(n=>ROW[n]&&ROW[n].phase==="error"); $("genStatus").textContent = bad.length?`Xong ${ns.length-bad.length}/${ns.length} nick. Lỗi ở: ${bad.join(", ")}.`:`Xong ${ns.length} nick.`; }
+async function runBatch(ns,label){
+  if(!ns.length){ $("genStatus").textContent=label; return; }
+  STOP=false;
+  $("genStatus").textContent="Kiểm tra phiên đăng nhập trước khi chạy…";
+  const dead=await deadNicks(ns);
+  dead.forEach(n=>{ const s=ROW[n]||(ROW[n]=DEF());
+    s.phase="error"; s.errorRaw="Cookie hết hạn — bấm 🔄 ở dòng này để đăng nhập lại rồi chạy lại.";
+    s.status=errCellHtml(n); setCell(n,s.status); });
+  const run=ns.filter(n=>!dead.includes(n));
+  if(!run.length){ $("genStatus").textContent=`Tất cả ${ns.length} nick đều cookie chết — đăng nhập lại trước.`; return; }
+  $("genStatus").textContent=`Đang chạy ${run.length} nick…` + (dead.length?` (bỏ ${dead.length} nick cookie chết)`:"");
+  await Promise.all(run.map(runOne));
+  finishRunMsg(run);
+}
+
+// Cookie chết là lý do hỏng job hay gặp nhất — loại sớm thay vì chờ mở nick rồi mới báo lỗi.
+async function deadNicks(ns){
+  try{
+    // Quá 12s (nick phải mở Chrome để kiểm tra) thì chạy luôn, đừng bắt người dùng chờ.
+    const r=await Promise.race([window.api.verifyAll(),
+                                new Promise(res=>setTimeout(()=>res(null),12000))]);
+    if(!r||!r.ok) return [];
+    return (r.results||[]).filter(x=>x.checked && !x.ok).map(x=>x.name).filter(n=>ns.includes(n));
+  }catch(_){ return []; }
+}
+
+async function runSelected(){ await runBatch([...document.querySelectorAll(".rsel:checked")].map(x=>x.value), "Chọn ít nhất 1 nick ở cột trái."); }
+async function runAllReady(){ await runBatch(readyNicks(), "Không có nick nào sẵn sàng."); }
+async function retryFailed(){ await runBatch(allNicks().filter(n=>ROW[n]&&ROW[n].phase==="error"), "Không có nick lỗi để chạy lại."); }
+function stopAll(){ STOP=true; $("genStatus").textContent="Đã dừng theo dõi (video có thể vẫn hoàn tất trên Dola)."; }
+
+async function applyConcurrency(){
+  const send=parseInt($("cSend").value,10), login=parseInt($("cLogin").value,10);
+  $("cMsg").textContent="đang áp dụng…";
+  const r=await window.api.setConcurrency(send, login);
+  if(r&&r.ok){
+    $("cMsg").textContent=`✓ ${r.max_concurrency} nick gửi cùng lúc · ${r.login_concurrency} đăng nhập`
+      + (send>=8?" (mỗi nick 1 Chrome ~0.4GB — coi RAM)":"");
+    pollHealth();
+  } else $("cMsg").textContent="Lỗi: "+((r&&r.error)||"?");
+}
+
+async function verifyAllNicks(){
+  const btn=$("verifyAll"); if(btn) btn.disabled=true;
+  $("genStatus").textContent="Đang kiểm tra phiên đăng nhập các nick…";
+  try{
+    const res=await window.api.verifyAll();
+    if(res&&res.ok){ const dead=(res.results||[]).filter(r=>!r.ok).map(r=>r.name); pollHealth();
+      $("genStatus").textContent = dead.length?`Kiểm tra xong. Cookie chết: ${dead.join(", ")} — bấm 🔄 để đăng nhập lại.`:"Tất cả nick còn đăng nhập tốt."; }
+    else $("genStatus").textContent="Lỗi kiểm tra: "+((res&&res.error)||"?");
+  }catch(e){ $("genStatus").textContent="Lỗi kiểm tra: "+String(e.message||e); }
+  finally{ if(btn) btn.disabled=false; }
+}
+
+function fillAllPrompts(){
+  const pr=($("bulkPrompt").value.split(/\r?\n/).map(l=>l.trim()).filter(Boolean)[0])||"";
+  document.querySelectorAll("#studioBody tr[data-n]").forEach(tr=>{ const el=tr.querySelector(".rprompt"); if(el){ el.value=pr; saveRow(tr); } });
+  $("genStatus").textContent="Đã điền prompt cho tất cả nick.";
+}
+
+// Mỗi dòng (bỏ dòng trống) = 1 prompt, gán lần lượt cho từng nick từ trên xuống.
+function syncDefaults(){
+  const m=$("dModel").value, r=$("dRatio").value, d=$("dDur").value;
+  const rows=[...document.querySelectorAll("#studioBody tr[data-n]")];
+  rows.forEach(tr=>{ const set=(c,v)=>{ const el=tr.querySelector(c); if(el) el.value=v; };
+    set(".rmodel",m); set(".rratio",r); set(".rdur",d); saveRow(tr); });
+  $("genStatus").textContent=`Đã đồng bộ mặc định (${m} · ${r} · ${d}s) cho ${rows.length} nick.`;
+}
+function fillPerLine(){
+  const prompts=$("bulkPrompt").value.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  const rows=[...document.querySelectorAll("#studioBody tr[data-n]")];
+  if(!prompts.length){ $("genStatus").textContent="Nhập prompt trước (mỗi dòng 1 cái)."; return; }
+  let filled=0;
+  rows.forEach((tr,i)=>{ const el=tr.querySelector(".rprompt"); if(el && prompts[i]){ el.value=prompts[i]; saveRow(tr); filled++; } });
+  const extra=prompts.length-filled;
+  $("genStatus").textContent=`Đã chia ${filled} prompt cho ${filled} nick (theo thứ tự).`+(extra>0?` Dư ${extra} dòng (nhiều prompt hơn nick).`:"");
+}
+
+let LASTH = null;
+async function pollHealth() {
+  const h = await health();
+  LASTH = h;
+  const up = !!h;
+  $("gwStatus").className = "dot " + (up ? "up" : "down");
+  $("gwLabel").textContent = up ? (h.available ? "server chạy · có nick sẵn sàng" : "server chạy · nick bận/khoá") : "server tắt";
+  if(up){
+    const ready=(h.accounts||[]).filter(a=>a.login_ok!==0 && a.remaining>0 && !a.rate_limited && !a.quota_blocked).length;
+    $("thruput").textContent = `Luồng: tối đa ${ready} video song song (1 video/nick)`
+      + (h.pending_tasks ? ` · ${h.pending_tasks} job đang chờ/chạy` : "")
+      + (h.http_poll===false ? " · trình duyệt giữ suốt lúc dựng" : "");
+    const act=document.activeElement;
+    if(act!==$("cSend") && h.max_concurrency) $("cSend").value=h.max_concurrency;
+    if(act!==$("cLogin") && h.login_concurrency) $("cLogin").value=h.login_concurrency;
+  } else $("thruput").textContent = "";
+  // Không dựng lại bảng khi đang gõ trong bảng (kẻo mất con trỏ). Ngoài ra:
+  //  • Danh sách nick đổi (thêm/bớt nick) → dựng lại NGAY, kể cả đang chạy (nick mới hiện liền;
+  //    dòng đang chạy vẫn giữ trạng thái sống vì đọc từ ROW[n].status).
+  //  • Còn lại (đổi lượt/điểm/pill) → chỉ dựng khi rảnh, tránh nháy giữa lúc chạy.
+  if (!$("studioBody").contains(document.activeElement)) {
+    const names = JSON.stringify((h && h.accounts || []).map(a => a.account));
+    const sig = JSON.stringify([up, (h && h.accounts || []).map(a => [a.account, a.used_today, a.limit, a.rate_limited, a.quota_blocked, a.login_ok])]);
+    if (names !== studioNames || (RUNNING === 0 && sig !== studioSig)) {
+      studioNames = names; studioSig = sig; renderStudio(h);
+    }
+  }
+}
+
+async function submitJob(prompt, body) {
+  const r = await fetch(cfg.base + "/v1/videos/generations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ ...body, prompt }),
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
+  return j.id;
+}
+
+async function trackJob(prompt, body, row) {
+  const st = row.querySelector(".st");
+  row.querySelector(".p").textContent = prompt;
+  try {
+    const id = await submitJob(prompt, body);
+    st.textContent = "đã gửi…";
+    while (true) {
+      await new Promise((s) => setTimeout(s, 4000));
+      const pr = await fetch(cfg.base + "/v1/videos/" + id, { headers: authHeaders(), cache: "no-store" });
+      const pj = await pr.json();
+      if (pj.status === "completed") {
+        row.className = "job ok";
+        st.innerHTML = '<a>▶ Xem</a>';
+        st.querySelector("a").onclick = () => {
+          openVideo(pj.video_url);
+        };
+        return;
+      }
+      if (pj.status === "failed") { row.className = "job err"; st.textContent = "lỗi: " + (pj.error || "?"); return; }
+      st.textContent = pj.status + "…";
+    }
+  } catch (e) {
+    row.className = "job err"; st.textContent = "lỗi: " + e.message;
+  }
+}
+
+async function generate() {
+  const prompts = $("prompt").value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  if (!prompts.length) { $("genStatus").textContent = "Nhập mô tả trước."; return; }
+  const count = Math.max(1, Math.min(20, parseInt($("count").value, 10) || 1));
+  const refs = $("refs").value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  const body = { model: $("model").value, duration: parseInt($("duration").value, 10), ratio: $("ratio").value };
+  const runNick = $("runNick").value;
+  if (runNick) body.account = runNick;
+  if (refs.length) body.reference_images = refs;
+
+  const jobs = [];
+  for (const p of prompts) for (let i = 0; i < count; i++) jobs.push(p);
+  $("jobs").innerHTML = "";
+  closeVideo();
+  $("gen").disabled = true;
+  $("genStatus").textContent = `Đang chạy ${jobs.length} video (đa luồng, xoay nick tự động)…`;
+  const rows = jobs.map(() => {
+    const li = document.createElement("li");
+    li.className = "job";
+    li.innerHTML = '<span class="p"></span><span class="st">chờ…</span>';
+    $("jobs").appendChild(li);
+    return li;
+  });
+  try {
+    await Promise.all(jobs.map((p, i) => trackJob(p, body, rows[i])));
+    $("genStatus").textContent = "Xong tất cả.";
+  } finally {
+    $("gen").disabled = false;
+  }
+}
+
+function setNickBusy(busy) { $("addNick").disabled = busy; $("loginNick").disabled = busy; }
+
+async function addNick() {
+  const name = $("nickName").value.trim();
+  const lang = $("nickLang").value;
+  $("nickStatus").textContent = "Chọn file cookie…";
+  setNickBusy(true);
+  try {
+    const res = await window.api.importAccount(name, lang);
+    if (res.canceled) { $("nickStatus").textContent = "Đã huỷ."; return; }
+    $("nickStatus").textContent = res.ok ? ("✓ " + (res.output || "đăng nhập xong")) : ("Lỗi: " + (res.error || res.output));
+    if (res.ok) { $("nickName").value = ""; pollHealth(); }
+  } finally {
+    setNickBusy(false);
+  }
+}
+
+async function loginNick() {
+  const name = $("nickName").value.trim();
+  const lang = $("nickLang").value;
+  $("nickStatus").textContent = "Đang mở cửa sổ app để đăng nhập… (server tạm tắt) — đăng nhập dola.com rồi chờ.";
+  setNickBusy(true);
+  try {
+    const res = await window.api.loginElectron(name, lang);
+    if (res.canceled) { $("nickStatus").textContent = "Đã đóng cửa sổ, chưa đăng nhập."; return; }
+    $("nickStatus").textContent = res.ok ? ("✓ " + (res.output || "đã bắt cookie")) : ("Lỗi: " + (res.error || res.output));
+    if (res.ok) { $("nickName").value = ""; }
+  } finally {
+    setNickBusy(false);
+    pollHealth();
+  }
+}
+
+async function clearNick(name) {
+  if (!confirm("Xóa toàn bộ cookie của " + name + "?\nNick sẽ về trạng thái đăng xuất; profile vẫn giữ để đăng nhập lại.\n(Đóng cửa sổ Dola của nick này trước nếu đang mở.)")) return;
+  $("nickStatus").textContent = "Đang xóa cookie " + name + "…";
+  const res = await window.api.clearCookies(name);
+  $("nickStatus").textContent = res.ok ? ("✓ " + (res.output || "đã xóa cookie")) : ("Lỗi: " + (res.error || res.output));
+  pollHealth();
+}
+
+async function delDeskNick(name) {
+  if (!confirm("XÓA HẲN nick " + name + "?\nToàn bộ profile và dữ liệu đăng nhập sẽ bị xóa vĩnh viễn (không hoàn tác).\n(Đóng cửa sổ Dola của nick này trước nếu đang mở.)")) return;
+  $("nickStatus").textContent = "Đang xóa nick " + name + "…";
+  const res = await window.api.deleteAccount(name);
+  $("nickStatus").textContent = res.ok ? ("✓ " + (res.output || "đã xóa nick")) : ("Lỗi: " + (res.error || res.output));
+  pollHealth();
+}
+
+async function submitDirectCookie() {
+  const name = $("nickName").value.trim();
+  const lang = $("nickLang").value;
+  const cookies = $("cookieText").value.trim();
+  if (!name) { $("nickStatus").textContent = "Lỗi: Hãy nhập tên nick trước"; return; }
+  if (!cookies) { $("nickStatus").textContent = "Lỗi: Hãy dán chuỗi cookie vào ô"; return; }
+  $("nickStatus").textContent = "Đang nạp cookie và kiểm tra phiên…";
+  setNickBusy(true);
+  try {
+    const res = await window.api.importAccountText(name, cookies, lang);
+    $("nickStatus").textContent = res.ok ? ("✓ " + (res.output || "đã nạp cookie thành công")) : ("Lỗi: " + (res.error || res.output));
+    if (res.ok) {
+      $("nickName").value = "";
+      $("cookieText").value = "";
+      $("cookieBox").style.display = "none";
+      pollHealth();
+    }
+  } finally {
+    setNickBusy(false);
+  }
+}
+
+// Lấy UID Facebook (c_user) từ dòng "uid|pass|2fa|cookie|ua" hoặc chuỗi cookie có c_user=...
+function fbUidFromLine(line) {
+  const m = String(line || "").match(/c_user=(\d{5,})/);
+  if (m) return m[1];
+  const first = String(line || "").split("|")[0].trim();
+  return /^\d{5,}$/.test(first) ? first : "";
+}
+// Tên nick tự động: nếu ô trống, dùng fb<UID>. Điền vào ô để người dùng thấy.
+function autoNickFromFb(line) {
+  const uid = fbUidFromLine(line);
+  if (!uid) return "";
+  const nick = ("fb" + uid).slice(0, 32);
+  $("nickName").value = nick;
+  return nick;
+}
+
+function fbLines() { return $("fbText").value.split(/\r?\n/).map(l => l.trim()).filter(Boolean); }
+
+async function submitFacebookElectron() {
+  const lines = fbLines();
+  const lang = $("nickLang").value;
+  if (!lines.length) { $("nickStatus").textContent = "Lỗi: Hãy dán ít nhất 1 cookie/dòng Facebook"; return; }
+
+  // 1 dòng: giữ nguyên hành vi cũ (cho phép tự đặt tên nick).
+  if (lines.length === 1) {
+    const line = lines[0];
+    const name = $("nickName").value.trim() || autoNickFromFb(line);
+    if (!name) { $("nickStatus").textContent = "Không lấy được UID Facebook (thiếu c_user) — hãy nhập tên nick, hoặc dán cookie có c_user."; return; }
+    $("nickStatus").textContent = "Đang mở cửa sổ app với cookie Facebook…";
+    setNickBusy(true);
+    try {
+      const res = await window.api.importFacebookElectron(name, line, lang);
+      $("nickStatus").textContent = res.ok ? ("✓ " + (res.output || "Đã nạp phiên Dola vào nick " + name))
+        : ("Lỗi: " + (res.error || res.output || "không rõ"));
+      if (res.ok) { $("nickName").value = ""; $("fbText").value = ""; $("fbBox").style.display = "none"; pollHealth(); }
+    } finally { setNickBusy(false); }
+    return;
+  }
+
+  // Nhiều dòng: mỗi dòng 1 nick tên fb<UID>, đăng nhập ĐA LUỒNG (tối đa LOGIN_CAP cửa sổ cùng lúc).
+  setNickBusy(true);
+  let ok = 0, done = 0; const fail = [];
+  const LOGIN_CAP = 3;
+  const q = lines.map((line, i) => ({ line, i, uid: fbUidFromLine(line) }));
+  async function loginWorker() {
+    while (q.length) {
+      const j = q.shift();
+      if (!j.uid) { fail.push(`dòng ${j.i + 1} (thiếu c_user)`); done++; continue; }
+      const name = ("fb" + j.uid).slice(0, 32);
+      $("nickStatus").textContent = `Đăng nhập ${done + 1}/${lines.length} (đa luồng ${LOGIN_CAP})…`;
+      try {
+        const res = await window.api.importFacebookElectron(name, j.line, lang);
+        if (res.ok) ok++; else fail.push(`${name}: ${(res.error || res.output || "?").slice(0, 40)}`);
+      } catch (e) { fail.push(`${name}: ${String(e.message || e).slice(0, 40)}`); }
+      done++; pollHealth();
+    }
+  }
+  try {
+    await Promise.all(Array.from({ length: Math.min(LOGIN_CAP, lines.length) }, loginWorker));
+    $("nickStatus").textContent = `Xong ${ok}/${lines.length} nick.` + (fail.length ? ` Lỗi: ${fail.join(" · ")}` : "");
+    if (ok) { $("fbText").value = ""; }
+  } finally { setNickBusy(false); }
+}
+
+async function submitFacebook() {
+  const line = $("fbText").value.trim();
+  if (!line) { $("nickStatus").textContent = "Lỗi: Hãy dán cookie hoặc dòng tài khoản Facebook"; return; }
+  const name = $("nickName").value.trim() || autoNickFromFb(line);
+  if (!name) { $("nickStatus").textContent = "Không lấy được UID Facebook (thiếu c_user) — hãy nhập tên nick, hoặc dán cookie có c_user."; return; }
+  $("nickStatus").textContent = "Đang mở Chrome và kết nối Facebook → OAuth Dola… (theo dõi từng bước ở đây và trong cửa sổ Chrome)";
+  setNickBusy(true);
+  try {
+    const res = await window.api.importFacebook(name, line);
+    const lastLine = (res.output || "").split(/\r?\n/).filter((l) => l.trim()).pop() || "";
+    $("nickStatus").textContent = res.ok
+      ? ("✓ " + (lastLine || "Đăng nhập Dola qua Facebook thành công!"))
+      : ("Lỗi: " + (res.error || lastLine || "không rõ") + ` — ảnh màn hình lúc lỗi: fb_fail_${name}.png (thư mục tool)`);
+    if (res.ok) {
+      $("nickName").value = "";
+      $("fbText").value = "";
+      $("fbBox").style.display = "none";
+      pollHealth();
+    }
+  } finally {
+    setNickBusy(false);
+  }
+}
+
+async function fastGenerate() {
+  const prompts = $("prompt").value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+  if (!prompts.length) { $("genStatus").textContent = "Nhập mô tả trước."; return; }
+  const model = $("model").value, duration = $("duration").value, ratio = $("ratio").value;
+  // 2.5 now works over HTTP too (key seedance_v2.5), but only on a nick that HAS 2.5 access.
+  // "Tự động": pick the first ready nick so the fast path can use a concrete Electron profile.
+  let nick = $("runNick").value;
+  if (!nick) {
+    try {
+      const r = await fetch(cfg.base + "/api/admin/accounts", { headers: authHeaders(), cache: "no-store" });
+      const accs = (await r.json()).accounts || [];
+      const ready = accs.find((a) => a.login_ok !== 0 && (a.remaining == null || a.remaining > 0) && !a.rate_limited && !a.quota_blocked);
+      nick = ready && ready.name;
+    } catch (e) {}
+    if (!nick) { $("genStatus").textContent = "Không tìm được nick sẵn sàng — chọn 1 nick cụ thể ở 'Nick chạy'."; return; }
+    $("genStatus").textContent = "⚡ Tự chọn nick: " + nick;
+  }
+  $("gen").disabled = true; $("genFast").disabled = true;
+  $("jobs").innerHTML = ""; closeVideo();
+  try {
+    for (let i = 0; i < prompts.length; i++) {
+      const prompt = prompts[i];
+      $("genStatus").textContent = `[${i + 1}/${prompts.length}] ⚡ ${nick}: đang gửi…`;
+      const res = await window.api.fetchGenerate({ name: nick, prompt, model, duration, ratio, showBrowser: true });
+      const li = document.createElement("li"); li.className = "job";
+      li.innerHTML = `<span class="p">${prompt.slice(0, 40)}</span><span class="st">${res.ok ? "✓ " + res.file.split(/[\\/]/).pop() : "Lỗi: " + (res.error || "?")}</span>`;
+      $("jobs").appendChild(li);
+    }
+    $("genStatus").textContent = "Xong (chế độ nhanh).";
+  } finally {
+    $("gen").disabled = false; $("genFast").disabled = false;
+  }
+}
+
+async function setNickProxy(name) {
+  const cur = (await window.api.getProxy(name)).proxy || "";
+  const val = prompt(
+    `Proxy cho nick "${name}" (để trống = dùng proxy chung).\n` +
+    `Định dạng: http://host:port · socks5://host:port · user:pass@host:port · host:port:user:pass`,
+    cur);
+  if (val === null) return; // cancel
+  const res = await window.api.setProxy(name, val);
+  $("nickStatus").textContent = res.ok ? `✓ Proxy nick ${name}: ${res.proxy}` : ("Lỗi: " + res.error);
+}
+
+async function bulkImportNicks() {
+  const json = $("bulkText").value.trim();
+  if (!json) { $("nickStatus").textContent = "Dán JSON export trước."; return; }
+  const verify = $("bulkVerify").checked;
+  $("submitBulk").disabled = true;
+  $("nickStatus").textContent = "Đang nạp hàng loạt…";
+  try {
+    const res = await window.api.bulkImport(json, verify);
+    const last = (res.output || "").split(/\r?\n/).filter((l) => l.trim()).pop() || "";
+    $("nickStatus").textContent = res.ok ? ("✓ " + (last || "Xong")) : ("Lỗi: " + (res.error || last));
+    if (res.ok) { $("bulkBox").style.display = "none"; $("bulkText").value = ""; pollHealth(); }
+  } finally { $("submitBulk").disabled = false; }
+}
+
+(async function init() {
+  cfg = await window.api.getConfig();
+  $("fillAll").onclick = fillAllPrompts;
+  $("fillLines").onclick = fillPerLine;
+  $("syncDef").onclick = syncDefaults;
+  // Chuyển tab
+  document.querySelectorAll(".tab").forEach(t=>{ t.onclick=()=>{
+    document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active", x===t));
+    document.querySelectorAll(".tabpanel").forEach(p=>{ p.hidden = (p.id !== "tab-"+t.dataset.tab); });
+  }; });
+  $("runSel").onclick = runSelected;
+  $("runReady").onclick = runAllReady;
+  $("retryFail").onclick = retryFailed;
+  $("stopAll").onclick = stopAll;
+  $("verifyAll").onclick = verifyAllNicks;
+  $("cApply").onclick = applyConcurrency;
+  window.api.getVideoDir().then(r=>{ VIDDIR = (r&&r.abs)||""; }).catch(()=>{});
+  // Đóng popup xem video: nút X, bấm ra nền, phím Esc
+  $("vmodalClose").onclick = closeVideo;
+  $("vmodal").addEventListener("click", (e) => { if (e.target === $("vmodal")) closeVideo(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeVideo(); });
+  $("selAll").onclick = (e) => document.querySelectorAll(".rsel").forEach(c => c.checked = e.target.checked);
+  $("studioBody").addEventListener("input", (e) => { const tr = e.target.closest("tr[data-n]"); if (tr) saveRow(tr); });
+  $("studioBody").addEventListener("click", (e) => {
+    const tr = e.target.closest("tr[data-n]"); if (!tr) return; const n = tr.dataset.n;
+    if (e.target.closest(".rrun")) { STOP=false; runOne(n); }
+    else if (e.target.closest(".rplay")) { openVideo((ROW[n]||{}).videoUrl); }
+    else if (e.target.closest(".ropen")) window.api.openDownloads();
+    else if (e.target.closest(".rcopy")) { const u=(ROW[n]||{}).videoUrl; const p=VIDDIR?(VIDDIR+"/"+fnameFromUrl(u)):u; if(p){ navigator.clipboard.writeText(p).then(()=>{ $("genStatus").textContent="Đã copy đường dẫn: "+p; }).catch(()=>{}); } }
+    else if (e.target.closest(".rlogin")) reloginNick(n);
+    else if (e.target.closest(".rproxy")) setNickProxy(n);
+    else if (e.target.closest(".rdel")) delDeskNick(n);
+  });
+  $("addNick").onclick = addNick;
+  $("loginNick").onclick = loginNick;
+  $("fbBtn").onclick = () => {
+    const box = $("fbBox");
+    box.style.display = box.style.display === "none" ? "block" : "none";
+    $("cookieBox").style.display = "none";
+  };
+  $("cancelFb").onclick = () => { $("fbBox").style.display = "none"; };
+  $("submitFb").onclick = submitFacebook;
+  $("submitFbElectron").onclick = submitFacebookElectron;
+  $("fbText").addEventListener("input", () => { const ls = fbLines(); if (ls.length === 1 && !$("nickName").value.trim()) autoNickFromFb(ls[0]); });
+  $("bulkBtn").onclick = () => { const b = $("bulkBox"); b.style.display = b.style.display === "none" ? "block" : "none"; };
+  $("cancelBulk").onclick = () => { $("bulkBox").style.display = "none"; };
+  $("submitBulk").onclick = bulkImportNicks;
+  window.api.onBulkStep(({ line }) => { $("nickStatus").textContent = line; });
+  window.api.onFbStep(({ line }) => { $("nickStatus").textContent = line; });
+  $("pasteCookieBtn").onclick = () => {
+    const box = $("cookieBox");
+    box.style.display = box.style.display === "none" ? "block" : "none";
+    $("fbBox").style.display = "none";
+  };
+  $("cancelCookie").onclick = () => { $("cookieBox").style.display = "none"; };
+  $("submitCookie").onclick = submitDirectCookie;
+  $("openDl").onclick = () => window.api.openDownloads();
+  // Thư mục profile
+  async function refreshAccDir(){ try{ const r=await window.api.getAccountsDir(); if($("accDir")) $("accDir").textContent=r.abs||r.dir||"accounts"; }catch(_){} }
+  refreshAccDir();
+  $("chooseAccDir").onclick=async()=>{ const r=await window.api.chooseAccountsDir(); if(r&&r.ok){ await refreshAccDir(); $("nickStatus").textContent="Đã đổi thư mục profile → bấm Tắt rồi Bật server để áp dụng."; } };
+  $("openAccDir").onclick=()=>window.api.openAccountsDir();
+  async function refreshVidDir(){ try{ const r=await window.api.getVideoDir(); if($("vidDir")) $("vidDir").textContent=r.abs||"downloads"; }catch(_){} }
+  refreshVidDir();
+  $("chooseVidDir").onclick=async()=>{ const r=await window.api.chooseVideoDir(); if(r&&r.ok){ await refreshVidDir(); $("genStatus").textContent="Đã đổi thư mục lưu video → bấm Tắt rồi Bật server để áp dụng."; } };
+  $("openVidDir").onclick=()=>window.api.openDownloads();
+  let logTimer=null;
+  function renderLog(){ window.api.tailLogs(400).then(r=>{ const p=$("logPanel"); if(!p) return; p.textContent=(r&&r.ok)?(r.text||"(log trống — bật server rồi chạy 1 video)"):("lỗi đọc log: "+((r&&r.error)||"?")); p.scrollTop=p.scrollHeight; }); }
+  $("viewLog").onclick=()=>{ const w=$("logWrap"); const show=w.hidden; w.hidden=!show; if(show){ renderLog(); logTimer=setInterval(renderLog,2000); } else if(logTimer){ clearInterval(logTimer); logTimer=null; } };
+  $("logClose").onclick=()=>{ $("logWrap").hidden=true; if(logTimer){ clearInterval(logTimer); logTimer=null; } };
+  $("logOpen").onclick=()=>window.api.openLogs();
+  $("gwStart").onclick = async () => { $("gwLabel").textContent = "đang bật…"; await window.api.startGateway(); setTimeout(pollHealth, 1500); };
+  $("gwStop").onclick = async () => { await window.api.stopGateway(); pollHealth(); };
+  // Nhớ "chuẩn mặc định" (prompt chung + model/tỉ lệ/giây) qua các lần mở app.
+  const DKEYS = ["bulkPrompt","dModel","dDur","dRatio"];
+  try { const d = JSON.parse(localStorage.getItem("dolaDefaults")||"{}"); DKEYS.forEach(k=>{ if(d[k]!=null && $(k)) $(k).value = d[k]; }); } catch(_){}
+  const saveDefaults = () => { try { const d={}; DKEYS.forEach(k=>{ if($(k)) d[k]=$(k).value; }); localStorage.setItem("dolaDefaults", JSON.stringify(d)); } catch(_){} };
+  DKEYS.forEach(k=>{ const el=$(k); if(el) el.addEventListener("input", saveDefaults); });
+  pollHealth();
+  setInterval(pollHealth, 1500);   // cập nhật realtime hơn (nick mới / trạng thái)
+})();
+
+</script>
+</body>
+</html>

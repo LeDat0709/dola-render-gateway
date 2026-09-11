@@ -1,0 +1,88 @@
+{
+  "name": "dola-desktop",
+  "version": "1.0.0",
+  "description": "Desktop GUI for the Dola Render Gateway (generate videos, manage accounts by cookie login).",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:ui": "npm --prefix renderer run build",
+    "setup:ui": "npm --prefix renderer install --ignore-scripts --no-audit --no-fund && node renderer/node_modules/esbuild/install.js",
+    "dist:win": "electron-builder --win nsis portable"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.dola.studio",
+    "productName": "Dola Studio",
+    "directories": {
+      "output": "../dist-app"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "*.cjs",
+      "index.html",
+      "renderer/dist/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../build/python",
+        "to": "python"
+      },
+      {
+        "from": "../build/browsers",
+        "to": "browsers"
+      },
+      {
+        "from": "..",
+        "to": "app-python",
+        "filter": [
+          "**/*.py",
+          "web/**/*",
+          "extensions/**/*",
+          "requirements.txt",
+          "!.venv/**",
+          "!build/**",
+          "!dist-app/**",
+          "!desktop/**",
+          "!accounts/**",
+          "!downloads/**",
+          "!logs/**",
+          "!**/__pycache__/**",
+          "!test_*.py",
+          "!check_*.py",
+          "!fix_*.py"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "Dola Studio"
+    },
+    "portable": {
+      "artifactName": "DolaStudio-portable-${version}.exe"
+    },
+    "compression": "maximum"
+  }
+}

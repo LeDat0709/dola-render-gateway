@@ -61,7 +61,7 @@ source .venv/bin/activate       # On Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
-playwright install chromium
+patchright install chromium
 ```
 
 ### 3. Configure
@@ -73,14 +73,16 @@ export DOLA_PROXY="http://127.0.0.1:7890"
 export DOLA_API_KEYS="sk-your-secret-key"
 
 # Concurrency limits
-export DOLA_MAX_CONCURRENCY=3
+export DOLA_MAX_CONCURRENCY=3      # browsers submitting at once (not videos at once)
+export DOLA_LOGIN_CONCURRENCY=3    # logins / cookie checks at once
+export DOLA_HTTP_POLL=1            # free the browser right after submit, poll over HTTP
 ```
 
 ### 4. Start Server
 ```bash
 uvicorn server:app --host 0.0.0.0 --port 8000
 ```
-Open **http://127.0.0.1:8000/web** to access the Admin Dashboard.
+Open **http://127.0.0.1:8000/** to access the Admin Dashboard.
 
 
 ### 🌐 SonicVoice (For Voice Clone)

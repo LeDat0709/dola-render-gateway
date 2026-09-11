@@ -1,0 +1,35 @@
+// Secure bridge: exposes a tiny, explicit API to the renderer.
+const { contextBridge, ipcRenderer } = require("electron");
+
+contextBridge.exposeInMainWorld("api", {
+  getConfig: () => ipcRenderer.invoke("config:get"),
+  startGateway: () => ipcRenderer.invoke("gateway:start"),
+  stopGateway: () => ipcRenderer.invoke("gateway:stop"),
+  importAccount: (name, lang) => ipcRenderer.invoke("account:import", { name, lang }),
+  importAccountText: (name, cookies, lang) => ipcRenderer.invoke("account:importText", { name, cookies, lang }),
+  importFacebook: (name, line) => ipcRenderer.invoke("account:importFacebook", { name, line }),
+  onFbStep: (cb) => ipcRenderer.on("account:fbStep", (_e, data) => cb(data)),
+  importFacebookElectron: (name, line, lang) => ipcRenderer.invoke("account:importFacebookElectron", { name, line, lang }),
+  loginProfile: (name, lang) => ipcRenderer.invoke("account:login", { name, lang }),
+  loginElectron: (name, lang) => ipcRenderer.invoke("account:loginElectron", { name, lang }),
+  clearCookies: (name) => ipcRenderer.invoke("account:clearCookies", { name }),
+  deleteAccount: (name) => ipcRenderer.invoke("account:delete", { name }),
+  fetchGenerate: (opts) => ipcRenderer.invoke("video:fetchGenerate", opts),
+  onFetchStep: (cb) => ipcRenderer.on("video:fetchStep", (_e, data) => cb(data)),
+  bulkImport: (json, verify) => ipcRenderer.invoke("account:bulkImport", { json, verify }),
+  onBulkStep: (cb) => ipcRenderer.on("account:bulkStep", (_e, data) => cb(data)),
+  setProxy: (name, proxy) => ipcRenderer.invoke("account:setProxy", { name, proxy }),
+  getProxy: (name) => ipcRenderer.invoke("account:getProxy", { name }),
+  openDownloads: () => ipcRenderer.invoke("open:downloads"),
+  openLogs: () => ipcRenderer.invoke("open:logs"),
+  getAccountsDir: () => ipcRenderer.invoke("account:getAccountsDir"),
+  chooseAccountsDir: () => ipcRenderer.invoke("account:chooseAccountsDir"),
+  openAccountsDir: () => ipcRenderer.invoke("open:accountsDir"),
+  getVideoDir: () => ipcRenderer.invoke("video:getDir"),
+  removeWatermark: (file) => ipcRenderer.invoke("video:removeWatermark", { file }),
+  verifyAll: () => ipcRenderer.invoke("account:verifyAll"),
+  setConcurrency: (send, login) => ipcRenderer.invoke("config:setConcurrency", { send, login }),
+  chooseVideoDir: () => ipcRenderer.invoke("video:chooseDir"),
+  tailLogs: (n) => ipcRenderer.invoke("logs:tail", n),
+});
+
