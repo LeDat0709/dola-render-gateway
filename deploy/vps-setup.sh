@@ -34,12 +34,23 @@ for c in python3.12 python3.11 python3.10 python3; do
   if command -v "$c" >/dev/null && "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then PY="$c"; break; fi
 done
 if [ -z "$PY" ]; then
-  echo "   python3 hệ thống quá cũ ($(python3 --version 2>&1)) → cài python3.11 từ deadsnakes"
-  $SUDO apt-get install -y -qq software-properties-common >/dev/null
-  $SUDO add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1
-  $SUDO apt-get update -qq
-  $SUDO apt-get install -y -qq python3.11 python3.11-venv python3.11-dev >/dev/null
-  PY=python3.11
+  # Ưu tiên uv: tải CPython 3.11 dựng sẵn từ GitHub — VPS VN hay không tới được archive.ubuntu.com
+  # (gặp 11/9: "Connection failed [IP: 185.125.190.83]") nên deadsnakes chỉ là dự phòng.
+  echo "   python3 hệ thống quá cũ ($(python3 --version 2>&1)) → tải Python 3.11 bằng uv (từ GitHub, không cần kho Ubuntu)"
+  export PATH="$HOME/.local/bin:$PATH"
+  if ! command -v uv >/dev/null; then
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" UV_NO_MODIFY_PATH=1 sh >/dev/null 2>&1 || true
+  fi
+  if command -v uv >/dev/null && uv python install 3.11 >/dev/null 2>&1; then
+    PY="$(uv python find 3.11)"
+  else
+    echo "   uv không tải được → thử deadsnakes (cần tới được kho Ubuntu)"
+    $SUDO apt-get install -y -qq software-properties-common >/dev/null
+    $SUDO add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1
+    $SUDO apt-get update -qq
+    $SUDO apt-get install -y -qq python3.11 python3.11-venv python3.11-dev >/dev/null
+    PY=python3.11
+  fi
 fi
 echo "   dùng $PY ($("$PY" --version 2>&1))"
 
