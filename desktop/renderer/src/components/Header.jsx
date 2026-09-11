@@ -5,7 +5,13 @@ import { api } from "@/lib/api";
 
 export default function Header({ health, onRefresh }) {
   const up = !!health;
-  const label = up ? (health.available ? "server chạy · có nick sẵn sàng" : "server chạy · nick bận/khoá") : "server tắt";
+  // available = có nick chạy được. Máy mới cài chưa có nick nào cũng ra false, mà trước đây
+  // nhãn vẫn ghi "nick bận/khoá" → người dùng tưởng server lỗi thay vì hiểu là phải thêm nick.
+  const nickCount = health?.accounts?.length || 0;
+  const label = !up ? "server tắt"
+    : health.available ? "server chạy · có nick sẵn sàng"
+    : nickCount === 0 ? "server chạy · chưa có nick — thêm ở tab Tài khoản"
+    : "server chạy · nick bận/khoá";
   const [logOpen, setLogOpen] = useState(false);
   const [log, setLog] = useState("");
   const timer = useRef(null);
