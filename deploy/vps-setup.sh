@@ -27,6 +27,13 @@ cd "$DIR"
 echo "==> Khoá + .env.local (chỉ sinh lần đầu; chạy lại không đổi khoá)"
 PUBLIC_IP="$(curl -fsS --max-time 8 https://api.ipify.org || hostname -I | awk '{print $1}')"
 if [ ! -f .env.local ]; then
+  # dola.com chỉ mở cho IP Nhật/Hàn. VPS ở nơi khác (VN…) phải đi qua proxy Nhật, nếu không mọi nick lỗi ngay.
+  COUNTRY="$(curl -fsS --max-time 8 "http://ip-api.com/json/$PUBLIC_IP?fields=countryCode" | sed -n 's/.*"countryCode":"\([A-Z]*\)".*/\1/p')"
+  if [ -z "${DOLA_PROXY:-}" ] && [ "$COUNTRY" != "JP" ] && [ "$COUNTRY" != "KR" ]; then
+    echo "❌ VPS này ở '${COUNTRY:-?}' (IP $PUBLIC_IP), không phải Nhật/Hàn → dola.com sẽ chặn."
+    echo "   Chạy lại kèm proxy Nhật/Hàn:  DOLA_PROXY=http://user:pass@host:port bash <(curl -fsSL .../deploy/vps-setup.sh)"
+    exit 1
+  fi
   cat > .env.local <<EOF
 # Sinh bởi deploy/vps-setup.sh. KHÔNG commit, KHÔNG chia sẻ.
 DOLA_HOST=0.0.0.0
@@ -34,8 +41,8 @@ DOLA_PORT=$PORT
 DOLA_PUBLIC_BASE=http://$PUBLIC_IP:$PORT
 DOLA_API_KEYS=sk-$(openssl rand -hex 20)
 DOLA_ADMIN_KEY=$(openssl rand -hex 20)
-# VPS đã ở Nhật/Hàn → nối thẳng. Muốn mỗi nick một IP riêng thì đặt proxy riêng cho nick trong app.
-DOLA_PROXY=
+# VPS ở Nhật/Hàn → để trống (nối thẳng). VPS nơi khác → proxy Nhật/Hàn (truyền qua DOLA_PROXY=... lúc cài).
+DOLA_PROXY=${DOLA_PROXY:-}
 DOLA_HEADLESS=1
 DOLA_MAX_CONCURRENCY=2
 DOLA_LOGIN_CONCURRENCY=2
