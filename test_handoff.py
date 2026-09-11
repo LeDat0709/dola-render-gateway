@@ -16,11 +16,11 @@ class FakePage:
         return self.polls.pop(0) if len(self.polls) > 1 else self.polls[0]
 
 
-def _run(polls, quiet, answered, shared=None):
+def _run(polls, quiet, answered, shared=None, handoff_after=0):
     async def main():
         page = FakePage(polls)
         return await vw.poll_conversation("acc1", page, FakeCtx(), "77", timeout=60,
-                                          handoff_after=0, answered=shared)
+                                          handoff_after=handoff_after, answered=shared)
 
     class FakeCtx:
         async def cookies(self, *a): return []
@@ -142,6 +142,44 @@ def test_parse_credit_need_from_dola_message():
     assert vw._parse_credit_need("エラーが発生しました。") == (None, None)
     err = vw._param_change_error(ja)
     assert (err.need, err.left) == (4, 2) and isinstance(err, vw.ParameterChangeError)
+
+
+def test_credits_used_is_read_from_start_message():
+    """A2: Dola báo giá lúc bắt đầu dựng → học giá ngay video đầu, không đợi một nick thiếu credit."""
+    assert vw._credits_used("この動画の生成には4動画クレジットを使用します。約5分後に完成します。") == 4
+    assert vw._credits_used("本日は残り2のみです。") is None          # số dư, không phải giá
+    assert vw._credits_used("生成を開始します。") is None
+    r = _run([{"ok": True, "texts": ["4動画クレジットを使用します"], "videos": [], "images": []}, VIDEO],
+             quiet=0, answered=[], handoff_after=None)                  # giữ trình duyệt tới khi có video
+    assert r["credits_used"] == 4 and r["local_path"]                  # giá đi theo kết quả về pool
+
+
+def test_download_failure_keeps_job_with_cdn_link():
+    """A3: video đã dựng (đã trừ credit) mà tải rớt mạng → thử 3 lần; vẫn hỏng thì job xong với link Dola."""
+    import video_worker as vwk
+    calls = []
+    async def flaky(url, fname):
+        calls.append(url)
+        if len(calls) < 3:
+            raise RuntimeError("Connection reset")
+        fname.write_bytes(b"0" * 200_000)
+    saved = (vwk._fetch_to_file, vwk.config.DOWNLOAD_DIR, vwk.DOWNLOAD_RETRY_SEC, vw._download)
+    vwk._fetch_to_file, vwk.config.DOWNLOAD_DIR, vwk.DOWNLOAD_RETRY_SEC = flaky, tempfile.mkdtemp(), 0
+    try:
+        p = asyncio.run(vwk._download("https://x/v.mp4", "acc1"))
+        assert p.exists() and len(calls) == 3, calls                      # lần 3 mới được
+        async def dead(url, fname): raise RuntimeError("Connection reset")
+        vwk._fetch_to_file = dead
+        try:
+            asyncio.run(vwk._download("https://x/v.mp4", "acc1"))
+            assert False, "phải ném DownloadError"
+        except vwk.DownloadError as e:
+            assert "https://x/v.mp4" in str(e)                            # link để tải tay
+        vw._download = vwk._download                                      # poll dùng bản thật (đang hỏng)
+        r = _run([VIDEO], quiet=0, answered=[])
+        assert r["video_url"] == "https://x/v.mp4" and r["local_path"] is None and r["download_error"]
+    finally:
+        vwk._fetch_to_file, vwk.config.DOWNLOAD_DIR, vwk.DOWNLOAD_RETRY_SEC, vw._download = saved
 
 
 def test_generation_started_is_status_not_refusal():
@@ -322,4 +360,6 @@ if __name__ == "__main__":
     test_reply_uses_dola_cap_not_30s(); test_own_directive_is_ignored()
     test_answered_memory_survives_reopen(); test_streaming_message_is_answered_once()
     test_option_list_gets_a_letter_not_yes(); test_http_poll_skips_answered_question()
-    test_http_error_is_not_risk_control(); test_blocked_reason_says_one_thing(); print("OK")
+    test_http_error_is_not_risk_control(); test_blocked_reason_says_one_thing()
+    test_prompt_marks_are_scaled_to_duration(); test_parse_credit_need_from_dola_message()
+    test_credits_used_is_read_from_start_message(); test_download_failure_keeps_job_with_cdn_link(); print("OK")

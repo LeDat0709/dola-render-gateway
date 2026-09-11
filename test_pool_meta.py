@@ -169,7 +169,61 @@ def test_credit_cost_learned_and_enforced():
         assert len(gen.calls) == 1                                       # lần 2 không gửi gì lên Dola
 
 
+def test_credit_is_learned_and_deducted_after_success():
+    """A1+A2: video xong → học giá từ "4動画クレジットを使用", trừ credit nick; còn 2 < 4 thì chặn trước khi mở Chrome."""
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp)
+        (Path(tmp) / "accounts" / "n1").mkdir(parents=True)
+        pool._ensure_meta("n1")
+        pool._set_credit_balance("n1", 10, "test")
+        gen = _fake_gen({"video_url": "u", "local_path": "p", "credits_used": 4})
+        browser_pool.generate_video = gen
+        run = lambda: asyncio.run(pool.generate_video("p", "9:16", 10, model="seedance_v2.5", account="n1"))
+        run(); run()
+        assert pool._cost_for("seedance_v2.5", 10) == 4                 # học giá ngay video đầu
+        assert pool._meta("n1")["credit_balance"] == 2                  # 10 − 4 − 4
+        try:
+            run(); assert False, "phải chặn trước khi mở Chrome"
+        except RuntimeError as e:
+            assert "còn 2 credit" in str(e) and "cần 4" in str(e), str(e)
+        assert len(gen.calls) == 2
+
+
+def test_no_double_deduction_when_dola_reports_balance():
+    """Dola báo "残り3" ngay trong job → tin số của Dola, không trừ thêm lần nữa."""
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp)
+        (Path(tmp) / "accounts" / "n1").mkdir(parents=True)
+        pool._ensure_meta("n1")
+        pool._set_credit_balance("n1", 10, "test")
+        async def gen(account, *a, **kw):
+            kw["on_balance"](3, "本日は残り3")
+            return {"video_url": "u", "local_path": "p", "credits_used": 4}
+        browser_pool.generate_video = gen
+        asyncio.run(pool.generate_video("p", "9:16", 10, model="seedance_v2.5", account="n1"))
+        assert pool._meta("n1")["credit_balance"] == 3
+
+
+def test_yesterdays_credit_reading_is_forgotten():
+    """Credit Dola reset theo ngày: số 0 đọc trước mốc reset không được kẹt nick hôm nay."""
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp)
+        (Path(tmp) / "accounts" / "n1").mkdir(parents=True)
+        pool._ensure_meta("n1")
+        pool._conn.execute("UPDATE accounts_meta SET credit_balance=0, credit_checked_at=? WHERE name='n1'",
+                           (pool._next_limit_reset() - 86400 - 60,))    # đọc 1 phút trước mốc reset
+        pool._conn.commit()
+        a = pool.list_accounts()[0]
+        assert a["credit_balance"] is None and pool._schedulable(a), a
+        pool._set_credit_balance("n1", 0, "test")                        # đọc hôm nay → chặn thật
+        a = pool.list_accounts()[0]
+        assert a["credit_balance"] == 0 and not pool._schedulable(a)
+
+
 if __name__ == "__main__":
+    test_credit_is_learned_and_deducted_after_success()
+    test_no_double_deduction_when_dola_reports_balance()
+    test_yesterdays_credit_reading_is_forgotten()
     test_credit_cost_learned_and_enforced()
     test_status_for_unknown_nick_is_kept()
     test_new_profile_dir_shows_up_without_restart()

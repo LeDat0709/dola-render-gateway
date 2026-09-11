@@ -286,12 +286,19 @@ async def _next_stt(dl_dir: Path) -> int:
         return n
 
 
-async def _download(url: str, account: str) -> Path:
-    """Downloads video to DOWNLOAD_DIR (tên: <STT>_<nick>_<thời gian>.mp4) and returns local path."""
-    dl_dir = Path(config.DOWNLOAD_DIR)
-    dl_dir.mkdir(parents=True, exist_ok=True)
-    stt = await _next_stt(dl_dir)
-    fname = dl_dir / f"{stt:04d}_{account}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+DOWNLOAD_RETRIES = 3
+DOWNLOAD_RETRY_SEC = 5
+
+
+class DownloadError(RuntimeError):
+    """Video đã dựng xong trên Dola (đã trừ credit) nhưng không tải về được; .url để tải tay."""
+
+    def __init__(self, url: str, last: str):
+        super().__init__(f"Không tải được video sau {DOWNLOAD_RETRIES} lần ({last}) — tải tay: {url}")
+        self.url = url
+
+
+async def _fetch_to_file(url: str, fname: Path):
     timeout = aiohttp.ClientTimeout(total=300)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(url, proxy=config.PROXY or None) as resp:
@@ -301,8 +308,30 @@ async def _download(url: str, account: str) -> Path:
                     f.write(chunk)
     size = fname.stat().st_size
     if size < 100_000:   # video thật luôn > 100KB; nhỏ hơn = tải lỗi/rỗng
-        fname.unlink(missing_ok=True)
-        raise RuntimeError(f"Video tải về bị lỗi/rỗng ({size/1024:.0f}KB) — thử lại.")
+        raise RuntimeError(f"Video tải về bị lỗi/rỗng ({size/1024:.0f}KB)")
+
+
+async def _download(url: str, account: str) -> Path:
+    """Downloads video to DOWNLOAD_DIR (tên: <STT>_<nick>_<thời gian>.mp4) and returns local path.
+
+    Render mất 2–12 phút và đã trừ credit; một lần rớt mạng lúc tải không được làm mất job →
+    thử DOWNLOAD_RETRIES lần, hết thì ném DownloadError mang URL để người dùng tải tay.
+    """
+    dl_dir = Path(config.DOWNLOAD_DIR)
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    stt = await _next_stt(dl_dir)
+    fname = dl_dir / f"{stt:04d}_{account}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        try:
+            await _fetch_to_file(url, fname)
+            break
+        except Exception as e:
+            last = str(e)[:120]
+            fname.unlink(missing_ok=True)
+            print(f"[{account}] tải video lỗi lần {attempt}/{DOWNLOAD_RETRIES}: {last}", flush=True)
+            if attempt == DOWNLOAD_RETRIES:
+                raise DownloadError(url, last) from e
+            await asyncio.sleep(DOWNLOAD_RETRY_SEC)
     if getattr(config, "AUTO_REMOVE_WM", False):
         try:
             import watermark

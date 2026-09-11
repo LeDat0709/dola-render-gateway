@@ -19,7 +19,7 @@ from gap import find_gap_x
 import config
 from browser import cookie_value, launch_account_context, pin_session_cookies
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
-from video_worker import (POLL_JS, SUBMIT_JS, RiskControlError, SubmitDelivered, SubmitRejected,
+from video_worker import (POLL_JS, SUBMIT_JS, DownloadError, RiskControlError, SubmitDelivered, SubmitRejected,
                           _check_submit, _download, extract_unwatermarked_url)
 
 # Daily limit pattern matching response text (JA / ZH / EN / VI)
@@ -77,6 +77,27 @@ def _param_change_error(text: str):
     err = ParameterChangeError(_CREDIT_SHORT_MSG + text[:150])
     err.need, err.left = _parse_credit_need(text)   # pool học chi phí (model, giây) + credit còn lại của nick
     return err
+
+
+def _credits_used(text: str):
+    """Dola báo giá lúc bắt đầu dựng ("…4動画クレジットを使用します") → 4. Câu số dư ("残り2") thì không."""
+    t = text or ""
+    low = t.lower()
+    if not ("使用" in t or "will be used" in low or "will use" in low or "uses " in low):
+        return None
+    m = _NEED_RE.search(t)
+    return int(m.group(1)) if m else None
+
+
+async def _download_or_link(url: str, account: str) -> tuple[str | None, str | None]:
+    """(đường dẫn file, lỗi). Tải hỏng sau mọi lần thử → (None, lỗi): job vẫn xong, giữ link CDN để tải tay."""
+    try:
+        local = await _download(url, account)
+    except DownloadError as e:
+        print(f"[{account}] {e}", flush=True)
+        return None, str(e)
+    print(f"[{account}] Downloaded {local} ({local.stat().st_size / 1e6:.1f} MB)", flush=True)
+    return str(local), None
 
 
 PROMPT_UNCLEAR_PATTERN = re.compile(
@@ -1139,6 +1160,7 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
     last_msg = ""
     stale_msg, stale_n = "", 0
     image_polls = 0
+    credits_used = None      # giá Dola báo lúc bắt đầu dựng → pool học giá + trừ credit nick
     answered = set() if answered is None else answered
     async with aiohttp.ClientSession() as session:
         while time.time() - start < timeout:
@@ -1169,6 +1191,7 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
                 balance, _, source = _parse_balance_texts([text])
                 if balance is not None and on_balance:
                     on_balance(balance, source)
+                credits_used = _credits_used(text) or credits_used
                 if CONTENT_POLICY_PATTERN.search(text) and not _is_duration_capped(text):
                     raise ContentPolicyViolationError(
                         "Dola chặn nội dung (bạo lực / vi phạm chính sách) — đổi prompt nhẹ nhàng hơn.\n↳ Dola: " + text[:170])
@@ -1208,10 +1231,9 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
                 vm = poll["videoModels"]
                 url = extract_unwatermarked_url(vm[0] if vm else "", poll["videos"][0])
                 print(f"[{account}] Completed (http poll)! Downloading (unwatermarked priority)...", flush=True)
-                local = await _download(url, account)
-                print(f"[{account}] Downloaded {local} ({local.stat().st_size / 1e6:.1f} MB)", flush=True)
-                return {"video_url": url, "local_path": str(local),
-                        "conversation_id": conversation_id, "account": account}
+                local, dl_err = await _download_or_link(url, account)
+                return {"video_url": url, "local_path": local, "download_error": dl_err,
+                        "conversation_id": conversation_id, "account": account, "credits_used": credits_used}
             if last_msg and not _is_duration_confirm(last_msg) and not _is_spec_menu(last_msg):
                 stale_msg, stale_n = (stale_msg, stale_n + 1) if last_msg == stale_msg else (last_msg, 1)
                 if stale_n >= STALE_POLLS:
@@ -1250,6 +1272,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     image_polls = 0
     last_msg = ""            # latest substantive Dola reply (user messages are not text blocks, see POLL_JS)
     stale_msg, stale_n = "", 0
+    credits_used = None      # giá Dola báo lúc bắt đầu dựng → pool học giá + trừ credit nick
     while time.time() - start < timeout:
         await asyncio.sleep(5)
         try:
@@ -1274,6 +1297,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             balance, _, source = _parse_balance_texts([text])
             if balance is not None and on_balance:
                 on_balance(balance, source)
+            credits_used = _credits_used(text) or credits_used
             if CONTENT_POLICY_PATTERN.search(text) and not _is_duration_capped(text):
                 raise ContentPolicyViolationError(
                     "Dola chặn nội dung (bạo lực / vi phạm chính sách) — đổi prompt nhẹ nhàng hơn."
@@ -1345,10 +1369,9 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             url = extract_unwatermarked_url(
                 video_models[0] if video_models else "", poll["videos"][0])
             print(f"[{account}] Completed! Downloading (unwatermarked priority)...", flush=True)
-            local = await _download(url, account)
-            print(f"[{account}] Downloaded {local} ({local.stat().st_size / 1e6:.1f} MB)", flush=True)
-            return {"video_url": url, "local_path": str(local),
-                    "conversation_id": conversation_id, "account": account}
+            local, dl_err = await _download_or_link(url, account)
+            return {"video_url": url, "local_path": local, "download_error": dl_err,
+                    "conversation_id": conversation_id, "account": account, "credits_used": credits_used}
         # A substantive reply that sticks around without a video is Dola's way of saying no.
         if last_msg and not _is_duration_confirm(last_msg) and not _is_spec_menu(last_msg):
             stale_msg, stale_n = (stale_msg, stale_n + 1) if last_msg == stale_msg else (last_msg, 1)

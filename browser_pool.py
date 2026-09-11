@@ -214,11 +214,15 @@ class BrowserPool:
         """Dashboard view: combines metadata, quota, and busy status."""
         self._clear_expired_rate_limits()
         now = time.time()
+        reset_at = self._next_limit_reset() - 86400   # mốc reset credit gần nhất (0h JST)
         out = []
         for a in self.accounts:
             m = self._meta(a)
             used = self.used_today(a)
             lock = self._locks.get(a)
+            # Credit Dola reset theo ngày: số đọc trước mốc reset là số cũ → coi như chưa biết. Không thì
+            # nick về 0 credit hôm qua kẹt "hết credit" mãi (_schedulable đòi cb >= 1 khi đã biết cb).
+            cb = m["credit_balance"] if (m and m["credit_checked_at"] >= reset_at) else None
             out.append({
                 "name": a,
                 "scheduling": bool(m["scheduling"]) if m else True,
@@ -236,11 +240,11 @@ class BrowserPool:
                 "quota_blocked_until": m["quota_blocked_until"] if m and m["quota_blocked_until"] else 0,
                 "quota_blocked": bool(m and m["quota_blocked_until"] > now),
                 "quota_reason": m["quota_reason"] if m else "",
-                "credit_balance": m["credit_balance"] if m else None,
+                "credit_balance": cb,
                 "credit_checked_at": m["credit_checked_at"] if m else 0,
                 "used_today": used,
                 "limit": DAILY_LIMIT,
-                "remaining": (m["credit_balance"] if (m and m["credit_balance"] is not None) else max(0, DAILY_LIMIT - used)),
+                "remaining": cb if cb is not None else max(0, DAILY_LIMIT - used),
                 "busy": bool(lock and lock.locked()),
             })
         return out
@@ -362,6 +366,25 @@ class BrowserPool:
                     f"— chọn nick khác hoặc giảm thời lượng")
         return None
 
+    def _settle(self, account: str, result, model, duration, balance_seen: bool):
+        """Video xong: tính lượt, học giá từ câu "N動画クレジットを使用" và trừ credit đã biết của nick.
+
+        Không trừ khi Dola vừa báo số dư ngay trong job này (số đó đã là sau khi trừ).
+        ponytail: nếu Dola báo "残り" TRƯỚC khi trừ thì lệch một video; lần thiếu credit kế tiếp
+        (ParameterChangeError mang need/left) tự chỉnh lại.
+        """
+        self._claim(account)
+        used = result.get("credits_used") if isinstance(result, dict) else None
+        if used and duration and model:
+            self._remember_cost(model, duration, used)
+        cost = used or self._cost_for(model, duration)
+        m = self._meta(account)
+        cb = m["credit_balance"] if m else None
+        if cost and cb is not None and not balance_seen:
+            self._set_credit_balance(account, cb - cost, "after-job")
+        self._conn.execute("UPDATE accounts_meta SET last_used_at=? WHERE name=?", (time.time(), account))
+        self._conn.commit()
+
     def _set_credit_balance(self, account: str, balance: int, source: str = ""):
         self._conn.execute(
             "UPDATE accounts_meta SET credit_balance=?, credit_checked_at=? WHERE name=?",
@@ -478,17 +501,16 @@ class BrowserPool:
         async with self.semaphore:
             lock = self._locks.setdefault(account, asyncio.Lock())
             async with lock:
+                seen = {"balance": False}
+
                 def on_balance(balance, source=""):
+                    seen["balance"] = True
                     self._set_credit_balance(account, balance, source)
                 try:
                     result = await resume_video(account, conversation_id, timeout,
                                                 on_poll=on_poll, on_balance=on_balance,
                                                 ratio=ratio, duration=duration)
-                    self._claim(account)
-                    self._conn.execute(
-                        "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
-                        (time.time(), account))
-                    self._conn.commit()
+                    self._settle(account, result, None, duration, seen["balance"])
                     return result
                 except TimeoutError:
                     self._claim(account)
@@ -566,7 +588,10 @@ class BrowserPool:
                         continue  # State changed while waiting
                     tried.add(account)
                     try:
+                        seen = {"balance": False}
+
                         def on_balance(balance, source=""):
+                            seen["balance"] = True
                             self._set_credit_balance(account, balance, source)
 
                         await _pace()
@@ -577,11 +602,7 @@ class BrowserPool:
                             on_balance=on_balance, on_submitted=on_submitted,
                             on_browser_free=_release_browser, on_browser_hold=_hold_browser,
                             reference_image_paths=reference_image_paths)
-                        self._claim(account)
-                        self._conn.execute(
-                            "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
-                            (time.time(), account))
-                        self._conn.commit()
+                        self._settle(account, result, model, duration, seen["balance"])
                         return result
                     except (ContentPolicyViolationError, PortraitProtectionError, PromptUnclearError) as e:
                         # Prompt/image problem, not an account problem: no rotation helps.
@@ -638,11 +659,7 @@ class BrowserPool:
                                 on_balance=on_balance, on_submitted=on_submitted,
                                 on_browser_free=_release_browser, on_browser_hold=_hold_browser,
                                 reference_image_paths=reference_image_paths)
-                            self._claim(account)
-                            self._conn.execute(
-                                "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
-                                (time.time(), account))
-                            self._conn.commit()
+                            self._settle(account, result, model, duration, seen["balance"])
                             return result
                         except TimeoutError:
                             # Đã có conversation_id → Dola vẫn đang dựng. Xoay nick ở đây = gửi lần 2 =

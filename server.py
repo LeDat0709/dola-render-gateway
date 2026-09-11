@@ -296,7 +296,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             on_conversation_id=on_conversation_id, on_poll=on_poll,
             on_submitted=on_submitted,
             reference_image_paths=reference_paths, account=account)
-        public_url = f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
+        public_url = _public_video_url(result)
         store.update(task_id, status="completed", video_url=public_url,
                      account=result.get("account"), last_poll_at=time.time(),
                      finished_at=time.time())
@@ -311,6 +311,14 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             shutil.rmtree(reference_root, ignore_errors=True)
         if acquired:
             await key_limiter.release(api_key_hash)
+
+
+def _public_video_url(result: dict) -> str:
+    """File đã tải về → link /videos/ của gateway; tải hỏng (đã thử lại) → giữ link CDN Dola để tải tay."""
+    if result.get("local_path"):
+        return f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
+    print(f"[gateway] video không tải về được, trả link Dola: {result.get('download_error')}", flush=True)
+    return result["video_url"]
 
 
 async def _resume_task(row: dict):
@@ -338,7 +346,7 @@ async def _resume_task(row: dict):
         result = await pool.resume_video(
             row["account"], row["conversation_id"], remaining, on_poll=on_poll,
             ratio=_rratio, duration=row.get("duration"))
-        public_url = f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
+        public_url = _public_video_url(result)
         store.update(task_id, status="completed", video_url=public_url,
                      account=result.get("account"), last_poll_at=time.time(),
                      finished_at=time.time())
