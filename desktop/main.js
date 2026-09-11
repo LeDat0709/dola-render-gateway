@@ -15,7 +15,8 @@ const PACKAGED = app.isPackaged;
 const APP_DIR = PACKAGED ? path.join(process.resourcesPath, "app-python") : REPO_ROOT;
 const DATA_DIR = PACKAGED ? app.getPath("userData") : REPO_ROOT;
 const { fetchGenerate } = require("./fetch-generate.cjs");
-const { applyProxy, attachLoadErrorHandler, preflightDola, readEnvLocal: _readEnvLocal } = require("./proxy.cjs");
+const { applyProxy, attachLoadErrorHandler, preflightDola, readEnvLocal: _readEnvLocal,
+        parseProxy, globalProxy, testProxy, PROXY_FORMATS } = require("./proxy.cjs");
 const _IS_WIN = process.platform === "win32";
 const _VENV_BIN = _IS_WIN ? "Scripts" : "bin";   // Windows: .venv\\Scripts, macOS/Linux: .venv/bin
 const VENV_PY = PACKAGED
@@ -823,6 +824,18 @@ ipcMain.handle("account:getProxy", (_e, { name }) => {
     const f = path.join(DATA_DIR, "accounts", name, "proxy.txt");
     return { ok: true, proxy: fs.existsSync(f) ? fs.readFileSync(f, "utf8").trim() : "" };
   } catch (e) { return { ok: true, proxy: "" }; }
+});
+
+// Proxy chung = DOLA_PROXY trong .env.local (DATA_DIR). Python chỉ đọc lại khi Tắt/Bật server.
+ipcMain.handle("proxy:getGlobal", () => ({ ok: true, proxy: globalProxy(DATA_DIR) }));
+ipcMain.handle("proxy:setGlobal", (_e, { proxy }) => {
+  const v = (proxy || "").trim();
+  if (v && !parseProxy(v)) return { ok: false, error: `Proxy sai định dạng. Chấp nhận: ${PROXY_FORMATS}` };
+  try { upsertEnvLocal("DOLA_PROXY", v); } catch (e) { return { ok: false, error: String(e) }; }
+  return { ok: true, proxy: v || "(nối thẳng)" };
+});
+ipcMain.handle("proxy:test", async (_e, { proxy }) => {
+  try { return await testProxy(proxy); } catch (e) { return { ok: false, error: String(e) }; }
 });
 
 ipcMain.handle("open:downloads", () => shell.openPath(config().downloadsDir));

@@ -51,7 +51,15 @@ function parseProxy(raw) {
   return { scheme, host, port, user, pass, rules: `${scheme}://${host}:${port}` };
 }
 
-// Proxy riêng của nick (accounts/<nick>/proxy.txt) thắng; không có thì dùng DOLA_PROXY chung.
+// Khớp config.py: thiếu khoá DOLA_PROXY → 127.0.0.1:7890 (Clash); có khoá mà trống → nối thẳng.
+// Trước đây Electron nối thẳng còn Python đi 7890 → hai bên báo lỗi khác nhau, người dùng rối.
+const DEFAULT_PROXY = "http://127.0.0.1:7890";
+function globalProxy(repoRoot) {
+  const env = readEnvLocal(repoRoot);
+  return ("DOLA_PROXY" in env) ? env.DOLA_PROXY.trim() : DEFAULT_PROXY;
+}
+
+// Proxy riêng của nick (accounts/<nick>/proxy.txt) thắng; không có thì dùng proxy chung.
 function accountProxy(repoRoot, name) {
   try {
     const f = path.join(repoRoot, "accounts", String(name || ""), "proxy.txt");
@@ -60,7 +68,7 @@ function accountProxy(repoRoot, name) {
       if (v) return v;
     }
   } catch (_) { /* đọc lỗi -> rơi về proxy chung */ }
-  return (readEnvLocal(repoRoot).DOLA_PROXY || "").trim();
+  return globalProxy(repoRoot);
 }
 
 // Proxy có user:pass -> Chromium hỏi credential qua sự kiện app "login".
@@ -79,9 +87,8 @@ function hookProxyAuth() {
   });
 }
 
-// Gắn proxy vào một session Electron. Trả về mô tả proxy đang dùng (null = nối thẳng).
-async function applyProxy(ses, repoRoot, name, send) {
-  const raw = accountProxy(repoRoot, name);
+// Gắn một chuỗi proxy vào session Electron. Trả về mô tả proxy đang dùng (null = nối thẳng).
+async function applyProxyRaw(ses, raw, send) {
   const p = parseProxy(raw);
   if (!p) {
     if (send && raw) send(`⚠ Proxy "${raw}" sai định dạng — đang nối thẳng.`);
@@ -93,6 +100,24 @@ async function applyProxy(ses, repoRoot, name, send) {
   await ses.setProxy({ proxyRules: p.rules, proxyBypassRules: "<local>" });
   if (send) send(`Proxy: ${p.scheme}://${p.host}:${p.port}${p.user ? " (có xác thực)" : ""}`);
   return p;
+}
+
+// Gắn proxy của nick (hoặc proxy chung) vào session.
+const applyProxy = (ses, repoRoot, name, send) => applyProxyRaw(ses, accountProxy(repoRoot, name), send);
+
+const PROXY_FORMATS = "host:port · user:pass@host:port · host:port:user:pass · socks5://host:port";
+
+// Thử một chuỗi proxy (chưa cần lưu) có vào được dola.com không. Session tạm trong RAM, không dính cookie nick.
+async function testProxy(raw, url = "https://www.dola.com/") {
+  const s = String(raw || "").trim();
+  if (s && !parseProxy(s)) return { ok: false, error: `Proxy sai định dạng. Chấp nhận: ${PROXY_FORMATS}` };
+  const { session } = require("electron");
+  const ses = session.fromPartition(`proxy-test-${Date.now()}`);
+  const p = await applyProxyRaw(ses, s, null);
+  const via = p ? `${p.scheme}://${p.host}:${p.port}` : "nối thẳng (không proxy)";
+  const r = await probeUrl(ses, url);
+  if (r.ok) return { ok: true, via, status: r.status };
+  return { ok: false, via, error: `Không vào được dola.com qua ${via}: ${r.error}` };
 }
 
 // Mã lỗi mạng của Chromium -> câu tiếng Việt nói rõ phải làm gì.
@@ -120,7 +145,7 @@ function showLoadError(win, url, code, desc, send, proxyInfo) {
   if (!win || win.isDestroyed()) return;
   const pline = proxyInfo
     ? `Đang dùng proxy <b>${escapeHtml(proxyInfo.scheme + "://" + proxyInfo.host + ":" + proxyInfo.port)}</b> — kiểm tra proxy còn sống không.`
-    : `Chưa cấu hình proxy. Đặt <code>DOLA_PROXY</code> trong <code>.env.local</code> (exit node Nhật hoặc Hàn), hoặc đặt proxy riêng cho nick, rồi thử lại.`;
+    : `Đang nối thẳng, không qua proxy. Vào tab <b>Cài đặt → Proxy chung</b> (exit node Nhật hoặc Hàn), hoặc đặt proxy riêng cho nick (nút ⚙), rồi thử lại.`;
   const html = `<meta charset="utf-8"><body style="margin:0;font:14px/1.65 -apple-system,system-ui,'Segoe UI',sans-serif;background:#0c0c0e;color:#fafafa;padding:28px">
 <h2 style="margin:0 0 6px;font-size:16px">Không mở được trang</h2>
 <p style="color:#a1a1aa;margin:0 0 14px;word-break:break-all">${escapeHtml(url)}</p>
@@ -170,11 +195,12 @@ async function preflightDola(ses, repoRoot, name, url = "https://www.dola.com/")
   const p = parseProxy(accountProxy(repoRoot, name));
   const where = p
     ? `Proxy đang dùng: ${p.scheme}://${p.host}:${p.port} — kiểm tra proxy còn chạy không.`
-    : `Chưa cấu hình proxy — mạng của bạn đang chặn dola.com. Đặt DOLA_PROXY (exit node Nhật/Hàn) trong .env.local rồi thử lại.`;
+    : `Đang nối thẳng — mạng của bạn đang chặn dola.com. Vào Cài đặt → Proxy chung (exit node Nhật/Hàn) rồi thử lại.`;
   return { ok: false, error: `Không vào được dola.com (${r.error}). ${where}` };
 }
 
 module.exports = {
-  readEnvLocal, parseProxy, accountProxy, applyProxy, hookProxyAuth,
-  describeNetError, showLoadError, attachLoadErrorHandler, probeUrl, preflightDola,
+  readEnvLocal, parseProxy, globalProxy, accountProxy, applyProxyRaw, applyProxy, hookProxyAuth,
+  describeNetError, showLoadError, attachLoadErrorHandler, probeUrl, preflightDola, testProxy,
+  DEFAULT_PROXY, PROXY_FORMATS,
 };

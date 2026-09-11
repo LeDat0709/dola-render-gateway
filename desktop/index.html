@@ -293,6 +293,16 @@
   <section class="card">
     <h2>Cài đặt</h2>
     <div class="grp" style="margin-top:0">
+      <label style="margin-top:0">Proxy chung — ở Việt Nam BẮT BUỘC, exit node Nhật hoặc Hàn</label>
+      <input id="gProxy" placeholder="http://127.0.0.1:7890 · user:pass@host:port · host:port:user:pass · socks5://host:port" style="width:100%;box-sizing:border-box">
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <button id="gProxyTest" class="ghost" style="flex:1">🔌 Kiểm tra vào dola.com</button>
+        <button id="gProxySave" class="ghost">Lưu</button>
+      </div>
+      <div id="gProxyStatus" class="tiny" style="color:var(--mut);margin:6px 0 0">Để trống = nối thẳng (chỉ khi mạng bạn đã ra nước ngoài).</div>
+      <p class="tiny" style="color:var(--mut);margin:6px 0 0">Nick có proxy riêng (nút ⚙ ở từng nick) dùng proxy riêng. Lưu xong bấm “Tắt” rồi “Bật server”.</p>
+    </div>
+    <div class="grp" style="margin-top:14px">
       <label style="margin-top:0">Thư mục lưu video (tên có số thứ tự)</label>
       <div id="vidDir" class="tiny" style="word-break:break-all;color:var(--mut);margin:2px 0 8px">…</div>
       <div style="display:flex;gap:6px">
@@ -961,6 +971,11 @@ async function bulkImportNicks() {
   refreshVidDir();
   $("chooseVidDir").onclick=async()=>{ const r=await window.api.chooseVideoDir(); if(r&&r.ok){ await refreshVidDir(); $("genStatus").textContent="Đã đổi thư mục lưu video → bấm Tắt rồi Bật server để áp dụng."; } };
   $("openVidDir").onclick=()=>window.api.openDownloads();
+  // Proxy chung: Lưu ghi DOLA_PROXY vào .env.local; Python chỉ đọc lại khi Tắt/Bật server.
+  async function refreshGlobalProxy(){ try{ const r=await window.api.getGlobalProxy(); if($("gProxy")) $("gProxy").value=r.proxy||""; }catch(_){} }
+  refreshGlobalProxy();
+  $("gProxyTest").onclick=async()=>{ const st=$("gProxyStatus"); st.textContent="⏳ đang thử vào dola.com…"; const r=await window.api.testProxy($("gProxy").value); st.textContent=r.ok?`✓ Vào được dola.com (HTTP ${r.status}) qua ${r.via}`:("✗ "+(r.error||"lỗi không rõ")); };
+  $("gProxySave").onclick=async()=>{ const r=await window.api.setGlobalProxy($("gProxy").value); $("gProxyStatus").textContent=r.ok?`✓ Đã lưu proxy chung: ${r.proxy} → bấm “Tắt” rồi “Bật server” để áp dụng.`:("✗ "+r.error); };
   let logTimer=null;
   function renderLog(){ window.api.tailLogs(400).then(r=>{ const p=$("logPanel"); if(!p) return; p.textContent=(r&&r.ok)?(r.text||"(log trống — bật server rồi chạy 1 video)"):("lỗi đọc log: "+((r&&r.error)||"?")); p.scrollTop=p.scrollHeight; }); }
   $("viewLog").onclick=()=>{ const w=$("logWrap"); const show=w.hidden; w.hidden=!show; if(show){ renderLog(); logTimer=setInterval(renderLog,2000); } else if(logTimer){ clearInterval(logTimer); logTimer=null; } };

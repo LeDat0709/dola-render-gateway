@@ -1,6 +1,9 @@
 // Self-check cho proxy.cjs. Chạy: node desktop/test-proxy.cjs
 const assert = require("assert");
-const { parseProxy, describeNetError, accountProxy } = require("./proxy.cjs");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { parseProxy, describeNetError, accountProxy, globalProxy, DEFAULT_PROXY } = require("./proxy.cjs");
 
 // Mọi định dạng browser.py hỗ trợ đều phải ra host/port/scheme đúng.
 const cases = [
@@ -33,7 +36,17 @@ assert.ok(/proxy/i.test(describeNetError(-130, "")), "thiếu gợi ý cho -130"
 assert.ok(/tên miền/i.test(describeNetError(-105, "")), "thiếu gợi ý cho -105");
 assert.ok(/mã -999/.test(describeNetError(-999, "")), "mã lạ phải hiện nguyên mã");
 
-// Không có proxy.txt và không có .env.local -> chuỗi rỗng, không ném lỗi.
-assert.strictEqual(typeof accountProxy("/khong/ton/tai", "acc1"), "string");
+// Không có proxy.txt và không có .env.local -> mặc định giống config.py (Clash 7890), không ném lỗi.
+assert.strictEqual(accountProxy("/khong/ton/tai", "acc1"), DEFAULT_PROXY, "thiếu DOLA_PROXY phải rơi về 7890 như Python");
 
-console.log("ALL PASS (" + (cases.length + 8) + " assertions)");
+// .env.local quyết định: DOLA_PROXY= (trống) là nối thẳng; có giá trị thì nick không có proxy riêng dùng nó.
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "dola-proxy-"));
+fs.writeFileSync(path.join(tmp, ".env.local"), "DOLA_PROXY=\n");
+assert.strictEqual(globalProxy(tmp), "", "DOLA_PROXY= trống phải là nối thẳng");
+fs.writeFileSync(path.join(tmp, ".env.local"), "DOLA_PROXY=socks5://1.2.3.4:1080\n");
+assert.strictEqual(accountProxy(tmp, "acc1"), "socks5://1.2.3.4:1080", "nick không có proxy riêng phải dùng proxy chung");
+fs.mkdirSync(path.join(tmp, "accounts", "acc1"), { recursive: true });
+fs.writeFileSync(path.join(tmp, "accounts", "acc1", "proxy.txt"), "9.9.9.9:8080\n");
+assert.strictEqual(accountProxy(tmp, "acc1"), "9.9.9.9:8080", "proxy riêng của nick phải thắng proxy chung");
+
+console.log("ALL PASS (" + (cases.length + 11) + " assertions)");
