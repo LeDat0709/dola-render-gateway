@@ -242,6 +242,26 @@ def test_network_error_does_not_kill_nick():
 
 def _reset_rate_limit():
     browser_pool._rate_limit_until = browser_pool._rate_limit_pause = 0.0
+    browser_pool._gap_boost = browser_pool._gap_boost_at = 0.0
+
+
+def test_rate_limit_widens_submit_gap_then_decays():
+    """Mỗi lần dính 710022002 thì giãn nhịp gửi thêm RATE_LIMIT_GAP_STEP (không dồn vào IP y như cũ),
+    có trần, và tự giảm dần khi êm — để vòng dừng-chạy-lại không leo thang mãi."""
+    b = browser_pool
+    _reset_rate_limit()
+    try:
+        b.note_rate_limited(now=1000.0)
+        assert b._effective_gap_boost(1000.0) == b.RATE_LIMIT_GAP_STEP
+        # dính lại (qua đợt) → cộng thêm một bậc
+        b.note_rate_limited(now=1000.0 + b.RATE_LIMIT_PAUSE_SEC + 1)
+        after = b._effective_gap_boost(1000.0 + b.RATE_LIMIT_PAUSE_SEC + 1)
+        assert after >= 2 * b.RATE_LIMIT_GAP_STEP - 0.1, after
+        assert after <= b.RATE_LIMIT_GAP_MAX
+        # để yên vài phút → giãn nhịp giảm về 0
+        assert b._effective_gap_boost(1000.0 + b.RATE_LIMIT_PAUSE_SEC + 1 + 600) == 0.0
+    finally:
+        _reset_rate_limit()
 
 
 def test_rate_limited_pauses_everyone_then_rotates():
