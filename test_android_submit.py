@@ -90,6 +90,27 @@ def load_cookies(nick: str) -> dict:
     return {c["name"]: c["value"] for c in items if c.get("name")}
 
 
+_COOKIE_NAMES = {"sessionid", "sessionid_ss", "sid_tt", "sid_guard", "odin_tt", "ttwid",
+                 "uid_tt", "uid_tt_ss", "store-idc", "store-country-code", "s_v_web_id", "msToken"}
+
+
+def load_cookies_file(path: str) -> dict:
+    """Đọc file cookie Netscape (kể cả dòng #HttpOnly_ và domain bị bọc markdown): lấy 2 token cuối mỗi dòng."""
+    ck = {}
+    for line in open(path, encoding="utf-8"):
+        line = line.rstrip("\n")
+        if line.startswith("#HttpOnly_"):
+            line = line[len("#HttpOnly_"):]
+        elif line.startswith("#") or not line.strip():
+            continue
+        toks = line.split()
+        if len(toks) >= 2 and toks[-2] in _COOKIE_NAMES:
+            ck[toks[-2]] = toks[-1]
+    if "sessionid" not in ck:
+        raise SystemExit(f"Không thấy sessionid trong {path}")
+    return ck
+
+
 ANDROID_HOST = "https://api16-normal-i18n-myb.dola.com"
 BOT_ID = "7241547611541340167"
 # device_id/install_id/cdid: MẪU của repo — KHÔNG phải của nick mình (nick đăng nhập web, không có app id)
@@ -161,16 +182,13 @@ def text_body(prompt: str) -> dict:
     }
 
 
-async def send(nick: str, body: dict) -> None:
+async def send(ck: dict, body: dict, proxy: str | None) -> None:
     import aiohttp
-    from browser import account_proxy_url
-    ck = load_cookies(nick)
     now_ms = int(time.time() * 1000)
     url = f"{ANDROID_HOST}/chat/completion?{base_params(ck)}&_rticket={now_ms}"
     sig = sign(url, timestamp=now_ms // 1000)
     headers = {**android_headers(ck), "X-SS-REQ-TICKET": str(now_ms), **sig}
-    proxy = account_proxy_url(nick) or config.PROXY or None
-    print(f"POST {url[:90]}...\n  X-Gorgon={sig['X-Gorgon'][:32]}…  proxy={'có' if proxy else 'không'}")
+    print(f"POST {url[:90]}...\n  X-Gorgon={sig['X-Gorgon'][:32]}…  proxy={'có' if proxy else 'không (đi thẳng)'}")
     data = json.dumps(body, ensure_ascii=False).encode()
     async with aiohttp.ClientSession() as s:
         async with s.post(url, data=data, headers=headers, proxy=proxy,
@@ -205,6 +223,8 @@ def dry_run() -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--nick")
+    ap.add_argument("--cookie-file", help="file cookie Netscape (thay cho --nick); gửi đi thẳng nếu không có --proxy")
+    ap.add_argument("--proxy", help="proxy đi ra (http://... hoặc host:port:user:pass); mặc định proxy nick, hoặc đi thẳng với --cookie-file")
     ap.add_argument("--send", action="store_true")
     ap.add_argument("--video", action="store_true", help="gửi lệnh tạo video 10s (TỐN credit); mặc định gửi chat chữ (miễn phí)")
     ap.add_argument("--prompt", default="xin chào")
@@ -212,11 +232,18 @@ def main() -> None:
     a = ap.parse_args()
     if not a.send:
         dry_run(); return
-    if not a.nick:
-        sys.exit("--send cần --nick <tên nick>")
+    if a.cookie_file:
+        ck = load_cookies_file(a.cookie_file); label = a.cookie_file
+        proxy = a.proxy or config.PROXY or None
+    elif a.nick:
+        from browser import account_proxy_url
+        ck = load_cookies(a.nick); label = a.nick
+        proxy = a.proxy or account_proxy_url(a.nick) or config.PROXY or None
+    else:
+        sys.exit("--send cần --nick <tên nick> hoặc --cookie-file <đường dẫn>")
     body = video_body(a.prompt, a.ratio, 10) if a.video else text_body(a.prompt)
-    print(f"Gửi {'VIDEO 10s' if a.video else 'chat chữ (miễn phí)'} qua nick {a.nick} lên cổng Android…")
-    asyncio.run(send(a.nick, body))
+    print(f"Gửi {'VIDEO 10s' if a.video else 'chat chữ (miễn phí)'} qua {label} lên cổng Android…")
+    asyncio.run(send(ck, body, proxy))
 
 
 if __name__ == "__main__":
