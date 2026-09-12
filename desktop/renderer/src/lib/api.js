@@ -1,4 +1,5 @@
 // Cầu nối gateway HTTP + IPC (window.api). Giữ nguyên logic bản cũ.
+import { normalizeBundle } from "./bundle.js";
 export const api = window.api || {};
 export let cfg = { base: "http://127.0.0.1:8000", apiKey: "" };
 export async function loadConfig() {
@@ -261,7 +262,7 @@ export async function exportAccounts() {
 // phiên, ghi proxy riêng trước khi mở Chrome) rồi ghi chú / lịch. Chạy được cả khi nối server từ xa.
 export async function importAccounts(bundle, onStep) {
   await ensureConfig();
-  const list = Array.isArray(bundle?.accounts) ? bundle.accounts : [];
+  const list = normalizeBundle(bundle).accounts;   // nhận cả file seedance-accounts của tool khác
   if (!list.length) throw new Error("file không có nick nào (đúng file xuất từ Kho tài khoản?)");
   let ok = 0, unverified = 0, why = ""; const bad = [];
   for (let i = 0; i < list.length; i++) {

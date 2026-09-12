@@ -23,6 +23,10 @@ def parse_cookie_input(raw: str, default_domain: str = ".dola.com") -> List[Dict
     if (raw.startswith("[") and raw.endswith("]")) or (raw.startswith("{") and raw.endswith("}")):
         try:
             data = json.loads(raw)
+            if isinstance(data, dict) and data and "name" not in data:
+                # {tên: giá_trị} — dạng file xuất của tool khác (seedance-accounts) → như chuỗi k=v
+                pairs = "; ".join(f"{k}={v}" for k, v in data.items() if isinstance(v, (str, int)))
+                return _parse_kv(pairs, default_domain)
             if isinstance(data, dict):
                 data = [data]
             cookies = []
@@ -92,6 +96,11 @@ def parse_cookie_input(raw: str, default_domain: str = ".dola.com") -> List[Dict
         return netscape_cookies
 
     # 4. Fallback to standard key=value; pairs
+    return _parse_kv(raw, default_domain)
+
+
+def _parse_kv(raw: str, default_domain: str) -> List[Dict[str, Any]]:
+    """"k=v; k=v" (or one pair per line) → cookie dicts; Dola/Facebook domains detected by name."""
     kv_cookies = []
     # Replace newlines with semicolons if user pasted multiple lines of k=v
     semi_raw = raw.replace("\n", ";").replace("\r", ";")

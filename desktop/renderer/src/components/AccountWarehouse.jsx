@@ -9,6 +9,7 @@ import {
   deleteAccount, clearCookies, timeAgo, accState, accChip, maskProxy, proxyHost,
   exportAccounts, importAccounts,
 } from "@/lib/api";
+import { normalizeBundle } from "@/lib/bundle";
 import ProxyAssignDialog from "@/components/ProxyAssignDialog";
 
 const POLL_MS = 4000;
@@ -162,9 +163,10 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
     if (!file) return;
     mark(1);
     try {
-      const b = JSON.parse(await file.text());
-      if (b?.kind !== "dola-studio-accounts") throw new Error("không phải file xuất từ Kho tài khoản của Dola Studio");
-      if (!window.confirm(`Nhập ${b.accounts?.length || 0} nick từ file vào ${cfg.remote ? "server từ xa" : "máy này"}?\nNick trùng tên sẽ được nạp lại cookie mới.`)) return;
+      const b = normalizeBundle(JSON.parse(await file.text()));
+      const src = b.source === "seedance"
+        ? ` (file của tool khác: tên nick đổi về dạng hợp lệ${b.dupes ? `, bỏ ${b.dupes} bản ghi trùng tài khoản Dola` : ""})` : "";
+      if (!window.confirm(`Nhập ${b.accounts.length} nick từ file${src} vào ${cfg.remote ? "server từ xa" : "máy này"}?\nNick trùng tên sẽ được nạp lại cookie mới.`)) return;
       const r = await importAccounts(b, setMsg);
       setMsg(`Nhập xong ${r.ok}/${r.total} nick.`
         + (r.unverified ? ` ${r.unverified} nick chưa kiểm tra được phiên: ${r.why}` : "")
