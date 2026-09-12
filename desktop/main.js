@@ -13,7 +13,11 @@ const REPO_ROOT = path.dirname(__dirname); // desktop/ lives inside the repo
 // Chạy từ source (dev) thì cả hai vẫn là thư mục repo như cũ.
 const PACKAGED = app.isPackaged;
 const APP_DIR = PACKAGED ? path.join(process.resourcesPath, "app-python") : REPO_ROOT;
-const DATA_DIR = PACKAGED ? app.getPath("userData") : REPO_ROOT;
+// userData mặc định tên "dola-desktop" trùng với một tool khác → thư mục riêng, xem datadir.cjs.
+const DATA_DIR = PACKAGED
+  ? require("./datadir.cjs").resolveDataDir({ appData: app.getPath("appData"), oldUserData: app.getPath("userData"),
+                                              fs, log: (m) => process.stdout.write(m + "\n") })
+  : REPO_ROOT;
 const { fetchGenerate } = require("./fetch-generate.cjs");
 const { applyProxy, attachLoadErrorHandler, preflightDola, readEnvLocal: _readEnvLocal,
         parseProxy, globalProxy, testProxy, PROXY_FORMATS } = require("./proxy.cjs");
@@ -1050,7 +1054,10 @@ ipcMain.handle("logs:tail", (_e, n) => {
   } catch (e) { return { ok: false, error: String(e) }; }
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  if (!isRemote()) gateway.start();   // mở app là có server, khỏi bấm "Bật server" mỗi lần
+});
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });

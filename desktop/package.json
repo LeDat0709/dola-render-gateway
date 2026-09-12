@@ -8,7 +8,8 @@
     "start": "electron .",
     "build:ui": "npm --prefix renderer run build",
     "setup:ui": "npm --prefix renderer install --ignore-scripts --no-audit --no-fund && node renderer/node_modules/esbuild/install.js",
-    "dist:win": "electron-builder --win nsis portable"
+    "dist:win": "electron-builder --win nsis portable",
+    "dist:mac": "electron-builder --mac dir"
   },
   "devDependencies": {
     "electron": "^32.0.0",
@@ -73,6 +74,13 @@
           ]
         }
       ]
+    },
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "identity": null,
+      "category": "public.app-category.productivity"
     },
     "nsis": {
       "oneClick": true,
