@@ -31,9 +31,13 @@ export async function submitJob(prompt, body) {
   if (!r.ok) throw new Error(j.detail || "HTTP " + r.status);
   return j.id;
 }
+// Ném Error kèm .status khi server trả lỗi (404 = job không còn) — trước đây trả JSON lỗi về như
+// job bình thường, status undefined → dòng Studio quay vòng "đang chạy" vô tận.
 export async function pollJob(id) {
   const r = await fetch(cfg.base + "/v1/videos/" + id, { headers: authHeaders(), cache: "no-store" });
-  return r.json();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(j.detail || "HTTP " + r.status); e.status = r.status; throw e; }
+  return j;
 }
 
 export const creditCost = (dur) => (parseInt(dur, 10) >= 30 ? 2 : 1);

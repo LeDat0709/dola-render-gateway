@@ -59,7 +59,7 @@ function VideoCard({ v, onPlay }) {
   );
 }
 
-export default function OverviewTab({ health, onPlay, onGo }) {
+export default function OverviewTab({ health, onPlay, onGo, active = true }) {
   const [accs, setAccs] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [rep, setRep] = useState(null);
@@ -73,13 +73,14 @@ export default function OverviewTab({ health, onPlay, onGo }) {
     setBusy(false);
   }, []);
   useEffect(() => {
+    if (!active) return;   // tab ẩn không poll (mọi tab giữ mount để không mất state)
     load(); const id = setInterval(load, POLL_MS);
     const rid = setInterval(async () => setRep(await fetchReport()), 15000);
     fetchReport().then(setRep);
     adminConfig().then((c) => c ? setGproxy(c.proxy || "")
       : Promise.resolve(api.getGlobalProxy?.()).then((r) => setGproxy(r?.proxy || ""))).catch(() => {});
     return () => { clearInterval(id); clearInterval(rid); };
-  }, [load]);
+  }, [load, active]);
 
   const chips = useMemo(() => {
     const m = { total: accs.length, ready: 0, busy: 0, credit: 0, day: 0, dead: 0, cooling: 0, off: 0 };

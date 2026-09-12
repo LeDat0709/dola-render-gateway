@@ -37,16 +37,19 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         inflight.current.add(n);
         setRow(n, { prompt: t.prompt || "", phase: "running", stage: t.status === "queued" ? "queued" : "rendering",
                     startedAt: (t.started_at || t.created_at || Date.now() / 1000) * 1000, errorRaw: "", videoUrl: "" });
-        watchJob(n, t.id).finally(() => inflight.current.delete(n));
+        watchJob(n, t.id).catch((e) => setRow(n, { phase: "error", errorRaw: "Không theo dõi được job: " + (e?.message || e) }))
+          .finally(() => inflight.current.delete(n));
       }
     })();
   }, []);
   // Ô số luồng: chỉ điền khi đang trống, không giật giá trị lúc người dùng đang gõ.
+  // Phụ thuộc vào 2 số, KHÔNG phải cả object health (App thay object mới mỗi 1.5s → effect chạy mỗi
+  // lần poll, người dùng vừa xoá ô để gõ số mới là bị điền lại mặc định).
   useEffect(() => {
     if (!health) return;
     setConc((c) => ({ send: c.send || String(health.max_concurrency || 3),
                       login: c.login || String(health.login_concurrency || 3) }));
-  }, [health]);
+  }, [health?.max_concurrency, health?.login_concurrency]);   // eslint-disable-line react-hooks/exhaustive-deps
   // đồng hồ 1s khi có job chạy
   useEffect(() => {
     const any = Object.values(rows).some((r) => r.phase === "running");
@@ -98,11 +101,22 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   }
   // Theo dõi một job đã có id — dùng cho cả job vừa gửi và job đang chạy dở từ lần mở app trước.
   async function watchJob(n, id) {
-    let stage = "queued";
+    let stage = "queued", fails = 0;
     while (true) {
       await new Promise((r) => setTimeout(r, 3000));
       if (stop.current) { setRow(n, { phase: "idle", status: "⏸ đã dừng theo dõi" }); return true; }
-      const pj = await pollJob(id);
+      let pj;
+      try { pj = await pollJob(id); fails = 0; }
+      catch (e) {
+        // Server tắt / khởi động lại giữa chừng: job vẫn nằm trong tasks.db, chờ server lên rồi hỏi tiếp.
+        // 404 = server không còn job này (đổi server / DB mới) → báo lỗi thay vì quay vòng vô tận.
+        if (e?.status === 404 || ++fails >= 20) {
+          setRow(n, { phase: "error", errorRaw: e?.status === 404 ? "Server không còn job này (đã đổi server hoặc xoá dữ liệu?)" : "Mất kết nối server quá 1 phút: " + (e?.message || e) });
+          return false;
+        }
+        setRow(n, { status: `⏳ chờ server trả lời (${fails})` });
+        continue;
+      }
       if (pj.status === "completed") { setRow(n, { phase: "done", videoUrl: pj.video_url }); api.saveVideo?.(pj.video_url); return true; }
       if (pj.status === "failed") { setRow(n, { phase: "error", errorRaw: pj.error || "?" }); return false; }
       if (pj.stage && pj.stage !== stage) { stage = pj.stage; setRow(n, { stage }); }

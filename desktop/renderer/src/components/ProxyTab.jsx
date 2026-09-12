@@ -10,7 +10,7 @@ const PER_IP = 5;
 // Gom nick theo proxy đang gán (file accounts/<nick>/proxy.txt). Không có bảng proxy riêng trên server:
 // một proxy "tồn tại" khi có nick dùng nó. Trạng thái Dola của proxy suy từ nick: nick nào trên IP
 // đó đang nghỉ risk-control thì cả IP coi như bị Dola soi.
-export default function ProxyTab() {
+export default function ProxyTab({ active = true }) {
   const [list, setList] = useState(null);
   const [gproxy, setGproxy] = useState("");
   const [tests, setTests] = useState({});
@@ -27,7 +27,7 @@ export default function ProxyTab() {
     if (c) setGproxy(c.proxy || "");
     else { try { setGproxy((await api.getGlobalProxy?.())?.proxy || ""); } catch { /* không có IPC (trình duyệt) */ } }
   }, []);
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+  useEffect(() => { if (!active) return; load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load, active]);
 
   const groups = useMemo(() => {
     const m = new Map();

@@ -1,4 +1,5 @@
 """Patchright persistent context launcher: Explicit proxy and anti-detection parameters."""
+import asyncio
 import os
 import shutil
 import subprocess
@@ -276,7 +277,9 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
         raise FileNotFoundError(
             f"Account profile does not exist: {profile_dir} (run python add_account.py {account} first)"
         )
-    assert_profile_free(profile_dir)
+    # Hàm này gọi `ps` và ngủ 0.6s đồng bộ; chạy thẳng trong coroutine là đứng cả vòng lặp sự kiện
+    # (mọi nick khác, /health) tới ~4.6s cho mỗi profile có Chrome mồ côi sau crash.
+    await asyncio.to_thread(assert_profile_free, profile_dir)
     launch_headless = config.HEADLESS if headless is None else headless
     args = list(LAUNCH_ARGS)
     hijack_30s = use_extension and config.SKILLPACK_HIJACK

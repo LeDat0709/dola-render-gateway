@@ -497,8 +497,27 @@ class BrowserPool:
 
     async def resume_video(self, account: str, conversation_id: str, timeout: int,
                            on_poll=None, ratio: str | None = None, duration: int | None = None) -> dict:
-        """Resumes an accepted session without re-scheduling."""
-        async with self.semaphore:
+        """Resumes an accepted session without re-scheduling.
+
+        Slot Chrome (semaphore) nhả ngay khi worker chuyển sang theo dõi HTTP — như generate_video.
+        Giữ suốt render thì sau restart, N job khôi phục chiếm hết N slot tới 15 phút.
+        """
+        await self.semaphore.acquire()
+        browser_held = True
+
+        def _release_browser():
+            nonlocal browser_held
+            if browser_held:
+                browser_held = False
+                self.semaphore.release()
+
+        async def _hold_browser():
+            nonlocal browser_held
+            if not browser_held:
+                await self.semaphore.acquire()
+                browser_held = True
+
+        try:
             lock = self._locks.setdefault(account, asyncio.Lock())
             async with lock:
                 seen = {"balance": False}
@@ -509,13 +528,16 @@ class BrowserPool:
                 try:
                     result = await resume_video(account, conversation_id, timeout,
                                                 on_poll=on_poll, on_balance=on_balance,
-                                                ratio=ratio, duration=duration)
+                                                ratio=ratio, duration=duration,
+                                                on_browser_free=_release_browser, on_browser_hold=_hold_browser)
                     self._settle(account, result, None, duration, seen["balance"])
                     return result
                 except TimeoutError:
                     self._claim(account)
                     self._conn.commit()
                     raise
+        finally:
+            _release_browser()
 
     async def generate_video(self, prompt: str, ratio: str = None, duration: int = None,
                              model: str = "seedance_v2.0", on_conversation_id=None,

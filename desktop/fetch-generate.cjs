@@ -300,7 +300,8 @@ async function fetchGenerate(opts) {
   const partition = `persist:dola-${name}`;
   const ses = session.fromPartition(partition);
   // Cùng proxy với phía Python: không có thì mạng chặn dola.com và cửa sổ chỉ hiện trang trắng.
-  const repoRoot = path.dirname(__dirname);
+  // Bản đóng gói: .env.local và accounts/ nằm ở userData (main.js truyền dataDir), KHÔNG phải cạnh mã.
+  const repoRoot = opts.dataDir || path.dirname(__dirname);
   let proxyInfo = null;
   try { proxyInfo = await applyProxy(ses, repoRoot, name, step); } catch (_) {}
   const pre = await preflightDola(ses, repoRoot, name);
@@ -315,7 +316,7 @@ async function fetchGenerate(opts) {
     // Seed the Electron partition from the nick's saved cookies (accounts/<name>/cookies.json),
     // so nicks imported by pasted cookie / gateway also work here, not only app-login nicks.
     try {
-      const jf = path.join(path.dirname(__dirname), "accounts", name, "cookies.json");
+      const jf = path.join(repoRoot, "accounts", name, "cookies.json");
       if (fs.existsSync(jf)) {
         const saved = JSON.parse(fs.readFileSync(jf, "utf8"));
         for (const c of Array.isArray(saved) ? saved : []) {

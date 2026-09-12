@@ -11,12 +11,15 @@ import AccountWarehouse from "@/components/AccountWarehouse";
 
 const fbUid = (line) => { const m = String(line || "").match(/c_user=(\d{5,})/); if (m) return m[1]; const f = String(line || "").split("|")[0].trim(); return /^\d{5,}$/.test(f) ? f : ""; };
 
-export default function AccountsTab({ onRefresh }) {
+export default function AccountsTab({ onRefresh, active = true }) {
   const [name, setName] = useState(""); const [lang, setLang] = useState("ja");
   const [open, setOpen] = useState(""); // "fb" | "cookie" | "bulk" | ""
   const [fbText, setFbText] = useState(""); const [cookie, setCookie] = useState(""); const [bulk, setBulk] = useState(""); const [verify, setVerify] = useState(false);
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
-  useEffect(() => { const off = api.onFbStep?.(({ line }) => setMsg(line)); const off2 = api.onBulkStep?.(({ line }) => setMsg(line)); return () => {}; }, []);
+  useEffect(() => {
+    const off = api.onFbStep?.(({ line }) => setMsg(line)); const off2 = api.onBulkStep?.(({ line }) => setMsg(line));
+    return () => { if (typeof off === "function") off(); if (typeof off2 === "function") off2(); };   // không gỡ = mount lại là nhân đôi listener
+  }, []);
 
   async function submitFb() {
     const lines = fbText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -51,7 +54,7 @@ export default function AccountsTab({ onRefresh }) {
   const onAdd = (kind) => { setOpen(kind); setTimeout(() => addRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
   return (
     <div>
-      <AccountWarehouse onRefresh={onRefresh} onAdd={onAdd} />
+      <AccountWarehouse onRefresh={onRefresh} onAdd={onAdd} active={active} />
       <div ref={addRef} className="mx-auto max-w-2xl">
       <Card>
         <CardHeader><CardTitle>Thêm / đăng nhập nick</CardTitle></CardHeader>

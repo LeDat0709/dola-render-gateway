@@ -182,6 +182,34 @@ def test_download_failure_keeps_job_with_cdn_link():
         vwk._fetch_to_file, vwk.config.DOWNLOAD_DIR, vwk.DOWNLOAD_RETRY_SEC, vw._download = saved
 
 
+def test_submit_timeout_never_resubmits():
+    """Quá giờ chờ SUBMIT_JS: Dola đã tạo hội thoại → dùng nó; chưa → _FetchDelivered (không gửi lại = không trừ lượt 2 lần)."""
+    saved = (vw.FETCH_SUBMIT_TIMEOUT_SEC, vw._recent_conv_ids)
+    vw.FETCH_SUBMIT_TIMEOUT_SEC = 0.01
+
+    class Page:
+        async def evaluate(self, *a, **kw): await asyncio.Event().wait()   # treo mãi → wait_for hết giờ
+        async def wait_for_timeout(self, ms): pass
+
+    n = {"calls": 0}
+    async def convs_then_new(page, t, f): n["calls"] += 1; return {"1"} if n["calls"] == 1 else {"1", "2"}
+    vw._recent_conv_ids = convs_then_new
+    submitted = []
+    try:
+        got = asyncio.run(vw._submit_via_fetch(Page(), None, "acc1", "p", "9:16", 10, "seedance_v2.5",
+                                               {"device_id": "d"}, "tok", "fp", on_submitted=lambda a, s: submitted.append(s)))
+        assert got == "2" and submitted == [True], (got, submitted)       # nhận hội thoại Dola vừa tạo, KHÔNG lật cờ về False
+        async def convs_same(page, t, f): return {"1"}
+        vw._recent_conv_ids = convs_same
+        try:
+            asyncio.run(vw._submit_via_fetch(Page(), None, "acc1", "p", "9:16", 10, "seedance_v2.5", {"device_id": "d"}, "tok", "fp"))
+            assert False, "phải ném _FetchDelivered"
+        except vw._FetchDelivered:
+            pass
+    finally:
+        vw.FETCH_SUBMIT_TIMEOUT_SEC, vw._recent_conv_ids = saved
+
+
 def test_generation_started_is_status_not_refusal():
     """Log 11/9 16:51: '直接生成を開始します' = Dola bắt đầu tạo — từng bị coi là từ chối, job chết sau 20s."""
     assert vw._is_status_text("このリクエストは安全チェックの対象外です。直接生成を開始します。")
@@ -362,4 +390,5 @@ if __name__ == "__main__":
     test_option_list_gets_a_letter_not_yes(); test_http_poll_skips_answered_question()
     test_http_error_is_not_risk_control(); test_blocked_reason_says_one_thing()
     test_prompt_marks_are_scaled_to_duration(); test_parse_credit_need_from_dola_message()
-    test_credits_used_is_read_from_start_message(); test_download_failure_keeps_job_with_cdn_link(); print("OK")
+    test_credits_used_is_read_from_start_message(); test_download_failure_keeps_job_with_cdn_link()
+    test_submit_timeout_never_resubmits(); print("OK")

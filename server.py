@@ -825,7 +825,7 @@ async def admin_account_open(name: str, x_admin_key: str | None = Header(default
     except RuntimeError as e:
         raise HTTPException(409, str(e))
     import subprocess
-    subprocess.Popen([sys.executable, str(Path(__file__).resolve().with_name("login_profile.py")), name])
+    subprocess.Popen([_sys.executable, str(Path(__file__).resolve().with_name("login_profile.py")), name])   # `sys` chỉ được import là _sys → NameError 500
     return {"ok": True, "message": f"Opening browser for {name}..."}
 
 

@@ -25,7 +25,14 @@ const VENV_PY = PACKAGED
   ? path.join(process.resourcesPath, "python", _IS_WIN ? "python.exe" : "bin/python3")
   : path.join(REPO_ROOT, ".venv", _VENV_BIN, _IS_WIN ? "python.exe" : "python");
 const BROWSERS_DIR = PACKAGED ? path.join(process.resourcesPath, "browsers") : "";
-const CHROME_WIN = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+// Chrome cài không cần quyền admin nằm ở %LOCALAPPDATA% — chỉ xét Program Files là máy có Chrome vẫn bị
+// rơi về Chromium kèm theo (giả lập kém hơn) mà không báo gì.
+const CHROME_WIN_PATHS = [
+  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe") : "",
+];
+const hasChromeWin = () => CHROME_WIN_PATHS.some((p) => p && fs.existsSync(p));
 
 function pyEnv() {
   const env = { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" };
@@ -34,7 +41,7 @@ function pyEnv() {
     env.PATCHRIGHT_BROWSERS_PATH = BROWSERS_DIR;
     // Mặc định worker mở Chrome thật (giả lập tốt hơn). Máy chưa cài Chrome thì phải
     // rơi về Chromium kèm theo, nếu không mọi nick đều lỗi ngay từ lần mở đầu.
-    if (_IS_WIN && !fs.existsSync(CHROME_WIN)) env.DOLA_BROWSER_CHANNEL = "";
+    if (_IS_WIN && !hasChromeWin()) env.DOLA_BROWSER_CHANNEL = "";
   }
   return env;
 }
@@ -131,7 +138,7 @@ ipcMain.handle("video:fetchGenerate", async (_e, { name, prompt, model, duration
   try {
     return await fetchGenerate({
       name, prompt: prompt.trim(), model, duration, ratio,
-      downloadsDir: config().downloadsDir,
+      dataDir: DATA_DIR, downloadsDir: config().downloadsDir,
       showBrowser: showBrowser !== false,
       onStep: (m) => { try { _e.sender.send("video:fetchStep", { name, line: m }); } catch (x) {} },
     });
@@ -851,6 +858,7 @@ ipcMain.handle("account:bulkImport", async (_e, { json, verify }) => {
 });
 
 ipcMain.handle("account:getProxy", async (_e, { name }) => {
+  if (!NAME_RE.test(name || "")) return { ok: true, proxy: "" };   // như setProxy: không cho "../" đi ra ngoài accounts/
   if (isRemote()) {
     const c = config();
     const r = await getAccountProxy(c.base, c.adminKey, name);

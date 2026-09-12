@@ -35,7 +35,7 @@ function Metric({ label, value, tone = "text-foreground", sub }) {
   );
 }
 
-export default function AccountWarehouse({ onRefresh, onAdd }) {
+export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
   const [list, setList] = useState(null);
   const [loadErr, setLoadErr] = useState(null); // "auth" | "net" | "http"
   const [sel, setSel] = useState({});
@@ -64,7 +64,9 @@ export default function AccountWarehouse({ onRefresh, onAdd }) {
     setSel((prev) => Object.fromEntries(accs.filter((a) => prev[a.name]).map((a) => [a.name, true])));
   }, []);
 
+  // Mọi tab đều giữ mount (forceMount) để không mất state → chỉ tab đang mở mới poll, tab ẩn im.
   useEffect(() => {
+    if (!active) return;
     load();
     const t = setInterval(() => {
       // Chỉ ngừng khi đang gõ GHI CHÚ; con trỏ ở ô tìm kiếm/bộ lọc không được làm bảng đứng hình.
@@ -72,7 +74,7 @@ export default function AccountWarehouse({ onRefresh, onAdd }) {
       load();
     }, POLL_MS);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, active]);
 
   const all = useMemo(() => list || [], [list]);
   const rows = useMemo(() => {

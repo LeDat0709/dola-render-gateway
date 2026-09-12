@@ -50,15 +50,15 @@ export default function App() {
         </TabsList>
       </Header>
       <main className="mx-auto max-w-[1500px] px-6 py-5">
-        <TabsContent value="overview" forceMount><OverviewTab health={health} onPlay={(u) => setVideo(u)} onGo={setTab} /></TabsContent>
+        <TabsContent value="overview" forceMount><OverviewTab health={health} onPlay={(u) => setVideo(u)} onGo={setTab} active={tab === "overview"} /></TabsContent>
         <TabsContent value="make" forceMount>
           <div className="rounded-xl bg-surface-low p-5">
             <h2 className="mb-4 font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Studio — mỗi nick một dòng, prompt riêng</h2>
             <StudioTab health={health} onRefresh={refresh} onPlay={(u) => setVideo(u)} />
           </div>
         </TabsContent>
-        <TabsContent value="acct" forceMount><AccountsTab onRefresh={refresh} /></TabsContent>
-        <TabsContent value="proxy" forceMount><ProxyTab /></TabsContent>
+        <TabsContent value="acct" forceMount><AccountsTab onRefresh={refresh} active={tab === "acct"} /></TabsContent>
+        <TabsContent value="proxy" forceMount><ProxyTab active={tab === "proxy"} /></TabsContent>
         <TabsContent value="settings" forceMount><SettingsTab /></TabsContent>
       </main>
 
