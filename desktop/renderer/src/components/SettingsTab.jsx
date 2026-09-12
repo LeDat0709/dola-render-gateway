@@ -24,7 +24,7 @@ const Row = ({ label, value, hint }) => (
     <span className="rounded-md border border-input px-2.5 py-1 font-mono text-[12.5px] tabular-nums">{value ?? "—"}</span></div>
 );
 
-export default function SettingsTab() {
+export default function SettingsTab({ active = true }) {
   const [vid, setVid] = useState("…"); const [acc, setAcc] = useState("…"); const [dirMsg, setDirMsg] = useState("");
   const [gp, setGp] = useState(""); const [gpMsg, setGpMsg] = useState("");
   const [rb, setRb] = useState(""); const [rk, setRk] = useState(""); const [ra, setRa] = useState(""); const [rMsg, setRMsg] = useState("");
@@ -42,7 +42,9 @@ export default function SettingsTab() {
     fetchHealth().then((h) => setUp(!!h));
     adminConfig().then(setSrv).catch(() => setSrv(null));
   };
-  useEffect(load, []);
+  // Nạp lại mỗi lần mở tab: server thường bật SAU khi app mở (tự bật mất 3–4s, hoặc bấm "Bật server"),
+  // đọc một lần lúc mount thì khối Vận hành báo "server tắt" mãi dù server đã chạy.
+  useEffect(() => { if (active) load(); }, [active]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const remote = rb.trim() !== "";
   const toggleAutoRetry = async (e) => {

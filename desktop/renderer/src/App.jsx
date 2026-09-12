@@ -59,7 +59,7 @@ export default function App() {
         </TabsContent>
         <TabsContent value="acct" forceMount><AccountsTab onRefresh={refresh} active={tab === "acct"} /></TabsContent>
         <TabsContent value="proxy" forceMount><ProxyTab active={tab === "proxy"} /></TabsContent>
-        <TabsContent value="settings" forceMount><SettingsTab /></TabsContent>
+        <TabsContent value="settings" forceMount><SettingsTab active={tab === "settings"} /></TabsContent>
       </main>
 
       <Dialog open={!!video} onOpenChange={(o) => !o && setVideo(null)}>
