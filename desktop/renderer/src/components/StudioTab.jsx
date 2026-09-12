@@ -97,6 +97,13 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     inflight.current.add(n);
     setRow(n, { prompt, phase: "running", stage: "queued", startedAt: Date.now(), errorRaw: "", videoUrl: "" });
     try {
+      // Người dùng đã chọn đích danh nick này thì "tắt lịch" không còn là lý do chặn: bật lịch giúp rồi
+      // gửi luôn (server từ chối job vào nick tắt lịch). Trước đây thẻ chỉ báo "bấm Bật lịch tất cả rồi chạy lại".
+      if (acc && accStateOf(acc) === "off") {
+        setRow(n, { status: "đang bật lịch cho nick…" });
+        await patchAccount(n, { scheduling: true });
+        onRefresh();
+      }
       const id = await submitJob(prompt, { model: s.model, duration: parseInt(s.dur, 10), ratio: s.ratio, account: n });
       return await watchJob(n, id);
     } catch (e) {
@@ -144,22 +151,22 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     dead.forEach((n) => setRow(n, { phase: "error", errorRaw: "Cookie hết hạn — đăng nhập lại nick này rồi chạy lại." }));
     const blocked = ns.filter((n) => {
       const a = accounts.find((x) => x.account === n);
-      return a && !canRun(a) && accStateOf(a) !== "busy";   // busy = đang chạy, không tính là chặn
+      const st = a ? accStateOf(a) : "";
+      return a && !canRun(a) && st !== "busy" && st !== "off";   // busy = đang chạy; off = runOne tự bật lịch
     });
     blocked.forEach((n) => {
       const a = accounts.find((x) => x.account === n) || {};
-      const why = { off: "nick đang tắt lịch — bấm 'Bật lịch tất cả'",
-                    cooling: "nick đang nghỉ (risk-control) — bấm 'Bỏ nghỉ tất cả'",
+      const why = { cooling: "nick đang nghỉ (risk-control) — bấm 'Bỏ nghỉ tất cả'",
                     quota: "hết lượt/điểm hôm nay", dead: "cookie chết — đăng nhập lại nick" }[accStateOf(a)]
                  || "nick chưa chạy được";
       setRow(n, { phase: "error", errorRaw: why });
     });
     const run = ns.filter((n) => !dead.includes(n) && !blocked.includes(n));
     if (!run.length) {
-      setGen(`Không nick nào chạy được: ${dead.length} cookie chết · ${blocked.length} tắt lịch/nghỉ/hết lượt.`);
+      setGen(`Không nick nào chạy được: ${dead.length} cookie chết · ${blocked.length} nghỉ/hết lượt.`);
       return;
     }
-    const skipped = [dead.length ? `${dead.length} cookie chết` : "", blocked.length ? `${blocked.length} tắt lịch/hết lượt` : ""].filter(Boolean).join(" · ");
+    const skipped = [dead.length ? `${dead.length} cookie chết` : "", blocked.length ? `${blocked.length} nghỉ/hết lượt` : ""].filter(Boolean).join(" · ");
     setGen(`Đang chạy ${run.length} nick…` + (skipped ? ` (bỏ ${skipped})` : ""));
     const res = await Promise.all(run.map(runOne));   // runOne trả true=ok / false=lỗi
     const bad = run.filter((_, i) => res[i] === false);
