@@ -149,6 +149,19 @@ def _has_fb_session(cookies: List[Dict[str, Any]]) -> bool:
     return "c_user" in names and "xs" in names
 
 
+async def _wait_sessionid(ctx, seconds: float = 5.0, interval: float = 0.5) -> bool:
+    """Chờ cookie Dola 'sessionid' xuất hiện, thoát NGAY khi có — như cách đối thủ bám sự kiện
+    thay vì chờ cứng. Trả True nếu thấy phiên trong 'seconds' giây, False nếu hết giờ."""
+    import time as _t
+    deadline = _t.monotonic() + seconds
+    while True:
+        if cookie_value(await ctx.cookies("https://www.dola.com"), "sessionid"):
+            return True
+        if _t.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(interval)
+
+
 async def _warm_facebook_session(page, timeout: int = 15000) -> str:
     """Visits m.facebook.com or facebook.com to test if session is alive, checkpointed, or expired.
     
@@ -477,7 +490,14 @@ async def add_account_via_facebook(
             step("Đang mở Dola...")
             await force_ui_language(ctx, "ja")
             await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
-            await page.wait_for_timeout(5000)
+            # Nick có cookie FB hợp lệ thường tự đăng nhập Dola qua SSO ngay khi trang tải xong. Bám
+            # sessionid (poll 500ms, tối đa 5s) thay vì chờ cứng 5s — nick đã có phiên thoát sớm ~5s,
+            # nick chưa có phiên vẫn đợi đủ như trước. Có phiên rồi thì lưu luôn, khỏi mở hộp đăng nhập.
+            if await _wait_sessionid(ctx, seconds=5.0):
+                step("Tài khoản Dola đã có phiên hoạt động (đăng nhập bằng cookie Facebook).")
+                await pin_session_cookies(ctx)
+                persist_dola_cookies(account, await ctx.cookies("https://www.dola.com"))
+                return cred.get("label") or ""
 
             # Dismiss consent banners if present
             for _c in ("OK", "Đồng ý", "同意する", "Accept"):
