@@ -205,6 +205,9 @@ async def apply_cookies_to_account(
     input_had_sid = any(c["name"] == "sessionid" and c["value"] for c in parsed)
     if is_authenticated:
         message = "Đăng nhập Dola thành công! Phiên đã được lưu."
+    elif is_authenticated is None:
+        message = (f"Cookie đã lưu nhưng CHƯA kiểm tra được phiên ({verify_msg}). "
+                   "Đặt proxy chung ở Cài đặt rồi bấm Kiểm tra phiên.")
     elif not input_had_sid:
         message = ("Chuỗi cookie bạn dán KHÔNG chứa sessionid của Dola. "
                    "Hãy export lại cookie từ tab dola.com đang đăng nhập.")

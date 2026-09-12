@@ -320,11 +320,15 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     return context
 
 
-async def verify_cookie_http(cookie_str: str, timeout: int = 20) -> tuple[bool, str]:
+async def verify_cookie_http(cookie_str: str, timeout: int = 20) -> tuple[bool | None, str]:
     """Check a Dola session with ONE plain HTTP call (no browser) — fast login verify.
 
     Hits the read-only /im/chain/recent_conv: a live session returns a downlink_body, a dead
     one returns status_code 712012001 ("登录" / login required). ~1s vs ~8s for a browser check.
+
+    Trả (True, …) sống, (False, …) Dola nói CHƯA đăng nhập, (None, …) KHÔNG kiểm tra được (proxy
+    chết, mất mạng, WAF trả HTTP lạ). Máy Windows mới chưa đặt proxy từng nhập 9 nick thì 8 nick
+    bị ghi "cookie chết" oan chỉ vì proxy mặc định 127.0.0.1:7890 không chạy.
     """
     import json as _json
     import uuid as _uuid
@@ -346,17 +350,17 @@ async def verify_cookie_http(cookie_str: str, timeout: int = 20) -> tuple[bool, 
                                  data=_json.dumps(body), headers=headers, proxy=config.PROXY or None,
                                  timeout=aiohttp.ClientTimeout(total=timeout)) as r:
                 if r.status != 200:
-                    return False, f"HTTP {r.status}"
+                    return None, f"Dola/WAF trả HTTP {r.status} (chưa kết luận được cookie)"
                 data = await r.json(content_type=None)
     except Exception as exc:
-        return False, f"không kiểm tra được qua HTTP: {str(exc)[:80]}"
+        return None, f"không tới được dola.com qua {config.PROXY or 'nối thẳng'}: {str(exc)[:80]}"
     code = data.get("status_code")
     desc = str(data.get("status_desc") or "")
     if code in (712012001,) or "登录" in desc or "login" in desc.lower():
         return False, "Cookie chưa đăng nhập / đã hết hạn (Dola đòi đăng nhập)."
     if data.get("downlink_body") is not None:
         return True, "Phiên Dola còn sống."
-    return False, f"Phản hồi không rõ (code={code})."
+    return None, f"Phản hồi không rõ (code={code})."
 
 
 def cookie_value(cookies: list, name: str) -> str:

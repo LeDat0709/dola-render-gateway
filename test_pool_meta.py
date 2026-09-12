@@ -220,7 +220,28 @@ def test_yesterdays_credit_reading_is_forgotten():
         assert a["credit_balance"] == 0 and not pool._schedulable(a)
 
 
+def test_network_error_does_not_kill_nick():
+    """Máy mới chưa có proxy (ảnh 12/9: 8/9 nick 'cookie chết' ngay sau khi nhập): kiểm tra phiên lỗi
+    mạng → login_ok để trống, nick vẫn xếp lịch được; chỉ Dola nói 'chưa đăng nhập' mới là chết."""
+    import browser
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp)
+        (Path(tmp) / "accounts" / "n1").mkdir(parents=True)
+        (Path(tmp) / "accounts" / "n1" / "cookies.json").write_text('[{"name":"sessionid","value":"x"}]')
+        saved = browser.config.PROXY
+        browser.config.PROXY = "http://127.0.0.1:9"      # cổng đóng → lỗi mạng ngay, không ra Internet
+        try:
+            assert asyncio.run(pool.verify_account_http("n1")) is None
+        finally:
+            browser.config.PROXY = saved
+        assert pool._meta("n1")["login_ok"] is None, "lỗi mạng không được ghi 0"
+        assert pool._schedulable(pool.list_accounts()[0])
+        pool.set_login_status("n1", False)
+        assert pool._meta("n1")["login_ok"] == 0 and not pool._schedulable(pool.list_accounts()[0])
+
+
 if __name__ == "__main__":
+    test_network_error_does_not_kill_nick()
     test_credit_is_learned_and_deducted_after_success()
     test_no_double_deduction_when_dola_reports_balance()
     test_yesterdays_credit_reading_is_forgotten()

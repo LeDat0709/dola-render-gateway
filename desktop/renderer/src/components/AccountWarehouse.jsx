@@ -166,7 +166,9 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
       if (b?.kind !== "dola-studio-accounts") throw new Error("không phải file xuất từ Kho tài khoản của Dola Studio");
       if (!window.confirm(`Nhập ${b.accounts?.length || 0} nick từ file vào ${cfg.remote ? "server từ xa" : "máy này"}?\nNick trùng tên sẽ được nạp lại cookie mới.`)) return;
       const r = await importAccounts(b, setMsg);
-      setMsg(`Nhập xong ${r.ok}/${r.total} nick.` + (r.bad.length ? ` Lỗi — ${r.bad.slice(0, 3).join(" · ")}${r.bad.length > 3 ? ` (+${r.bad.length - 3} nick nữa)` : ""}` : ""));
+      setMsg(`Nhập xong ${r.ok}/${r.total} nick.`
+        + (r.unverified ? ` ${r.unverified} nick chưa kiểm tra được phiên: ${r.why}` : "")
+        + (r.bad.length ? ` Lỗi — ${r.bad.slice(0, 3).join(" · ")}${r.bad.length > 3 ? ` (+${r.bad.length - 3} nick nữa)` : ""}` : ""));
     } catch (e) { setMsg("Lỗi nhập kho: " + msgOf(e)); }
     finally { mark(-1); await done(); }
   };

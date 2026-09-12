@@ -292,11 +292,13 @@ class BrowserPool:
             "UPDATE accounts_meta SET email=? WHERE name=?", (email, name))
         self._conn.commit()
 
-    def set_login_status(self, name: str, ok: bool):
+    def set_login_status(self, name: str, ok):
+        """True/False = kết luận của Dola; None = không kiểm tra được (mạng/proxy) → để trống,
+        KHÔNG ghi 0: nick sống mà bị gắn "cookie chết" chỉ vì proxy mặc định không chạy."""
         self._ensure_meta(name)
         self._conn.execute(
             "UPDATE accounts_meta SET login_ok=?, login_checked_at=? WHERE name=?",
-            (1 if ok else 0, time.time(), name),
+            (None if ok is None else (1 if ok else 0), time.time(), name),
         )
         self._conn.commit()
 

@@ -263,7 +263,7 @@ export async function importAccounts(bundle, onStep) {
   await ensureConfig();
   const list = Array.isArray(bundle?.accounts) ? bundle.accounts : [];
   if (!list.length) throw new Error("file không có nick nào (đúng file xuất từ Kho tài khoản?)");
-  let ok = 0; const bad = [];
+  let ok = 0, unverified = 0, why = ""; const bad = [];
   for (let i = 0; i < list.length; i++) {
     const a = list[i];
     onStep?.(`Nhập ${i + 1}/${list.length}: ${a.name}… (mỗi nick 5–30s, server mở Chrome kiểm tra phiên)`);
@@ -277,9 +277,10 @@ export async function importAccounts(bundle, onStep) {
       if (a.note || a.scheduling === false) await patchAccount(a.name, { note: a.note || "", scheduling: a.scheduling !== false }).catch(() => {});
       ok++;
       if (j.ok === false) bad.push(`${a.name}: cookie không còn đăng nhập`);
+      else if (j.ok == null) { unverified++; why = j.message || why; }   // server không tới được Dola (proxy) — cookie vẫn đã lưu
     } catch (e) { bad.push(`${a.name}: ${String(e.message || e).slice(0, 80)}`); }
   }
-  return { ok, total: list.length, bad };
+  return { ok, total: list.length, bad, unverified, why };
 }
 // Chip trạng thái theo bản Stitch: tách "hết credit" với "hết lượt hôm nay", ghi giờ hết nghỉ.
 export function accChip(a) {
