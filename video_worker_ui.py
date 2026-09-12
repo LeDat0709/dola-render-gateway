@@ -314,14 +314,18 @@ async def _goto_dola(page, url: str, attempts: int = 3, account: str = ""):
             raise
         except Exception as e:
             msg = str(e)
-            if any(n in msg for n in _NET_ERRORS):
+            # goto quá 60s (proxy/mạng chậm, trang chưa tải xong) = lỗi TẠM THỜI, CHƯA gửi gì, CHƯA có
+            # conversation_id. Trước đây raise nguyên TimeoutError → pool tưởng "job đã tạo hội thoại" nên
+            # _claim đốt 1 lượt ngày và không xoay nick. Gộp vào nhóm mạng để thử lại rồi báo transient.
+            is_timeout = "Timeout" in msg or "timeout" in msg
+            if any(n in msg for n in _NET_ERRORS) or is_timeout:
                 if i < attempts:
-                    print(f"  Mở Dola lỗi mạng ({msg[:50]}), thử lại {i}/{attempts - 1}...", flush=True)
+                    print(f"  Mở Dola chậm/lỗi mạng ({msg[:50]}), thử lại {i}/{attempts - 1}...", flush=True)
                     await asyncio.sleep(3)
                     continue
-                raise RuntimeError(
-                    "Mất mạng khi mở Dola (đã thử "
-                    f"{attempts} lần) — kiểm tra internet/proxy rồi thử lại.") from e
+                raise TransientDolaError(
+                    "Không tải được trang Dola (proxy/mạng quá chậm) — CHƯA gửi gì nên CHƯA tốn credit. "
+                    f"Đã thử {attempts} lần; đổi proxy nhanh hơn cho nick rồi chạy lại.") from e
             raise
 
 

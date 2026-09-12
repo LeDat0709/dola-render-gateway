@@ -671,6 +671,9 @@ pausedHandle("account:importFacebookElectron", async (_e, { name, line, lang }) 
     let warnedFbLogin = false;
     let checkpointAt = 0;   // lúc phát hiện Facebook khoá/xác minh; quá CHECKPOINT_GRACE_MS thì bỏ qua nick
     const fbTwoFa = { done: false };
+    // Partition persist:dola-<name> có thể còn sessionid CHẾT từ lần import trước → chỉ coi là đăng nhập
+    // khi sessionid ĐỔI so với mốc này (SSO cấp phiên mới), tránh báo thành công giả rồi lưu phiên chết.
+    const baselineSid = ((await ses.cookies.get({ url: "https://www.dola.com" })).find((c) => c.name === "sessionid") || {}).value || "";
     const deadline = Date.now() + LOGIN_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (closedByUser) return { ok: false, canceled: true, error: "Đã đóng cửa sổ trước khi Dola cấp phiên" };
@@ -702,7 +705,8 @@ pausedHandle("account:importFacebookElectron", async (_e, { name, line, lang }) 
       const gate = await runJS(win.webContents, JS_AGE_GATE);
       if (gate === "confirmed") send("Đã xác nhận 18+ trên Dola…");
       const current = await ses.cookies.get({ url: "https://www.dola.com" });
-      if (current.some((c) => c.name === "sessionid" && c.value)) {
+      const sid = (current.find((c) => c.name === "sessionid") || {}).value || "";
+      if (sid && sid !== baselineSid) {   // phiên MỚI do SSO cấp — không phải sessionid chết còn sót trong partition
         return await harvestDolaSession(win, ses, name, lang, send, LOGIN_URL);
       }
       // Facebook khoá nick mà quá thời gian chờ chữa tay → bỏ qua để không kẹt cả lượt đăng nhập.
