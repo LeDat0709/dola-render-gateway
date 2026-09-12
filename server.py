@@ -518,6 +518,14 @@ app.include_router(_make_broker_router({
     "create_video": create_video, "get_video": get_video, "VideoGenRequest": VideoGenRequest,
 }))
 
+# Kho proxy tập trung — /api/admin/proxies (thêm/liệt kê che mật khẩu/kiểm 8 luồng/chia nick). Xem proxy_pool.py.
+from proxy_pool import PoolStore as _PoolStore, make_router as _make_proxy_router
+from browser import set_account_proxy as _set_account_proxy
+_proxy_store = _PoolStore(config.env_local_path().parent / "proxy_pool.json")
+app.include_router(_make_proxy_router({
+    "store": _proxy_store, "pool": pool, "set_account_proxy": _set_account_proxy, "admin_auth": _admin_auth,
+}))
+
 
 @app.get("/health")
 async def health():
