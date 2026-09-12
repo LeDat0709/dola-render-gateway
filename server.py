@@ -511,6 +511,14 @@ async def get_video(task_id: str, authorization: str | None = Header(default=Non
     )
 
 
+# Broker nội bộ kiểu Seedance (không license) — /v1/pubkey · /v1/job-grant · /v1/job · /v1/job/{id} ·
+# /v1/job/downloaded. Dùng lại đúng create_video/get_video ở trên (pool nick). Xem broker.py.
+from broker import make_router as _make_broker_router
+app.include_router(_make_broker_router({
+    "create_video": create_video, "get_video": get_video, "VideoGenRequest": VideoGenRequest,
+}))
+
+
 @app.get("/health")
 async def health():
     return {
