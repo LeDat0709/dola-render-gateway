@@ -240,7 +240,61 @@ def test_network_error_does_not_kill_nick():
         assert pool._meta("n1")["login_ok"] == 0 and not pool._schedulable(pool.list_accounts()[0])
 
 
+def _reset_rate_limit():
+    browser_pool._rate_limit_until = browser_pool._rate_limit_pause = 0.0
+
+
+def test_rate_limited_pauses_everyone_then_rotates():
+    """Log 12/9 'Rate limited: {"error_code":710022002…}': Dola báo gửi quá dày (tính theo IP, 46 nick chung
+    một IP) → dừng gửi TOÀN BỘ một lúc rồi mới xoay; nick dính chỉ nghỉ ngắn, không phải 30 phút."""
+    import time
+    from video_worker import RateLimitedError, _check_submit
+    try:
+        _check_submit({"errors": ['{"error_code":710022002,"error_msg":"操作频繁"}'], "status": 200})
+        assert False, "phải ném RateLimitedError"
+    except RateLimitedError as e:
+        assert "gửi quá dày" in str(e) and "操作频繁" in str(e), str(e)
+    _reset_rate_limit()
+    saved = browser_pool.RATE_LIMIT_PAUSE_SEC
+    browser_pool.RATE_LIMIT_PAUSE_SEC = 0.3
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            pool = _pool(tmp)
+            for n in ("n1", "n2"):
+                (Path(tmp) / "accounts" / n).mkdir(parents=True)
+            gen = _fake_gen(RateLimitedError("Dola tạm chặn vì gửi quá dày (710022002): x"), {"ok": True})
+            browser_pool.generate_video = gen
+            t0 = time.monotonic()
+            asyncio.run(pool.generate_video("p", "9:16", 10))
+            assert sorted(gen.calls) == ["n1", "n2"] and len(gen.calls) == 2, gen.calls
+            assert time.monotonic() - t0 >= 0.3, "nick sau phải chờ hết lệnh tạm dừng toàn cục"
+            rest = pool._meta(gen.calls[0])["cooldown_until"] - time.time()
+            assert 0 < rest <= browser_pool.RATE_LIMIT_NICK_SEC, rest      # nghỉ 5 phút, không phải 30
+    finally:
+        browser_pool.RATE_LIMIT_PAUSE_SEC = saved
+        _reset_rate_limit()
+
+
+def test_rate_limit_backoff_escalates_only_across_bursts():
+    """10 job song song cùng dính một đợt = một lần dừng; dính lại sau khi hết dừng (trong 10 phút) mới gấp đôi."""
+    b = browser_pool
+    _reset_rate_limit()
+    try:
+        assert b.note_rate_limited(now=1000.0) == b.RATE_LIMIT_PAUSE_SEC
+        assert b.note_rate_limited(now=1001.0) < b.RATE_LIMIT_PAUSE_SEC              # cùng đợt: chỉ báo phần còn lại
+        assert b.note_rate_limited(now=1000.0 + b.RATE_LIMIT_PAUSE_SEC + 1) == 2 * b.RATE_LIMIT_PAUSE_SEC
+        assert b.note_rate_limited(now=9000.0) == b.RATE_LIMIT_PAUSE_SEC             # yên quá 10 phút: về mức đầu
+        p = 0.0
+        for _ in range(6):
+            p = b.note_rate_limited(now=b._rate_limit_until + 1)
+        assert p == b.RATE_LIMIT_PAUSE_MAX, p
+    finally:
+        _reset_rate_limit()
+
+
 if __name__ == "__main__":
+    test_rate_limited_pauses_everyone_then_rotates()
+    test_rate_limit_backoff_escalates_only_across_bursts()
     test_network_error_does_not_kill_nick()
     test_credit_is_learned_and_deducted_after_success()
     test_no_double_deduction_when_dola_reports_balance()

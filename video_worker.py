@@ -230,6 +230,21 @@ class RiskControlError(Exception):
     """Risk control triggered (slide / rate limit)."""
 
 
+class RateLimitedError(RiskControlError):
+    """Dola 710022002 "gửi quá dày": chặn ngắn hạn theo IP/tài khoản — KHÔNG phải hết lượt ngày, không
+    phải lỗi của nick. Nhiều nick chung một IP (không proxy) thì dính cả loạt, nên xoay nick ngay chỉ làm
+    Dola chặn mạnh hơn; browser_pool tạm dừng gửi toàn bộ một lúc rồi mới tiếp."""
+
+
+def _dola_msg(err: str) -> str:
+    """Lấy câu Dola nói ra khỏi JSON lỗi; không phải JSON thì trả nguyên (cắt ngắn)."""
+    try:
+        d = json.loads(err)
+        return str(d.get("error_msg") or d.get("message") or d.get("error") or err)[:200]
+    except (ValueError, AttributeError):
+        return err[:200]
+
+
 class SubmitDelivered(Exception):
     """The /chat/completion POST reached Dola (HTTP 200) but no conversation_id was parsed.
 
@@ -257,7 +272,7 @@ def _check_submit(result: dict) -> str:
         if "710022004" in err or "slide" in err or "shark" in err:
             raise RiskControlError(f"Captcha risk control triggered: {err[:300]}")
         if "710022002" in err:
-            raise RiskControlError(f"Rate limited: {err[:300]}")
+            raise RateLimitedError(f"Dola tạm chặn vì gửi quá dày (710022002): {_dola_msg(err)}")
 
     status = result.get("status")
     if status and 200 <= status < 300:

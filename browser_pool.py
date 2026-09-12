@@ -17,6 +17,7 @@ from video_worker_ui import (
     ParameterChangeError,
     PortraitProtectionError,
     PromptUnclearError,
+    RateLimitedError,
     RiskControlError,
     TransientDolaError,
     generate_video,
@@ -25,7 +26,31 @@ from video_worker_ui import (
 import config
 
 DAILY_LIMIT = config.DAILY_LIMIT
-COOLDOWN_SEC = 1800  # 30-minute cooldown on risk control
+COOLDOWN_SEC = 1800  # 30-minute cooldown on risk control (captcha)
+
+# Dola 710022002 "gửi quá dày" tính theo IP trong ngắn hạn: nhiều nick chung IP thì dính cả loạt. Trước đây
+# mỗi nick dính là nghỉ 30 phút rồi xoay ngay sang nick khác → cùng IP lại dính → vài phút là bench cả kho.
+# Nay: tạm dừng gửi TOÀN BỘ (mọi _pace() chờ), nick dính chỉ nghỉ ngắn; tái diễn sau khi hết dừng (trong
+# RATE_LIMIT_WINDOW) thì thời gian dừng gấp đôi, tối đa RATE_LIMIT_PAUSE_MAX.
+RATE_LIMIT_PAUSE_SEC = 90.0
+RATE_LIMIT_PAUSE_MAX = 900.0
+RATE_LIMIT_WINDOW = 600.0
+RATE_LIMIT_NICK_SEC = 300
+_rate_limit_until = 0.0     # monotonic: mốc mọi lần gửi phải chờ qua (cũng là lúc lần dừng trước kết thúc)
+_rate_limit_pause = 0.0     # độ dài lần dừng gần nhất (để gấp đôi)
+
+
+def note_rate_limited(now: float | None = None) -> float:
+    """Ghi nhận Dola báo gửi quá dày; trả về số giây còn phải dừng. 10 job cùng dính một đợt = một lần dừng."""
+    global _rate_limit_until, _rate_limit_pause
+    now = time.monotonic() if now is None else now
+    if now < _rate_limit_until:
+        return _rate_limit_until - now
+    recent = now - _rate_limit_until < RATE_LIMIT_WINDOW     # dính lại sớm sau khi hết dừng → gấp đôi
+    _rate_limit_pause = min(RATE_LIMIT_PAUSE_MAX, _rate_limit_pause * 2 if recent else RATE_LIMIT_PAUSE_SEC)
+    _rate_limit_until = now + _rate_limit_pause
+    return _rate_limit_pause
+
 
 # Cổng giãn nhịp: mỗi lần gửi lệnh lấy một "khe" cách khe trước >= SUBMIT_GAP + ngẫu nhiên. Khoá chỉ giữ lúc
 # tính khe, ngủ ở ngoài → N job song song tự xếp so le thay vì bắn cùng một giây.
@@ -37,8 +62,9 @@ async def _pace() -> None:
     global _next_slot
     async with _PACE_LOCK:
         now = time.monotonic()
-        wait = max(0.0, _next_slot - now)
-        _next_slot = max(now, _next_slot) + config.SUBMIT_GAP_SEC + random.uniform(0, config.SUBMIT_JITTER_SEC)
+        base = max(now, _next_slot, _rate_limit_until)      # chờ cả lệnh tạm dừng toàn cục
+        wait = base - now
+        _next_slot = base + config.SUBMIT_GAP_SEC + random.uniform(0, config.SUBMIT_JITTER_SEC)
     if wait > 0:
         await asyncio.sleep(wait)
 
@@ -701,6 +727,16 @@ class BrowserPool:
                             print(f"[pool] {account} vẫn lỗi sau khi thử lại{'' if pinned else ', xoay nick'}: {e2}", flush=True)
                             last_err = e2
                             continue
+                    except RateLimitedError as e:
+                        pause = note_rate_limited()
+                        print(f"[pool] {account}: Dola báo gửi quá dày (710022002) — dừng gửi toàn bộ {pause:.0f}s, "
+                              f"nick nghỉ {RATE_LIMIT_NICK_SEC // 60} phút rồi xoay: {e}", flush=True)
+                        self._conn.execute(
+                            "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
+                            (time.time() + RATE_LIMIT_NICK_SEC, account))
+                        self._conn.commit()
+                        last_err = e
+                        continue
                     except RiskControlError as e:
                         print(f"[pool] {account} risk control triggered (30m cooldown), rotating: {e}", flush=True)
                         self._conn.execute(

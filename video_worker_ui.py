@@ -19,8 +19,8 @@ from gap import find_gap_x
 import config
 from browser import cookie_value, launch_account_context, pin_session_cookies
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
-from video_worker import (POLL_JS, SUBMIT_JS, DownloadError, RiskControlError, SubmitDelivered, SubmitRejected,
-                          _check_submit, _download, extract_unwatermarked_url)
+from video_worker import (POLL_JS, SUBMIT_JS, DownloadError, RateLimitedError, RiskControlError, SubmitDelivered,
+                          SubmitRejected, _check_submit, _download, extract_unwatermarked_url)
 
 # Daily limit pattern matching response text (JA / ZH / EN / VI)
 # Dola không hiểu prompt (vd prompt "con mefo"): "意味不明なため直接生成できません". Phải xét TRƯỚC
