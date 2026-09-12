@@ -189,7 +189,11 @@ async def _warm_facebook_session(page, timeout: int = 15000) -> str:
 
     if "/checkpoint/" in curr_url or "checkpoint" in curr_url:
         return "checkpoint"
-    if any(sig in text for sig in ("confirm you're human", "confirm your identity", "xác nhận danh tính", "we've detected unusual")):
+    # Chốt "khoá tài khoản vì nghi bị hack — xác nhận đây là tài khoản của bạn để mở khoá":
+    # đây là kiểm tra danh tính của Facebook, không tự vượt được (dẫn tới xác minh/CAPTCHA).
+    if any(sig in text for sig in ("confirm you're human", "confirm your identity", "xác nhận danh tính",
+                                   "we've detected unusual", "locked your account", "unlock it",
+                                   "may have been hacked", "tài khoản đã bị khoá", "xác nhận đây là tài khoản")):
         return "checkpoint"
     if "/login" in curr_url or "login.php" in curr_url:
         return "login"
@@ -225,18 +229,28 @@ async def _click_continue(popup, timeout: int = 4000) -> bool:
 
 
 async def _confirm_age_gate(page) -> bool:
-    """Confirms Dola 18+ age popup if shown during initial onboarding."""
+    """Tự xác nhận cổng 18+ của Dola (màn hình đồng ý của chính Dola, tài khoản của người dùng).
+
+    Chỉ bấm nút đồng ý khi trang đúng là cổng tuổi (nhắc 18 / age / 年齢 / độ tuổi). Nhận nhiều
+    nhãn hơn bản cũ, và tick sẵn ô "tôi đủ 18" nếu có trước khi bấm. KHÔNG đụng tới chốt bảo mật
+    của Facebook (khoá tài khoản, xác minh danh tính) — đó không phải cổng tuổi."""
     try:
-        ok = await page.evaluate("""() => {
-            const body = document.body ? document.body.innerText : '';
-            if (body.includes('18') || body.includes('Age') || body.includes('年齢')) {
-                const els = [...document.querySelectorAll('button, [role="button"], div, span')];
-                const t = els.find(e => {
-                    const txt = (e.textContent || '').trim();
-                    return (txt === 'OK' || txt === 'Đồng ý' || txt === '同意する' || txt === 'Accept') && e.childElementCount === 0;
-                });
-                if (t) { t.click(); return true; }
+        ok = await page.evaluate(r"""() => {
+            const body = (document.body ? document.body.innerText : '');
+            const isAge = /18|age|年齢|độ tuổi|đủ tuổi|tuổi/i.test(body)
+                && /confirm|xác nhận|đồng ý|同意|agree|older|over|trở lên|至少|以上/i.test(body);
+            if (!isAge) return false;
+            // tick sẵn checkbox xác nhận tuổi nếu có
+            for (const cb of document.querySelectorAll('input[type="checkbox"]')) {
+                if (!cb.checked) { try { cb.click(); } catch (e) {} }
             }
+            const YES = /^(ok|đồng ý|xác nhận|同意する|同意|accept|confirm|agree|continue|tiếp tục|続行|はい|có|tôi đủ 18|i am 18|i'?m 18|18\+)$/i;
+            const els = [...document.querySelectorAll('button, [role="button"], a, span, div')];
+            const t = els.find(e => {
+                const txt = (e.textContent || '').trim();
+                return txt.length <= 24 && YES.test(txt) && e.childElementCount === 0 && e.offsetParent !== null;
+            });
+            if (t) { t.click(); return true; }
             return false;
         }""")
         if ok:
@@ -460,9 +474,11 @@ async def add_account_via_facebook(
             step("Đang kiểm tra cookie Facebook...")
             warm = await _warm_facebook_session(page)
             if warm == "checkpoint":
+                # Facebook khoá/nghi hack và bắt tự xác minh danh tính — không tự vượt được (bấm tiếp
+                # sẽ ra xác minh danh tính/CAPTCHA). Báo rõ để BỎ QUA nick này, chạy tiếp nick khác.
                 raise RuntimeError(
-                    "Tài khoản Facebook đang bị checkpoint (bắt xác minh danh tính / 'confirm you're human'). "
-                    "Không thể đăng nhập tự động — hãy dùng trình duyệt đăng nhập thủ công."
+                    "Facebook khoá tài khoản này (nghi bị hack / bắt xác minh danh tính). "
+                    "Tool bỏ qua nick này — mở tay một lần trên trình duyệt để xác nhận, hoặc thay nick khác."
                 )
             if warm == "login":
                 outcome = await _fb_autofill_login(page, cred, step)

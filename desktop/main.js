@@ -360,12 +360,19 @@ const JS_CLICK_CONTINUE = `(() => {
   return 'none';
 })()`;
 
+// Tự xác nhận cổng 18+ của DOLA (màn hình đồng ý của Dola, tài khoản của người dùng). Yêu cầu trang
+// vừa nhắc tuổi VỪA có chữ đồng ý/xác nhận để không bấm nhầm; tick sẵn ô "đủ 18" nếu có. KHÔNG đụng
+// chốt khoá tài khoản Facebook (nghi hack / xác minh danh tính) — đó không phải cổng tuổi.
 const JS_AGE_GATE = `(() => {
   const body = document.body ? document.body.innerText : '';
-  if (!(body.includes('18') || body.includes('Age') || body.includes('年齢') || body.includes('tuổi'))) return 'no-gate';
-  const els = [...document.querySelectorAll('button, [role="button"], div, span')];
+  const age = /18|age|年齢|tuổi|độ tuổi|đủ tuổi/i.test(body);
+  const agree = /confirm|xác nhận|đồng ý|同意|agree|older|over|trở lên|以上|至少/i.test(body);
+  if (!(age && agree)) return 'no-gate';
+  for (const cb of document.querySelectorAll('input[type="checkbox"]')) { if (!cb.checked) { try { cb.click(); } catch (e) {} } }
+  const YES = /^(ok|đồng ý|xác nhận|同意する|同意|accept|confirm|agree|yes|có|はい|確認|continue|tiếp tục|続行|tôi đủ 18|i am 18|18\\+)$/i;
+  const els = [...document.querySelectorAll('button, [role="button"], a, div, span')];
   const ok = els.find(e => { const t = (e.textContent || '').trim();
-    return ['OK', 'Đồng ý', '同意する', 'Accept', 'はい', 'Yes', 'Confirm', '確認'].includes(t) && e.childElementCount === 0; });
+    return t.length <= 24 && YES.test(t) && e.childElementCount === 0 && e.offsetParent !== null; });
   if (ok) { ok.click(); return 'confirmed'; }
   return 'gate-no-button';
 })()`;
@@ -526,7 +533,9 @@ async function fbAutofillStep(wc, cred, twoFaRef, send) {
   if (!wc || wc.isDestroyed()) return "waiting";
   let text = "";
   try { text = String((await runJS(wc, "(((document.body&&document.body.innerText)||'')).slice(0,500).toLowerCase()")) || ""); } catch (_) {}
-  if (/confirm you're human|confirm your identity|xác nhận danh tính|we've detected unusual/.test(text)) return "checkpoint";
+  // Chốt bảo mật Facebook (nghi hack / khoá tài khoản / xác minh danh tính) — không tự vượt được,
+  // bấm tiếp sẽ ra xác minh danh tính hoặc CAPTCHA. Trả "checkpoint" để bỏ qua nick này, chạy tiếp.
+  if (/confirm you're human|confirm your identity|xác nhận danh tính|we've detected unusual|locked your account|unlock it|may have been hacked|tài khoản đã bị khoá|xác nhận đây là tài khoản/.test(text)) return "checkpoint";
   if (!cred.uid || !cred.password) return "no-creds";
   const url = (wc.getURL() || "").toLowerCase();
   const needs2fa = url.includes("two_factor") || url.includes("/checkpoint") || text.includes("approvals_code")
@@ -651,6 +660,7 @@ pausedHandle("account:importFacebookElectron", async (_e, { name, line, lang }) 
 
     let continueClicks = 0;
     let warnedFbLogin = false;
+    let checkpointAt = 0;   // lúc phát hiện Facebook khoá/xác minh; quá CHECKPOINT_GRACE_MS thì bỏ qua nick
     const fbTwoFa = { done: false };
     const deadline = Date.now() + LOGIN_TIMEOUT_MS;
     while (Date.now() < deadline) {
@@ -661,9 +671,10 @@ pausedHandle("account:importFacebookElectron", async (_e, { name, line, lang }) 
         if (/login\.php|\/login\/|checkpoint|two_factor/.test(purl)) {
           const r = await fbAutofillStep(popup.webContents, cred, fbTwoFa, send);
           if (r === "sai-mat-khau") { if (!win.isDestroyed()) win.close(); return { ok: false, error: `Sai mật khẩu Facebook cho ${cred.uid || name} — cập nhật lại dòng tài khoản (uid|mật khẩu).` }; }
+          if (r === "checkpoint") checkpointAt = checkpointAt || Date.now();
           if ((r === "checkpoint" || r === "no-creds") && !warnedFbLogin) {
             warnedFbLogin = true;
-            send(r === "checkpoint" ? "Facebook đòi xác minh danh tính / 2FA nhưng dòng không có mã — xử lý tay trong popup, app tự tiếp tục."
+            send(r === "checkpoint" ? "Facebook khoá/đòi xác minh danh tính nick này — xử lý tay trong popup trong ~45s, không thì app bỏ qua chạy tiếp."
                                    : "Popup Facebook đòi đăng nhập nhưng dòng thiếu mật khẩu — xử lý tay trong popup.");
           }
         } else if (continueClicks < 6) {
@@ -685,6 +696,11 @@ pausedHandle("account:importFacebookElectron", async (_e, { name, line, lang }) 
       if (current.some((c) => c.name === "sessionid" && c.value)) {
         return await harvestDolaSession(win, ses, name, lang, send, LOGIN_URL);
       }
+      // Facebook khoá nick mà quá thời gian chờ chữa tay → bỏ qua để không kẹt cả lượt đăng nhập.
+      if (checkpointAt && Date.now() - checkpointAt > CHECKPOINT_GRACE_MS) {
+        if (!win.isDestroyed()) win.close();
+        return { ok: false, skipped: true, error: "Facebook khoá/xác minh nick này — đã bỏ qua. Mở tay để xác nhận danh tính, hoặc thay nick khác." };
+      }
       await new Promise((r) => setTimeout(r, LOGIN_POLL_MS));
     }
     if (!win.isDestroyed()) win.close();
@@ -700,6 +716,9 @@ pausedHandle("account:importFacebookElectron", async (_e, { name, line, lang }) 
 const LOGIN_URL = "https://www.dola.com/chat";
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 const LOGIN_POLL_MS = 3000;
+// Nick bị Facebook khoá/xác minh: cho một khoảng ngắn để tự chữa tay trên popup rồi BỎ QUA (không
+// ngồi chờ đủ 5 phút cho từng nick), để đăng nhập hàng loạt chạy tiếp nick khác.
+const CHECKPOINT_GRACE_MS = 45 * 1000;
 
 pausedHandle("account:loginElectron", async (_e, { name, lang }) => {
   if (!NAME_RE.test(name || "")) return { ok: false, error: "Tên nick chỉ gồm chữ, số, _ hoặc - (1-32 ký tự)" };
