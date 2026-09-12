@@ -97,10 +97,10 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     inflight.current.add(n);
     setRow(n, { prompt, phase: "running", stage: "queued", startedAt: Date.now(), errorRaw: "", videoUrl: "" });
     try {
-      // Người dùng đã chọn đích danh nick này thì "tắt lịch" không còn là lý do chặn: bật lịch giúp rồi
-      // gửi luôn (server từ chối job vào nick tắt lịch). Trước đây thẻ chỉ báo "bấm Bật lịch tất cả rồi chạy lại".
+      // Người dùng đã chọn đích danh nick này thì "tạm ngưng" không còn là lý do chặn: mở lại giúp rồi
+      // gửi luôn (server từ chối job vào nick tạm ngưng). Trước đây thẻ chỉ báo "bấm Bật lịch tất cả rồi chạy lại".
       if (acc && accStateOf(acc) === "off") {
-        setRow(n, { status: "đang bật lịch cho nick…" });
+        setRow(n, { status: "đang mở lại nick tạm ngưng…" });
         await patchAccount(n, { scheduling: true });
         onRefresh();
       }
@@ -183,11 +183,11 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   }
   async function enableAllScheduling() {
     const off = accounts.filter((a) => a.scheduling === false).map((a) => a.account);
-    if (!off.length) { setGen("Không có nick nào đang tắt lịch."); return; }
-    setGen(`Đang bật lịch cho ${off.length} nick…`);
+    if (!off.length) { setGen("Không có nick nào đang tạm ngưng."); return; }
+    setGen(`Đang cho ${off.length} nick tạm ngưng chạy lại…`);
     const res = await Promise.all(off.map((n) => patchAccount(n, { scheduling: true }).then(() => true).catch(() => false)));
     const ok = res.filter(Boolean).length;
-    setGen(`✓ Bật lịch ${ok}/${off.length} nick.` + (ok < off.length ? " Vài nick lỗi — xem Kho tài khoản." : ""));
+    setGen(`✓ Cho chạy lại ${ok}/${off.length} nick.` + (ok < off.length ? " Vài nick lỗi — xem Kho tài khoản." : ""));
     onRefresh();
   }
   // Đổi số luồng ngay lúc đang chạy: server nhả thêm slot, job đang chờ chạy liền.
@@ -271,7 +271,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <SelectNative className="w-auto" value={def.ratio} onChange={(e) => setDef({ ...def, ratio: e.target.value })}>{RATIOS.map((m) => <option key={m}>{m}</option>)}</SelectNative>
         <Button variant="outline" size="sm" onClick={syncDef}><Repeat className="h-3.5 w-3.5" />Đồng bộ mặc định</Button>
         <Button variant="outline" size="sm" onClick={verifyAll}><Stethoscope className="h-3.5 w-3.5" />Kiểm tra tất cả</Button>
-        <Button variant="outline" size="sm" onClick={enableAllScheduling}><Power className="h-3.5 w-3.5" />Bật lịch tất cả</Button>
+        <Button variant="outline" size="sm" onClick={enableAllScheduling} title="Mở lại mọi nick đang tạm ngưng (nick bị tắt ở Kho tài khoản hoặc theo file nhập)"><Power className="h-3.5 w-3.5" />Cho chạy lại tất cả</Button>
         <Button variant="outline" size="sm" onClick={wakeAllCooling}><Clock className="h-3.5 w-3.5" />Bỏ nghỉ tất cả</Button>
         <span className="flex-1" />
         <div className="flex items-center gap-2 rounded-lg bg-surface px-3 py-1.5 font-mono text-[12px] text-muted-foreground">
@@ -300,7 +300,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <ViewToggle value={view} onChange={setView} />
         <span><b className="text-foreground">{usable}</b> nick chạy được (xếp lên đầu) · <b className="text-foreground">{runningNow}</b> đang chạy · tối đa {health?.max_concurrency || "—"} song song
           {health?.pending_tasks ? ` · ${health.pending_tasks} job đang chạy/chờ trên server` : ""}
-          {accounts.filter((a) => a.scheduling === false).length ? ` · ${accounts.filter((a) => a.scheduling === false).length} nick tắt lịch` : ""}
+          {accounts.filter((a) => a.scheduling === false).length ? ` · ${accounts.filter((a) => a.scheduling === false).length} nick tạm ngưng` : ""}
           {accounts.filter((a) => a.cooling).length ? ` · ${accounts.filter((a) => a.cooling).length} nick đang nghỉ` : ""}</span>
         <span className="flex-1" />
         <span>Nick gửi cùng lúc</span>

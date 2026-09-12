@@ -374,7 +374,7 @@ def test_blocked_reason_says_one_thing():
     base = {"login_ok": 1, "scheduling": True, "cooling": False, "rate_limited": False,
             "quota_blocked": False, "credit_balance": 4, "used_today": 0, "cooldown_until": 0}
     assert "cookie chết" in r(None, {**base, "login_ok": 0})
-    assert "tắt lịch" in r(None, {**base, "scheduling": False})
+    assert "tạm ngưng" in r(None, {**base, "scheduling": False})
     assert "nghỉ" in r(None, {**base, "cooling": True, "cooldown_until": _t.time() + 600})
     assert "hết lượt" in r(None, {**base, "rate_limited": True})
     assert "hết điểm" in r(None, {**base, "credit_balance": 0})

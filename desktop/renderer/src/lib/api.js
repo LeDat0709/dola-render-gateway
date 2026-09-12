@@ -56,7 +56,7 @@ export function fmtError(raw) {
   if (/đang bận|đang tạo video khác/i.test(r)) return A("⏳", "Nick đang bận", "Chờ video hiện tại xong rồi chạy tiếp.");
   if (/không tồn tại/i.test(r)) return T("👻", "Nick không còn trong pool", "Bảng đang cũ (đã tự làm mới) — nick có thể vừa bị xoá.");
   if (/đang nghỉ chống risk-control/i.test(r)) return A("⏰", "Nick đang nghỉ", r.replace(/^.*?còn/, "Còn").slice(0, 60));
-  if (/tắt lịch/i.test(r)) return A("⏸", "Nick đang tắt lịch", 'Bấm "Bật lịch tất cả" rồi chạy lại.');
+  if (/tạm ngưng|tắt lịch/i.test(r)) return A("⏸", "Nick đang tạm ngưng", "Bấm chạy nick này là tự mở lại; hoặc 'Cho chạy lại' ở Kho tài khoản.");
   if (/không chạy được|không sẵn sàng/i.test(r)) return A("🚫", "Nick chưa chạy được", r.split(":").pop().trim().slice(0, 60));
   if (/no available accounts|no accounts|không có nick/i.test(r)) return T("🚦", "Hết nick chạy được", "Chờ nick rảnh, hoặc bật lịch thêm nick.");
   if (/hết lượt tạo video hôm nay|daily limit|本日は|上限/i.test(r)) return A("📅", "Hết lượt hôm nay", "Mai chạy lại, hoặc dùng nick khác.");
@@ -137,7 +137,7 @@ export function accState(a) {
 // state -> [variant Badge, nhãn tiếng Việt]
 export const ACC_BADGE = {
   ready: ["success", "sẵn sàng"], busy: ["default", "đang chạy"], cooling: ["warn", "đang nghỉ"],
-  quota: ["warn", "hết lượt/điểm"], off: ["secondary", "tắt lịch"], dead: ["danger", "cookie chết"],
+  quota: ["warn", "hết lượt/điểm"], off: ["secondary", "tạm ngưng"], dead: ["danger", "cookie chết"],
 };
 // Chỉ nick "ready" mới đáng bắn job — khớp đúng badge xanh, không phí lệnh vào nick bận/khoá.
 export const canRunAccount = (a) => accState(a) === "ready";
@@ -269,7 +269,7 @@ export async function importAccounts(bundle, onStep, isStopped) {
   await ensureConfig();
   const list = normalizeBundle(bundle).accounts;   // nhận cả file seedance-accounts của tool khác
   if (!list.length) throw new Error("file không có nick nào (đúng file xuất từ Kho tài khoản?)");
-  const st = { ok: 0, unverified: 0, why: "", finished: 0, bad: [] };
+  const st = { ok: 0, unverified: 0, why: "", finished: 0, bad: [], paused: 0 };   // paused = file đánh dấu nick đang tắt
   const progress = (name) => onStep?.(`Nhập ${st.finished}/${list.length} · đang nạp ${name}… (${IMPORT_PARALLEL} nick cùng lúc, mỗi nick 3–10s)`,
                                       { i: st.finished, total: list.length, name, ok: st.ok, unverified: st.unverified, bad: st.bad.length });
   const one = async (a) => {
@@ -283,13 +283,14 @@ export async function importAccounts(bundle, onStep, isStopped) {
       if (!r.ok) throw new Error(j.detail || "HTTP " + r.status);
       if (a.note || a.scheduling === false) await patchAccount(a.name, { note: a.note || "", scheduling: a.scheduling !== false }).catch(() => {});
       st.ok++;
+      if (a.scheduling === false) st.paused++;
       if (j.ok === false) st.bad.push(`${a.name}: cookie không còn đăng nhập`);
       else if (j.ok == null) { st.unverified++; st.why = j.message || st.why; }   // server không tới được Dola (proxy) — cookie vẫn đã lưu
     } catch (e) { st.bad.push(`${a.name}: ${String(e.message || e).slice(0, 80)}`); }
     st.finished++;
   };
   const { stopped } = await runPool(list, IMPORT_PARALLEL, one, isStopped);
-  return { ok: st.ok, total: list.length, done: st.finished, bad: st.bad, unverified: st.unverified, why: st.why, stopped };
+  return { ok: st.ok, total: list.length, done: st.finished, bad: st.bad, unverified: st.unverified, why: st.why, paused: st.paused, stopped };
 }
 // Chip trạng thái theo bản Stitch: tách "hết credit" với "hết lượt hôm nay", ghi giờ hết nghỉ.
 export function accChip(a) {
@@ -302,7 +303,7 @@ export function accChip(a) {
     const t = a.cooldown_until ? new Date(a.cooldown_until * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "";
     return { st, variant: "info", text: "Nghỉ" + (t ? ` đến ${t}` : "") };
   }
-  const M = { ready: ["success", "Sẵn sàng"], busy: ["default", "Đang chạy"], off: ["secondary", "Tắt lịch"], dead: ["secondary", "⚠ Chưa đăng nhập"] };
+  const M = { ready: ["success", "Sẵn sàng"], busy: ["default", "Đang chạy"], off: ["secondary", "Tạm ngưng"], dead: ["secondary", "⚠ Chưa đăng nhập"] };
   return { st, variant: M[st][0], text: M[st][1] };
 }
 export const fmtSec = (s) => { s = Math.round(s || 0); return s >= 60 ? `${Math.floor(s / 60)}p ${String(s % 60).padStart(2, "0")}s` : `${s}s`; };

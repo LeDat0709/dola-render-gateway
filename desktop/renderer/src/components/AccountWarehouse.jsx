@@ -14,7 +14,7 @@ import ProxyAssignDialog from "@/components/ProxyAssignDialog";
 
 const POLL_MS = 4000;
 const ORDER = { ready: 0, busy: 1, cooling: 2, quota: 3, off: 4, dead: 5 };
-const FILTERS = [["", "Tất cả trạng thái"], ["ready", "Sẵn sàng"], ["busy", "Đang chạy"], ["quota", "Hết credit / hết lượt"], ["cooling", "Đang nghỉ"], ["off", "Tắt lịch"], ["dead", "Chưa đăng nhập"]];
+const FILTERS = [["", "Tất cả trạng thái"], ["ready", "Sẵn sàng"], ["busy", "Đang chạy"], ["quota", "Hết credit / hết lượt"], ["cooling", "Đang nghỉ"], ["off", "Tạm ngưng"], ["dead", "Chưa đăng nhập"]];
 const SORTS = [["status", "Xếp: Trạng thái"], ["name", "Xếp: Tên"], ["remaining", "Xếp: Credit còn"], ["last", "Xếp: Dùng gần nhất"]];
 const msgOf = (e) => String((e && e.message) || e).slice(0, 140);
 
@@ -136,7 +136,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
     await done();
   }
 
-  const toggleSched = (a) => one(a.name, (n) => patchAccount(n, { scheduling: !a.scheduling }), a.scheduling ? "tắt lịch" : "bật lịch");
+  const toggleSched = (a) => one(a.name, (n) => patchAccount(n, { scheduling: !a.scheduling }), a.scheduling ? "tạm ngưng" : "cho chạy lại");
   const saveNote = async (n, v, el) => {
     try { await patchAccount(n, { note: v }); if (el) el.classList.remove("border-error"); setMsg(`✓ ghi chú ${n}`); await done(); }
     catch (e) { if (el) el.classList.add("border-error"); setMsg(`Lỗi lưu ghi chú ${n}: ${msgOf(e)} — chưa lưu, thử lại: "${v}"`); }
@@ -173,7 +173,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
       if (!window.confirm(`Nhập ${b.accounts.length} nick từ file${src} vào ${cfg.remote ? "server từ xa" : "máy này"}?\nNick trùng tên sẽ được nạp lại cookie mới.`)) return;
       setImp({ i: 0, total: b.accounts.length, name: "", ok: 0, unverified: 0, bad: 0, src: b.source });
       const r = await importAccounts(b, (text, p) => { setMsg(text); if (p) setImp((s) => ({ ...s, ...p })); }, () => stopImp.current);
-      setImp((s) => ({ ...s, i: r.done, ok: r.ok, unverified: r.unverified, bad: r.bad.length, badList: r.bad, why: r.why, done: true, stopped: r.stopped }));
+      setImp((s) => ({ ...s, i: r.done, ok: r.ok, unverified: r.unverified, bad: r.bad.length, badList: r.bad, why: r.why, paused: r.paused, done: true, stopped: r.stopped }));
       setMsg(`${r.stopped ? "Đã dừng" : "Nhập xong"} ${r.ok}/${r.total} nick.`
         + (r.unverified ? ` ${r.unverified} nick chưa kiểm tra được phiên: ${r.why}` : "")
         + (r.bad.length ? ` Lỗi — ${r.bad.slice(0, 3).join(" · ")}${r.bad.length > 3 ? ` (+${r.bad.length - 3} nick nữa)` : ""}` : ""));
@@ -241,6 +241,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
             {!imp.done && imp.name && <span>Đang: <span className="text-foreground">{imp.name}</span> — nạp cookie, kiểm tra phiên…</span>}
             <span className="ml-auto" />
             <Badge variant="success">{imp.ok} đã vào</Badge>
+            {imp.paused > 0 && <Badge variant="secondary" title="File đánh dấu các nick này đang tắt bên tool cũ. Bấm chạy nick là tự mở lại, hoặc chọn rồi bấm 'Cho chạy lại'.">{imp.paused} tạm ngưng theo file</Badge>}
             {imp.unverified > 0 && <Badge variant="info" title={imp.why}>{imp.unverified} chưa kiểm tra được phiên</Badge>}
             {imp.bad > 0 && <Badge variant="danger" title={(imp.badList || []).join("\n")}>{imp.bad} lỗi</Badge>}
             {imp.done && imp.unverified > 0 && <Button variant="outline" size="sm" className="h-7" disabled={busy}
@@ -255,8 +256,8 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
           <span className="text-outline-variant">|</span>
           <Button variant="outline" size="sm" className="h-7" disabled={busy} onClick={() => setDlg(true)}><Network className="h-3.5 w-3.5 text-tertiary" />Gán proxy</Button>
           <Button variant="outline" size="sm" className="h-7" disabled={busy} onClick={() => each(selNames, verifyAccount, "Kiểm tra phiên")}><Stethoscope className="h-3.5 w-3.5" />Kiểm tra</Button>
-          <Button variant="outline" size="sm" className="h-7" disabled={busy} onClick={() => each(selNames, (n) => patchAccount(n, { scheduling: true }), "Bật lịch")}>Bật lịch</Button>
-          <Button variant="outline" size="sm" className="h-7" disabled={busy} onClick={() => each(selNames, (n) => patchAccount(n, { scheduling: false }), "Tắt lịch")}>Tắt lịch</Button>
+          <Button variant="outline" size="sm" className="h-7" disabled={busy} title="Nick tạm ngưng không được xếp chạy tự động; bấm chạy đích danh vẫn tự mở lại" onClick={() => each(selNames, (n) => patchAccount(n, { scheduling: true }), "Cho chạy lại")}>Cho chạy lại</Button>
+          <Button variant="outline" size="sm" className="h-7" disabled={busy} title="Tạm ngưng: giữ nick trong kho nhưng không xếp chạy tự động" onClick={() => each(selNames, (n) => patchAccount(n, { scheduling: false }), "Tạm ngưng")}>Tạm ngưng</Button>
           <Button variant="outline" size="sm" className="h-7" disabled={busy} onClick={bulkClear}><Eraser className="h-3.5 w-3.5" />Xoá cookie</Button>
           <Button variant="outline" size="sm" className="h-7 text-error hover:text-error" disabled={busy} onClick={bulkDel}><Trash2 className="h-3.5 w-3.5" />Xoá nick</Button>
           <Button variant="ghost" size="sm" className="h-7" disabled={busy} onClick={() => setSel({})}>Bỏ chọn</Button>
@@ -315,7 +316,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
                       defaultValue={a.note || ""} placeholder="ghi chú…"
                       onBlur={(e) => { if (e.target.value !== (a.note || "")) saveNote(a.name, e.target.value, e.target); }} />
                   </td>
-                  <td className={td}><Switch on={!!a.scheduling} disabled={busy} onClick={() => toggleSched(a)} title={a.scheduling ? "Đang xếp lịch — bấm để tạm ngưng" : "Đang tắt — bấm để cho chạy lại"} /></td>
+                  <td className={td}><Switch on={!!a.scheduling} disabled={busy} onClick={() => toggleSched(a)} title={a.scheduling ? "Đang cho chạy — bấm để tạm ngưng" : "Đang tạm ngưng — bấm để cho chạy lại"} /></td>
                   <td className={td + " whitespace-nowrap text-right"}>
                     <Button variant="ghost" size="icon" className="h-7 w-7" title="Kiểm tra cookie còn sống" disabled={busy} onClick={() => one(a.name, verifyAccount, "kiểm tra")}><Stethoscope className="h-3.5 w-3.5" /></Button>
                     <Button variant="ghost" size="icon" className="h-7 w-7" title="Đăng nhập lại (lấy cookie mới)" disabled={busy} onClick={() => relogin(a.name)}><RotateCw className="h-3.5 w-3.5" /></Button>

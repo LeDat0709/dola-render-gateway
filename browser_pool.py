@@ -285,7 +285,7 @@ class BrowserPool:
         if a["login_ok"] == 0:
             return "cookie chết — bấm đăng nhập lại nick"
         if not a["scheduling"]:
-            return "đang tắt lịch — bấm 'Bật lịch tất cả'"
+            return "đang tạm ngưng — bấm 'Cho chạy lại' ở Kho tài khoản (chạy đích danh trong Studio thì tự mở lại)"
         if a["cooling"]:
             left = max(1, int(((a.get("cooldown_until") or 0) - now) / 60))
             return f"đang nghỉ chống risk-control, còn {left} phút — bấm 'Bỏ nghỉ tất cả' nếu muốn chạy ngay"

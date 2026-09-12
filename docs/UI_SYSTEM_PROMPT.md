@@ -84,7 +84,7 @@ Quy tắc màu: nền xếp bậc `surface` để tách khối, **không** dùng
 | Hết credit | `danger` | credit ≤ 0 hoặc Dola báo hết điểm |
 | Hết lượt hôm nay | `warn` | đã dùng hết lượt ngày, reset 0h JST |
 | Nghỉ đến HH:MM | `info` | đang tạm nghỉ (risk-control, gửi quá dày) |
-| Tắt lịch | `secondary` | người dùng tắt |
+| Tạm ngưng | `secondary` | người dùng tắt ở Kho, hoặc file nhập đánh dấu tắt; chạy đích danh thì tự mở lại |
 | ⚠ Chưa đăng nhập | `secondary` | cookie chết / chưa kiểm tra |
 | Sẵn sàng | `success` | còn lại |
 
@@ -105,7 +105,7 @@ có thanh tỷ lệ màu, bảng "Tác vụ gần nhất", biểu đồ cột 7 
 + nhãn 10s/15s, mã #0092, nick, thời gian).
 
 **Studio**: ô textarea "Nhiều prompt, mỗi dòng 1 cái"; hàng mặc định (model, giây, tỉ lệ) + nút Điền tất
-cả / Mỗi dòng 1 nick / Đồng bộ mặc định / Kiểm tra tất cả / Bật lịch tất cả / Bỏ ghim tất cả; hàng chạy:
+cả / Mỗi dòng 1 nick / Đồng bộ mặc định / Kiểm tra tất cả / Cho chạy lại tất cả / Bỏ ghim tất cả; hàng chạy:
 Chạy sẵn sàng / Chạy lại lỗi / Dừng / **Chạy đã chọn** (primary); dòng "Luồng: tối đa N video song song"
 + ô "Nick gửi cùng lúc", "Đăng nhập cùng lúc"; bảng **mỗi nick một dòng**: checkbox, tên nick + chip +
 "1/4 hôm nay · còn 0", ô prompt, model, tỉ lệ, giây, trạng thái job, hành động (chạy, chạy lại, cài, xoá).
