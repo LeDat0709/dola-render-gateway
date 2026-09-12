@@ -158,7 +158,7 @@ def test_download_failure_keeps_job_with_cdn_link():
     """A3: video đã dựng (đã trừ credit) mà tải rớt mạng → thử 3 lần; vẫn hỏng thì job xong với link Dola."""
     import video_worker as vwk
     calls = []
-    async def flaky(url, fname):
+    async def flaky(url, fname, proxy=None):
         calls.append(url)
         if len(calls) < 3:
             raise RuntimeError("Connection reset")
@@ -168,7 +168,7 @@ def test_download_failure_keeps_job_with_cdn_link():
     try:
         p = asyncio.run(vwk._download("https://x/v.mp4", "acc1"))
         assert p.exists() and len(calls) == 3, calls                      # lần 3 mới được
-        async def dead(url, fname): raise RuntimeError("Connection reset")
+        async def dead(url, fname, proxy=None): raise RuntimeError("Connection reset")
         vwk._fetch_to_file = dead
         try:
             asyncio.run(vwk._download("https://x/v.mp4", "acc1"))

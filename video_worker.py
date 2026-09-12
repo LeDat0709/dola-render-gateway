@@ -313,10 +313,10 @@ class DownloadError(RuntimeError):
         self.url = url
 
 
-async def _fetch_to_file(url: str, fname: Path):
+async def _fetch_to_file(url: str, fname: Path, proxy: str | None = None):
     timeout = aiohttp.ClientTimeout(total=300)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url, proxy=config.PROXY or None) as resp:
+        async with session.get(url, proxy=proxy or config.PROXY or None) as resp:
             resp.raise_for_status()
             with open(fname, "wb") as f:
                 async for chunk in resp.content.iter_chunked(1 << 16):
@@ -332,13 +332,15 @@ async def _download(url: str, account: str) -> Path:
     Render mất 2–12 phút và đã trừ credit; một lần rớt mạng lúc tải không được làm mất job →
     thử DOWNLOAD_RETRIES lần, hết thì ném DownloadError mang URL để người dùng tải tay.
     """
+    from browser import account_proxy_url
+    proxy = account_proxy_url(account) or None      # tải video đi đúng proxy của nick, không phải IP chung
     dl_dir = Path(config.DOWNLOAD_DIR)
     dl_dir.mkdir(parents=True, exist_ok=True)
     stt = await _next_stt(dl_dir)
     fname = dl_dir / f"{stt:04d}_{account}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
     for attempt in range(1, DOWNLOAD_RETRIES + 1):
         try:
-            await _fetch_to_file(url, fname)
+            await _fetch_to_file(url, fname, proxy=proxy)
             break
         except Exception as e:
             last = str(e)[:120]

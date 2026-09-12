@@ -1175,6 +1175,8 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
     image_polls = 0
     credits_used = None      # giá Dola báo lúc bắt đầu dựng → pool học giá + trừ credit nick
     answered = set() if answered is None else answered
+    from browser import account_proxy_url
+    poll_proxy = account_proxy_url(account) or config.PROXY or None   # poll đi đúng proxy nick, như lúc gửi
     async with aiohttp.ClientSession() as session:
         while time.time() - start < timeout:
             await asyncio.sleep(5)
@@ -1186,7 +1188,7 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
             params = {**base, "web_tab_id": str(uuid.uuid4())}
             try:
                 async with session.post(_SINGLE_URL, params=params, data=json.dumps(body), headers=headers,
-                                        proxy=config.PROXY or None, timeout=aiohttp.ClientTimeout(total=30)) as r:
+                                        proxy=poll_proxy, timeout=aiohttp.ClientTimeout(total=30)) as r:
                     if r.status != 200:
                         continue
                     data = await r.json(content_type=None)

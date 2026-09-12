@@ -148,6 +148,24 @@ def account_proxy(account: str) -> dict | None:
     return parse_proxy(config.PROXY)
 
 
+def account_proxy_url(account: str) -> str:
+    """Proxy của nick dưới dạng URL cho aiohttp: 'scheme://user:pass@host:port', hoặc '' nếu không có.
+
+    Poll trạng thái và tải video (HTTP thuần) phải đi CÙNG proxy với lúc gửi (trình duyệt), nếu không
+    Dola thấy cùng cuộc trò chuyện bị hỏi từ IP khác → nghi ngờ, và phần poll dồn về một IP chung."""
+    p = account_proxy(account)
+    if not p:
+        return ""
+    server = p["server"]                     # scheme://host:port
+    user, pw = p.get("username"), p.get("password")
+    if not user:
+        return server
+    from urllib.parse import quote
+    scheme, host = server.split("://", 1)
+    cred = quote(user, safe="") + ((":" + quote(pw, safe="")) if pw else "")
+    return f"{scheme}://{cred}@{host}"
+
+
 def account_proxy_raw(account: str) -> str:
     """Chuỗi proxy riêng của nick (accounts/<nick>/proxy.txt); "" = dùng proxy chung."""
     try:
