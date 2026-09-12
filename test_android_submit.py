@@ -118,10 +118,10 @@ SAMPLE = {"device_id": "7681452747673093652", "install_id": "7681561912517068597
           "cdid": "ee3c4d85-c8f0-4c57-8027-1ec83293a5d5"}
 
 
-def base_params(ck: dict) -> str:
+def base_params(ck: dict, aid: str = "489823") -> str:
     return (
         f"flow_im_arch=v2&is_retry=0&device_platform=android&os=android&ssmix=a"
-        f"&cdid={SAMPLE['cdid']}&channel=googleplay&aid=489823&app_name=nova_ai"
+        f"&cdid={SAMPLE['cdid']}&channel=googleplay&aid={aid}&app_name=nova_ai"
         f"&version_code=14080001&version_name=14.8.0&manifest_version_code=14080005"
         f"&update_version_code=14080040&resolution=1080*2186&dpi=420&device_type=SM-A525M"
         f"&device_brand=samsung&language=en&os_api=34&os_version=14&ac=wifi"
@@ -154,11 +154,11 @@ def android_headers(ck: dict) -> dict:
     }
 
 
-def video_body(prompt: str, ratio: str, duration: int) -> dict:
+def video_body(prompt: str, ratio: str, duration: int, bot_id: str = BOT_ID) -> dict:
     now_ms = int(time.time() * 1000)
     return {
         "client_meta": {"local_conversation_id": f"local_{now_ms}", "conversation_id": "",
-                        "bot_id": BOT_ID, "last_section_id": "", "last_message_index": None},
+                        "bot_id": bot_id, "last_section_id": "", "last_message_index": None},
         "messages": [{"local_message_id": str(uuid.uuid4()), "message_status": 0, "content_block": [{
             "block_type": 10000, "block_id": str(uuid.uuid4()), "parent_id": "", "meta_info": [],
             "append_fields": [], "content": {"text_block": {"text": f"生成影片：{prompt}，{ratio}"}}}]}],
@@ -169,11 +169,11 @@ def video_body(prompt: str, ratio: str, duration: int) -> dict:
     }
 
 
-def text_body(prompt: str) -> dict:
+def text_body(prompt: str, bot_id: str = BOT_ID) -> dict:
     now_ms = int(time.time() * 1000)
     return {
         "client_meta": {"local_conversation_id": f"local_{now_ms}", "conversation_id": "",
-                        "bot_id": BOT_ID, "last_section_id": "", "last_message_index": None},
+                        "bot_id": bot_id, "last_section_id": "", "last_message_index": None},
         "messages": [{"local_message_id": str(uuid.uuid4()), "message_status": 0, "content_block": [{
             "block_type": 10000, "block_id": str(uuid.uuid4()), "parent_id": "", "meta_info": [],
             "append_fields": [], "content": {"text_block": {"text": prompt}}}]}],
@@ -182,10 +182,10 @@ def text_body(prompt: str) -> dict:
     }
 
 
-async def send(ck: dict, body: dict, proxy: str | None) -> None:
+async def send(ck: dict, body: dict, proxy: str | None, aid: str = "489823") -> None:
     import aiohttp
     now_ms = int(time.time() * 1000)
-    url = f"{ANDROID_HOST}/chat/completion?{base_params(ck)}&_rticket={now_ms}"
+    url = f"{ANDROID_HOST}/chat/completion?{base_params(ck, aid)}&_rticket={now_ms}"
     sig = sign(url, timestamp=now_ms // 1000)
     headers = {**android_headers(ck), "X-SS-REQ-TICKET": str(now_ms), **sig}
     print(f"POST {url[:90]}...\n  X-Gorgon={sig['X-Gorgon'][:32]}…  proxy={'có' if proxy else 'không (đi thẳng)'}")
@@ -229,6 +229,8 @@ def main() -> None:
     ap.add_argument("--video", action="store_true", help="gửi lệnh tạo video 10s (TỐN credit); mặc định gửi chat chữ (miễn phí)")
     ap.add_argument("--prompt", default="xin chào")
     ap.add_argument("--ratio", default="9:16")
+    ap.add_argument("--bot-id", default=BOT_ID, help="bot_id khai lên (mặc định của app; thử 7339470689562525703 = bot video web)")
+    ap.add_argument("--aid", default="489823", help="aid khai lên (mặc định app Android; thử 495671 = Dola web)")
     a = ap.parse_args()
     if not a.send:
         dry_run(); return
@@ -241,9 +243,9 @@ def main() -> None:
         proxy = a.proxy or account_proxy_url(a.nick) or config.PROXY or None
     else:
         sys.exit("--send cần --nick <tên nick> hoặc --cookie-file <đường dẫn>")
-    body = video_body(a.prompt, a.ratio, 10) if a.video else text_body(a.prompt)
-    print(f"Gửi {'VIDEO 10s' if a.video else 'chat chữ (miễn phí)'} qua {label} lên cổng Android…")
-    asyncio.run(send(ck, body, proxy))
+    body = video_body(a.prompt, a.ratio, 10, a.bot_id) if a.video else text_body(a.prompt, a.bot_id)
+    print(f"Gửi {'VIDEO 10s' if a.video else 'chat chữ (miễn phí)'} qua {label} · aid={a.aid} bot_id={a.bot_id[:10]}… lên cổng Android…")
+    asyncio.run(send(ck, body, proxy, a.aid))
 
 
 if __name__ == "__main__":
