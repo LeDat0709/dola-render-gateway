@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Boxes, RefreshCw, Activity, Trash2, Shuffle, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -39,7 +40,7 @@ export default function ProxyPoolPanel({ onAssigned }) {
   const dot = (a) => a === true ? <Badge variant="success">sống</Badge> : a === false ? <Badge variant="danger">chết</Badge> : <Badge variant="secondary">chưa kiểm</Badge>;
 
   return (
-    <div className="space-y-3 rounded-xl bg-surface-low p-4">
+    <div className="space-y-3 rounded-xl border bg-card p-4">
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2 text-[15px] font-semibold"><Boxes className="h-4 w-4 text-tertiary" />Kho proxy tập trung</div>
         <span className="rounded bg-tertiary/10 px-1.5 py-0.5 font-mono text-[10px] text-tertiary">{s.total} proxy · {s.alive} sống · {s.dead} chết</span>
@@ -49,7 +50,7 @@ export default function ProxyPoolPanel({ onAssigned }) {
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={load}><RefreshCw className="h-3.5 w-3.5" /></Button>
       </div>
 
-      <Textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} className="bg-surface-lowest font-mono text-xs"
+      <Textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} className="bg-background font-mono text-xs"
         placeholder={"Mỗi dòng một proxy:\n103.1.2.3:8080:user:pass\nhttp://user:pass@1.2.3.4:8080\nsocks5://1.2.3.4:1080"} />
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={add} disabled={!!busy || !text.trim()}><Plus className="h-4 w-4" />Thêm vào kho</Button>
@@ -67,24 +68,22 @@ export default function ProxyPoolPanel({ onAssigned }) {
       {msg && <div className="text-xs text-muted-foreground">{msg}</div>}
 
       {!!(data?.proxies || []).length && (
-        <div className="max-h-56 overflow-auto rounded-md bg-surface-lowest">
-          <table className="w-full text-left text-[12px]">
-            <thead className="sticky top-0 bg-surface-lowest font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-              <tr><th className="px-3 py-2">Proxy (đã che mật khẩu)</th><th className="px-3 py-2">Giao thức</th><th className="px-3 py-2">Trạng thái</th><th className="px-3 py-2">Nick đang gán</th><th className="px-3 py-2" /></tr>
-            </thead>
-            <tbody>
-              {data.proxies.map((p) => (
-                <tr key={p.id} className="border-t border-surface">
-                  <td className="px-3 py-1.5 font-mono">{p.proxy}</td>
-                  <td className="px-3 py-1.5"><span className="rounded bg-surface-high px-1.5 py-0.5 font-mono text-[10px] uppercase">{p.scheme}</span></td>
-                  <td className="px-3 py-1.5">{dot(p.alive)}</td>
-                  <td className="px-3 py-1.5 font-mono text-muted-foreground">{p.nicks ?? 0}</td>
-                  <td className="px-3 py-1.5 text-right"><Button variant="ghost" size="icon" className="h-7 w-7 text-error hover:text-error" onClick={() => del(p.id)} disabled={!!busy}><Trash2 className="h-3.5 w-3.5" /></Button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table wrapperClassName="max-h-56 bg-background" className="text-[12px]">
+          <TableHeader className="bg-background">
+            <TableRow><TableHead>Proxy (đã che mật khẩu)</TableHead><TableHead>Giao thức</TableHead><TableHead>Trạng thái</TableHead><TableHead>Nick đang gán</TableHead><TableHead /></TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.proxies.map((p) => (
+              <TableRow key={p.id}>
+                <TableCell className="py-1.5 font-mono">{p.proxy}</TableCell>
+                <TableCell className="py-1.5"><span className="rounded bg-surface-high px-1.5 py-0.5 font-mono text-[10px] uppercase">{p.scheme}</span></TableCell>
+                <TableCell className="py-1.5">{dot(p.alive)}</TableCell>
+                <TableCell className="py-1.5 font-mono text-muted-foreground">{p.nicks ?? 0}</TableCell>
+                <TableCell className="py-1.5 text-right"><Button variant="ghost" size="icon" className="h-7 w-7 text-error hover:text-error" onClick={() => del(p.id)} disabled={!!busy}><Trash2 className="h-3.5 w-3.5" /></Button></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
     </div>
   );

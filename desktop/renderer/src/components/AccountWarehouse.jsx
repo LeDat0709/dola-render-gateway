@@ -29,7 +29,7 @@ function Switch({ on, onClick, title, disabled }) {
 
 function Metric({ label, value, tone = "text-foreground", sub }) {
   return (
-    <div className="rounded-lg bg-surface-low p-3">
+    <div className="rounded-lg border bg-card p-3">
       <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className={"mt-0.5 text-2xl font-semibold tabular-nums " + tone}>{value}</div>
       {sub && <div className="font-mono text-[11px] text-muted-foreground">{sub}</div>}
@@ -204,7 +204,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
         <Metric label="Chưa đăng nhập" value={counts.dead} tone={counts.dead ? "text-error" : "text-foreground"} sub="cần cookie mới" />
       </div>
 
-      <div className="space-y-3 rounded-xl bg-surface p-3">
+      <div className="space-y-3 rounded-xl border bg-card p-3">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold tracking-tight">Kho tài khoản</h2>
           <span className="rounded-full bg-primary/15 px-2 py-0.5 font-mono text-[11px] text-primary">{all.length} nick ({counts.ready} sẵn sàng)</span>
@@ -221,7 +221,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[240px] flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
-            <Input className="h-8 bg-surface-lowest pl-8 font-mono text-xs" placeholder="Tìm theo tên nick, email, ghi chú, IP proxy…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <Input className="h-8 bg-background pl-8 font-mono text-xs" placeholder="Tìm theo tên nick, email, ghi chú, IP proxy…" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
           <SelectNative className="h-8 w-auto text-xs" value={filter} onChange={(e) => setFilter(e.target.value)}>{FILTERS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</SelectNative>
           <SelectNative className="h-8 w-auto text-xs" value={sort} onChange={(e) => setSort(e.target.value)}>{SORTS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</SelectNative>
@@ -253,7 +253,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
       )}
 
       {selNames.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-high/95 px-3 py-2 shadow-xl">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-card px-3 py-2 shadow-xl">
           <span className="flex items-center gap-1.5 font-mono text-xs"><span className="h-2 w-2 animate-ping rounded-full bg-primary" />Đã chọn {selNames.length} nick</span>
           <span className="text-outline-variant">|</span>
           <Button variant="outline" size="sm" className="h-7" disabled={busy} onClick={() => setDlg(true)}><Network className="h-3.5 w-3.5 text-tertiary" />Gán proxy</Button>
@@ -266,10 +266,10 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-xl bg-surface-low">
+      <div className="overflow-x-auto rounded-lg border bg-card">
         <table className="w-full border-collapse text-[12.5px]">
           <thead>
-            <tr className="bg-surface-lowest">
+            <tr className="border-b bg-muted/40">
               <th className={th + " w-8 text-center"}><input type="checkbox" checked={allSel} disabled={busy} onChange={(e) => setSel(e.target.checked ? Object.fromEntries(rows.map((a) => [a.name, true])) : {})} /></th>
               <th className={th}>Tên nick & email</th>
               <th className={th + " w-[150px]"}>Trạng thái</th>
@@ -295,7 +295,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
             {rows.map((a) => {
               const c = accChip(a);
               return (
-                <tr key={a.name} className={`border-t border-surface hover:bg-surface/60 ${sel[a.name] ? "bg-surface" : ""} ${a.scheduling ? "" : "opacity-60"}`}>
+                <tr key={a.name} className={`border-b border-border/60 transition-colors hover:bg-muted/40 ${sel[a.name] ? "bg-muted/60" : ""} ${a.scheduling ? "" : "opacity-60"}`}>
                   <td className={td + " text-center"}><input type="checkbox" checked={!!sel[a.name]} disabled={busy} onChange={(e) => setSel({ ...sel, [a.name]: e.target.checked })} /></td>
                   <td className={td}>
                     <div className="flex items-center gap-2">
@@ -331,7 +331,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
             })}
           </tbody>
         </table>
-        <div className="flex items-center justify-between bg-surface-lowest px-3 py-2 font-mono text-[11px] text-muted-foreground">
+        <div className="flex items-center justify-between border-t bg-muted/30 px-3 py-2 font-mono text-[11px] text-muted-foreground">
           <span>Hiển thị {rows.length} / {all.length} nick</span>
           {msg && <span className="truncate text-foreground">{msg}</span>}
         </div>

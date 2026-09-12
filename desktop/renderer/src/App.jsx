@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Clapperboard, Users, Settings2, LayoutDashboard, Network, Film } from "lucide-react";
 import VideoLibrary from "@/components/VideoLibrary";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import TitleBar from "@/components/TitleBar";
+import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import StudioTab from "@/components/StudioTab";
 import AccountsTab from "@/components/AccountsTab";
@@ -10,6 +12,15 @@ import SettingsTab from "@/components/SettingsTab";
 import OverviewTab from "@/components/OverviewTab";
 import ProxyTab from "@/components/ProxyTab";
 import { loadConfig, health as fetchHealth } from "@/lib/api";
+
+const NAV = [
+  { value: "overview", label: "Tổng quan", icon: LayoutDashboard, subtitle: "Máy chủ, nick và job đang chạy" },
+  { value: "make", label: "Studio", icon: Clapperboard, subtitle: "Mỗi nick một thẻ, prompt riêng" },
+  { value: "video", label: "Video", icon: Film, subtitle: "Thư viện video đã tạo" },
+  { value: "acct", label: "Kho tài khoản", icon: Users, subtitle: "Nick, cookie, credit, proxy riêng" },
+  { value: "proxy", label: "Proxy", icon: Network, subtitle: "Kho proxy và phân bổ theo nick" },
+  { value: "settings", label: "Cài đặt", icon: Settings2, subtitle: "Server, proxy chung, tuỳ chọn" },
+];
 
 export default function App() {
   const [health, setHealth] = useState(null);
@@ -39,31 +50,28 @@ export default function App() {
     return () => { document.removeEventListener("focusin", on); document.removeEventListener("focusout", off); };
   }, []);
 
+  const current = NAV.find((n) => n.value === tab) || NAV[0];
   return (
-    <Tabs value={tab} onValueChange={setTab} className="min-h-screen">
-      <Header health={health} latency={latency} onRefresh={refresh}>
-        <TabsList>
-          <TabsTrigger value="overview"><LayoutDashboard className="h-4 w-4" />Tổng quan</TabsTrigger>
-          <TabsTrigger value="make"><Clapperboard className="h-4 w-4" />Studio</TabsTrigger>
-          <TabsTrigger value="video"><Film className="h-4 w-4" />Video</TabsTrigger>
-          <TabsTrigger value="acct"><Users className="h-4 w-4" />Kho tài khoản</TabsTrigger>
-          <TabsTrigger value="proxy"><Network className="h-4 w-4" />Proxy</TabsTrigger>
-          <TabsTrigger value="settings"><Settings2 className="h-4 w-4" />Cài đặt</TabsTrigger>
-        </TabsList>
-      </Header>
-      <main className="mx-auto max-w-[1500px] px-6 py-5">
-        <TabsContent value="overview" forceMount><OverviewTab health={health} onPlay={(u) => setVideo(u)} onGo={setTab} active={tab === "overview"} /></TabsContent>
-        <TabsContent value="make" forceMount>
-          <div className="rounded-xl bg-surface-low p-5">
-            <h2 className="mb-4 font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Studio — mỗi nick một thẻ, prompt riêng</h2>
-            <StudioTab health={health} onRefresh={refresh} onPlay={(u) => setVideo(u)} />
-          </div>
-        </TabsContent>
-        <TabsContent value="video" forceMount><VideoLibrary active={tab === "video"} onPlay={(u) => setVideo(u)} /></TabsContent>
-        <TabsContent value="acct" forceMount><AccountsTab onRefresh={refresh} active={tab === "acct"} /></TabsContent>
-        <TabsContent value="proxy" forceMount><ProxyTab active={tab === "proxy"} /></TabsContent>
-        <TabsContent value="settings" forceMount><SettingsTab active={tab === "settings"} /></TabsContent>
-      </main>
+    <Tabs value={tab} onValueChange={setTab} orientation="vertical" className="flex h-screen flex-col overflow-hidden bg-background">
+      <TitleBar health={health} latency={latency} />
+      <div className="flex min-h-0 flex-1">
+        <Sidebar items={NAV} health={health} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <Header title={current.label} subtitle={current.subtitle} onRefresh={refresh} />
+          <main className="min-h-0 flex-1 overflow-auto px-6 py-5">
+            <div className="mx-auto max-w-[1500px]">
+              <TabsContent value="overview" forceMount className="mt-0"><OverviewTab health={health} onPlay={(u) => setVideo(u)} onGo={setTab} active={tab === "overview"} /></TabsContent>
+              <TabsContent value="make" forceMount className="mt-0">
+                <div className="rounded-xl border bg-card p-5"><StudioTab health={health} onRefresh={refresh} onPlay={(u) => setVideo(u)} /></div>
+              </TabsContent>
+              <TabsContent value="video" forceMount className="mt-0"><VideoLibrary active={tab === "video"} onPlay={(u) => setVideo(u)} /></TabsContent>
+              <TabsContent value="acct" forceMount className="mt-0"><AccountsTab onRefresh={refresh} active={tab === "acct"} /></TabsContent>
+              <TabsContent value="proxy" forceMount className="mt-0"><ProxyTab active={tab === "proxy"} /></TabsContent>
+              <TabsContent value="settings" forceMount className="mt-0"><SettingsTab active={tab === "settings"} /></TabsContent>
+            </div>
+          </main>
+        </div>
+      </div>
 
       <Dialog open={!!video} onOpenChange={(o) => !o && setVideo(null)}>
         <DialogContent>

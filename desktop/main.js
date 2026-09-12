@@ -113,9 +113,18 @@ const REMOTE_ONLY = { ok: false, error: "Đang dùng máy chủ từ xa — thao
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1080,
-    height: 760,
+    width: 1180,
+    height: 780,
+    minWidth: 900,
+    minHeight: 600,
     title: "Dola Studio",
+    backgroundColor: "#0f0f1a",          // = --background của theme (index.css) → không loé trắng lúc mở
+    // Titlebar tuỳ chỉnh: renderer vẽ dải trạng thái làm thanh tiêu đề (TitleBar.jsx, vùng kéo app-drag).
+    // macOS giữ 3 nút đèn giao thông thụt vào; Windows/Linux dùng nút hệ thống overlay cùng màu nền.
+    titleBarStyle: "hidden",
+    ...(process.platform === "darwin"
+      ? { trafficLightPosition: { x: 14, y: 11 } }
+      : { titleBarOverlay: { color: "#0f0f1a", symbolColor: "#a0a0c0", height: 36 } }),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

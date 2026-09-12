@@ -78,7 +78,7 @@ export default function ProxyTab({ active = true }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3 rounded-xl bg-surface-low p-4">
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-card p-4">
         <div>
           <div className="flex items-center gap-2 text-xl font-semibold tracking-tight">Quản lý Proxy<span className="rounded bg-tertiary/10 px-1.5 py-0.5 font-mono text-[10px] text-tertiary">tối đa {PER_IP} nick / IP</span></div>
           <p className="text-xs text-muted-foreground">Dola đánh giá rủi ro theo cặp IP + nick. Nhiều nick chung một IP là lý do tool đối thủ bị khoá cả loạt. Mỗi nick một proxy cố định, mỗi IP không quá {PER_IP} nick.</p>
@@ -106,16 +106,16 @@ export default function ProxyTab({ active = true }) {
           ["Nick dùng proxy chung", onGlobal, onGlobal > PER_IP ? "text-error" : "text-foreground", onGlobal > PER_IP ? `quá ${PER_IP} nick một IP — nên chia proxy` : "chung IP với gateway"],
           ["IP đang bị Dola soi", flagged, flagged ? "text-error" : "text-tertiary", "có nick nghỉ risk-control"],
           ["Tổng nick", (list || []).length, "text-foreground", `${groups.reduce((s, g) => s + g.busy, 0)} đang render`]].map(([l, v, tone, sub]) => (
-          <div key={l} className="rounded-xl bg-surface-low p-3"><div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{l}</div>
+          <div key={l} className="rounded-lg border bg-card p-3"><div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{l}</div>
             <div className={"mt-1 text-2xl font-semibold tabular-nums " + tone}>{v}</div><div className="font-mono text-[11px] text-muted-foreground">{sub}</div></div>
         ))}
       </div>
 
       {cfg.remote && <div className="rounded-lg bg-info/10 px-3 py-2 text-xs text-info">Đang nối server từ xa: nút "Kiểm tra" chạy từ máy này, không phải từ server. Proxy của nick nằm trên server.</div>}
 
-      <div className="overflow-x-auto rounded-xl bg-surface-low">
+      <div className="overflow-x-auto rounded-lg border bg-card">
         <table className="w-full text-left text-[13px]">
-          <thead><tr className="bg-surface-lowest font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+          <thead><tr className="border-b bg-muted/40 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
             <th className="px-3 py-2.5">Proxy</th><th className="px-3 py-2.5">Giao thức</th><th className="px-3 py-2.5">Tải nick</th><th className="px-3 py-2.5">Nick</th><th className="px-3 py-2.5">Trạng thái Dola</th><th className="px-3 py-2.5 text-right">Tác vụ</th>
           </tr></thead>
           <tbody>
@@ -124,7 +124,7 @@ export default function ProxyTab({ active = true }) {
               const key = g.proxy || "__global"; const open = openRow === key;
               const scheme = g.proxy ? (g.proxy.match(/^(\w+):\/\//)?.[1] || "http") : "";
               return [
-                <tr key={key} className={"border-t border-surface hover:bg-surface/60 " + (g.cooling.length ? "bg-error-container/10" : "")}>
+                <tr key={key} className={"border-b border-border/60 transition-colors hover:bg-muted/40 " + (g.cooling.length ? "bg-error-container/10" : "")}>
                   <td className="px-3 py-2.5 font-mono text-[12px]">
                     {g.proxy ? <span title={maskProxy(g.proxy)}>{maskProxy(g.proxy)}</span>
                       : <span><span className="text-info">Proxy chung của gateway</span><div className="text-[11px] text-muted-foreground">{gproxy ? maskProxy(gproxy) : "nối thẳng (không proxy) — đặt ở Cài đặt"}</div></span>}
@@ -139,7 +139,7 @@ export default function ProxyTab({ active = true }) {
                     {g.proxy && <Button variant="ghost" size="sm" className="h-7 text-error hover:text-error" onClick={() => detach(g)}><Unlink className="h-3.5 w-3.5" />Gỡ</Button>}
                   </td>
                 </tr>,
-                open && <tr key={key + "-nicks"} className="bg-surface-lowest"><td colSpan={6} className="px-3 py-2">
+                open && <tr key={key + "-nicks"} className="border-b border-border/60 bg-muted/20"><td colSpan={6} className="px-3 py-2">
                   <div className="flex flex-wrap gap-1.5">{g.nicks.map((a) => { const c = accChip(a); return <Badge key={a.name} variant={c.variant} title={c.text}>{a.name}</Badge>; })}</div>
                   {g.proxy && <div className="mt-1.5 font-mono text-[11px] text-muted-foreground">{proxyHost(g.proxy)}</div>}
                 </td></tr>,
@@ -149,7 +149,7 @@ export default function ProxyTab({ active = true }) {
         </table>
       </div>
       {msg && <div className="text-xs text-muted-foreground">{msg}</div>}
-      <div className="rounded-xl bg-surface-low p-4 text-xs text-muted-foreground">
+      <div className="rounded-xl border bg-card p-4 text-xs text-muted-foreground">
         <div className="mb-1 flex items-center gap-2 text-sm font-medium text-foreground"><Network className="h-4 w-4 text-primary" />Đẩy nick kèm proxy từ máy khác</div>
         Có danh sách proxy trong file <code className="font-mono text-primary">proxies.txt</code> thì chạy trên máy đang giữ nick:
         <code className="mt-1 block rounded bg-surface-lowest px-2 py-1.5 font-mono text-[11px] text-tertiary">.venv/bin/python deploy/push_nicks.py {cfg.base} ADMIN_KEY --proxies proxies.txt --per-ip {PER_IP}</code>

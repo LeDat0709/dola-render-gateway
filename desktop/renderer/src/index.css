@@ -2,34 +2,63 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Bảng màu theo bản thiết kế Stitch (Material 3 tối, tím #d0bcff / xanh lá #4edea3 / đỏ #ffb4ab).
-   Biến shadcn giữ nguyên tên để mọi component cũ đổi màu theo mà không phải sửa. */
 :root, .dark {
-  --background: 222 31% 6%;      /* surface-container-lowest #0b0e15 */
-  --foreground: 230 24% 90%;     /* on-surface #e0e2ec */
-  --card: 222 17% 12%;           /* surface-container-low #191c23 */
-  --card-foreground: 230 24% 90%;
-  --popover: 222 15% 13%;        /* surface-container #1d2027 */
-  --popover-foreground: 230 24% 90%;
-  --primary: 258 100% 87%;       /* #d0bcff */
-  --primary-foreground: 265 100% 28%; /* on-primary #3c0091 */
-  --secondary: 222 11% 17%;      /* surface-container-high #272a31 */
-  --secondary-foreground: 230 24% 90%;
-  --muted: 222 15% 13%;
-  --muted-foreground: 262 14% 68%;
-  --accent: 222 11% 17%;
-  --accent-foreground: 230 24% 90%;
-  --destructive: 356 100% 29%;   /* error-container #93000a */
-  --destructive-foreground: 6 100% 92%;
-  --border: 224 10% 20%; --input: 224 10% 22%; --ring: 258 100% 87%;
+  /* tweakcn preset: cosmic-night (dark) — đổi theme: tweakcn.com → chọn preset → Code → Tailwind v3 → dán đè khối này */
+  --background: 240 27% 8%;
+  --foreground: 240 49% 92%;
+  --card: 240 28% 14%;
+  --card-foreground: 240 49% 92%;
+  --popover: 240 28% 14%;
+  --popover-foreground: 240 49% 92%;
+  --primary: 251 100% 78%;
+  --primary-foreground: 240 27% 8%;
+  --secondary: 243 33% 25%;
+  --secondary-foreground: 242 100% 88%;
+  --muted: 240 33% 20%;
+  --muted-foreground: 240 20% 69%;
+  --accent: 240 33% 28%;
+  --accent-foreground: 240 49% 92%;
+  --destructive: 350 100% 66%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 26% 25%;
+  --input: 240 26% 25%;
+  --ring: 251 100% 78%;
+  --sidebar: 240 28% 14%;
+  --sidebar-foreground: 240 49% 92%;
+  --sidebar-primary: 251 100% 78%;
+  --sidebar-primary-foreground: 240 27% 8%;
+  --sidebar-accent: 240 33% 28%;
+  --sidebar-accent-foreground: 240 49% 92%;
+  --sidebar-border: 240 26% 25%;
+  --sidebar-ring: 251 100% 78%;
+  --chart-1: 251 100% 78%;
+  --chart-2: 230 44% 64%;
+  --chart-3: 207 89% 68%;
+  --chart-4: 174 42% 51%;
+  --chart-5: 326 100% 74%;
   --radius: 0.5rem;
+  /* Bảng màu Stitch (surface-*) suy từ preset để đổi theme là đổi toàn app */
+  --surface-lowest: 240 27% 8%;
+  --surface-low: 240 28% 14%;
+  --surface: 240 25% 16%;
+  --surface-high: 243 33% 25%;
+  --surface-highest: 240 33% 28%;
+  --surface-bright: 239 29% 34%;
+  --on-surface: 240 49% 92%;
+  --on-variant: 240 31% 79%;
+  --outline: 240 20% 69%;
+  --outline-variant: 240 26% 25%;
 }
 * { border-color: hsl(var(--border)); }
 body { margin: 0; background: hsl(var(--background)); color: hsl(var(--foreground)); font-feature-settings: "rlig" 1, "calt" 1; overscroll-behavior: none; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: #32353c; border-radius: 8px; border: 2px solid hsl(var(--background)); }
-::-webkit-scrollbar-thumb:hover { background: #494454; }
+::-webkit-scrollbar-thumb { background: hsl(var(--surface-highest)); border-radius: 8px; border: 2px solid hsl(var(--background)); }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--surface-bright)); }
 @keyframes slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(360%); } }
 
 /* forceMount giữ mọi tab mount (không mất state khi chuyển tab); ẩn tab không active */
 [role="tabpanel"][data-state="inactive"] { display: none; }
+
+/* Titlebar tuỳ chỉnh (Electron titleBarStyle: hidden): vùng kéo cửa sổ, nút bấm bên trong phải no-drag */
+.app-drag { -webkit-app-region: drag; }
+.app-no-drag { -webkit-app-region: no-drag; }
