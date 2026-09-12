@@ -13,7 +13,6 @@ CHẠY:
   - 710022002 → rate-limit/nhu cầu cao, thử lại sau.
 """
 import argparse
-import asyncio
 import json
 import sys
 import time
@@ -107,26 +106,26 @@ def build_signed(ck: dict, req_body: dict) -> tuple[str, str]:
     return f"{WEB_URL}?{query}&a_bogus={a_bogus}", body_json
 
 
-async def send(ck: dict, req_body: dict, proxy: str | None) -> None:
-    import aiohttp
+def send(ck: dict, req_body: dict, proxy: str | None) -> None:
+    # curl_cffi impersonate=chrome: giả TLS/JA3 + thứ tự header của Chrome thật (aiohttp lộ ngay là bot ở tầng TLS)
+    from curl_cffi import requests as creq
     url, body_json = build_signed(ck, req_body)
     headers = {"Content-Type": "application/json", "agw-js-conv": "str, str", "Accept": "*/*",
                "User-Agent": UA, "Cookie": cookie_header(ck), "Referer": "https://www.dola.com/chat/",
                "Origin": "https://www.dola.com"}
-    print(f"POST {WEB_URL} · a_bogus cục bộ (…{url.split('a_bogus=')[1][:24]}…) · proxy={'có' if proxy else 'không (đi thẳng)'}")
-    async with aiohttp.ClientSession() as s:
-        async with s.post(url, data=body_json.encode(), headers=headers, proxy=proxy,
-                          timeout=aiohttp.ClientTimeout(total=60)) as r:
-            print(f"  HTTP {r.status}")
-            text = await r.text()
-            low = text.lower()
-            if r.status == 200 and ("conversation_id" in text or "sse_ack" in low):
-                print("  → a_bogus CỤC BỘ ĐƯỢC CHẤP NHẬN. Trích 400 ký tự:")
-            elif "verify" in low or "slide" in low or "captcha" in low or "a_bogus" in low:
-                print("  → BỊ CHẶN/nghi (verify/captcha/a_bogus) — có thể thuật toán lệch bản. Trích 400 ký tự:")
-            else:
-                print("  → chưa rõ / rate-limit. Trích 400 ký tự:")
-            print("  " + text[:400].replace("\n", "\n  "))
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+    print(f"POST {WEB_URL} · a_bogus cục bộ (…{url.split('a_bogus=')[1][:24]}…) · impersonate=chrome · proxy={'có' if proxy else 'không (đi thẳng)'}")
+    r = creq.post(url, data=body_json.encode(), headers=headers, proxies=proxies, impersonate="chrome", timeout=60)
+    text = r.text
+    low = text.lower()
+    print(f"  HTTP {r.status_code}")
+    if r.status_code == 200 and ("conversation_id" in text or "sse_ack" in low):
+        print("  → a_bogus CỤC BỘ ĐƯỢC CHẤP NHẬN. Trích 400 ký tự:")
+    elif "verify" in low or "slide" in low or "captcha" in low or "a_bogus" in low:
+        print("  → BỊ CHẶN/nghi (verify/captcha/a_bogus) — có thể thuật toán lệch bản. Trích 400 ký tự:")
+    else:
+        print("  → chưa rõ / rate-limit. Trích 400 ký tự:")
+    print("  " + text[:400].replace("\n", "\n  "))
 
 
 def dry_run() -> None:
@@ -161,7 +160,7 @@ def main() -> None:
         sys.exit("--send cần --nick hoặc --cookie-file")
     req = body(a.prompt, a.ratio, 10, a.video, ck.get("s_v_web_id", ""))
     print(f"Gửi {'VIDEO 10s' if a.video else 'chat chữ (miễn phí)'} qua {label} lên CỔNG WEB (a_bogus cục bộ)…")
-    asyncio.run(send(ck, req, proxy))
+    send(ck, req, proxy)
 
 
 if __name__ == "__main__":
