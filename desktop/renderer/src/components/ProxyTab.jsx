@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Network, RefreshCw, Activity, Users, Unlink, ChevronDown, ChevronUp, Plus } from "lucide-react";
+import { Network, RefreshCw, Activity, Users, Unlink, ChevronDown, ChevronUp, Plus, AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api, cfg, adminAccounts, adminConfig, accState, accChip, maskProxy, proxyHost } from "@/lib/api";
@@ -86,6 +86,16 @@ export default function ProxyTab({ active = true }) {
         <Button variant="outline" size="sm" onClick={load}><RefreshCw className="h-3.5 w-3.5" />Làm mới</Button>
       </div>
 
+      {onGlobal > PER_IP && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-error/30 bg-error-container/20 px-4 py-3">
+          <AlertTriangle className="h-5 w-5 flex-none text-error" />
+          <div className="min-w-0 flex-1">
+            <div className="text-[13.5px] font-semibold text-error">Proxy chung đang gánh {onGlobal} nick (tối đa {PER_IP})</div>
+            <div className="text-xs text-error-on-container/90">Mọi lệnh đi ra từ một IP — đây là lý do Dola báo "gửi quá dày" (710022002). Chia nick sang proxy riêng trước khi chạy đợt tiếp.</div>
+          </div>
+          <Button size="sm" onClick={() => setDlg(true)} disabled={!list}><Plus className="h-4 w-4" />Chia proxy tự động</Button>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {[["Proxy riêng đang dùng", priv.length, "text-foreground", "IP có nick gán"],
           ["Nick dùng proxy chung", onGlobal, onGlobal > PER_IP ? "text-error" : "text-foreground", onGlobal > PER_IP ? `quá ${PER_IP} nick một IP — nên chia proxy` : "chung IP với gateway"],

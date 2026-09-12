@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RotateCw, Settings, Trash2, FolderOpen, Stethoscope, RefreshCw, Eraser, Search, Cookie, Network, Facebook, Copy, Download, Upload } from "lucide-react";
+import { RotateCw, Settings, Trash2, FolderOpen, Stethoscope, RefreshCw, Eraser, Search, Cookie, Network, Facebook, Copy, Download, Upload, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -48,6 +48,8 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
   const [busy, setBusy] = useState(false);
   const [dlg, setDlg] = useState(false);
   const fileRef = useRef(null);
+  const [imp, setImp] = useState(null);   // tiến độ nhập kho: {i,total,name,ok,unverified,bad,done,stopped}
+  const stopImp = useRef(false);
   // Đếm chứ không dùng cờ: one() lồng trong each() từng tắt cờ mà each() đang giữ,
   // mở cửa cho người dùng bấm tiếp giữa chừng một vòng xoá hàng loạt.
   const busyRef = useRef(0);
@@ -159,19 +161,23 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
     } catch (e) { setMsg("Lỗi xuất kho: " + msgOf(e)); }
     finally { mark(-1); }
   };
+  // Bảng tiến độ (imp) hiện ngay trên bảng nick khi nhập file lớn: 100+ nick × 5–30s mỗi nick, người dùng
+  // phải thấy đang ở đâu, dừng được, và cuối cùng biết bao nhiêu vào / chưa rõ / lỗi.
   const importFile = async (file) => {
     if (!file) return;
-    mark(1);
+    mark(1); stopImp.current = false;
     try {
       const b = normalizeBundle(JSON.parse(await file.text()));
       const src = b.source === "seedance"
         ? ` (file của tool khác: tên nick đổi về dạng hợp lệ${b.dupes ? `, bỏ ${b.dupes} bản ghi trùng tài khoản Dola` : ""})` : "";
       if (!window.confirm(`Nhập ${b.accounts.length} nick từ file${src} vào ${cfg.remote ? "server từ xa" : "máy này"}?\nNick trùng tên sẽ được nạp lại cookie mới.`)) return;
-      const r = await importAccounts(b, setMsg);
-      setMsg(`Nhập xong ${r.ok}/${r.total} nick.`
+      setImp({ i: 0, total: b.accounts.length, name: "", ok: 0, unverified: 0, bad: 0, src: b.source });
+      const r = await importAccounts(b, (text, p) => { setMsg(text); if (p) setImp((s) => ({ ...s, ...p })); }, () => stopImp.current);
+      setImp((s) => ({ ...s, i: r.done, ok: r.ok, unverified: r.unverified, bad: r.bad.length, badList: r.bad, why: r.why, done: true, stopped: r.stopped }));
+      setMsg(`${r.stopped ? "Đã dừng" : "Nhập xong"} ${r.ok}/${r.total} nick.`
         + (r.unverified ? ` ${r.unverified} nick chưa kiểm tra được phiên: ${r.why}` : "")
         + (r.bad.length ? ` Lỗi — ${r.bad.slice(0, 3).join(" · ")}${r.bad.length > 3 ? ` (+${r.bad.length - 3} nick nữa)` : ""}` : ""));
-    } catch (e) { setMsg("Lỗi nhập kho: " + msgOf(e)); }
+    } catch (e) { setMsg("Lỗi nhập kho: " + msgOf(e)); setImp(null); }
     finally { mark(-1); await done(); }
   };
   const del = (n) => { if (window.confirm(`XOÁ HẲN nick ${n}?\nToàn bộ profile và phiên đăng nhập sẽ mất (không hoàn tác).`)) one(n, deleteAccount, "xoá"); };
@@ -219,6 +225,29 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
           <SelectNative className="h-8 w-auto text-xs" value={sort} onChange={(e) => setSort(e.target.value)}>{SORTS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</SelectNative>
         </div>
       </div>
+
+      {imp && (
+        <div className="space-y-2 rounded-lg border border-primary/30 bg-surface px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Upload className="h-4 w-4 text-primary" />
+            <span className="text-[13.5px] font-semibold">{imp.done ? (imp.stopped ? "Đã dừng nhập kho" : "Nhập kho xong") : "Đang nhập kho"} — <span className="font-mono">{imp.i} / {imp.total}</span> nick</span>
+            {imp.src === "seedance" && <span className="font-mono text-[11px] text-muted-foreground">file của tool khác</span>}
+            <span className="ml-auto" />
+            {!imp.done && <Button variant="outline" size="sm" className="h-7 border-error/40 text-error hover:text-error" onClick={() => { stopImp.current = true; setMsg("Sẽ dừng sau nick đang nhập…"); }}><Square className="h-3.5 w-3.5" />Dừng</Button>}
+            {imp.done && <Button variant="ghost" size="sm" className="h-7" onClick={() => setImp(null)}>Đóng</Button>}
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-surface-high"><div className="h-full rounded-full bg-primary transition-all" style={{ width: (imp.total ? (imp.i / imp.total) * 100 : 0) + "%" }} /></div>
+          <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-muted-foreground">
+            {!imp.done && imp.name && <span>Đang: <span className="text-foreground">{imp.name}</span> — nạp cookie, kiểm tra phiên…</span>}
+            <span className="ml-auto" />
+            <Badge variant="success">{imp.ok} đã vào</Badge>
+            {imp.unverified > 0 && <Badge variant="info" title={imp.why}>{imp.unverified} chưa kiểm tra được phiên</Badge>}
+            {imp.bad > 0 && <Badge variant="danger" title={(imp.badList || []).join("\n")}>{imp.bad} lỗi</Badge>}
+            {imp.done && imp.unverified > 0 && <Button variant="outline" size="sm" className="h-7" disabled={busy}
+              onClick={() => each(all.filter((a) => a.login_ok == null).map((a) => a.name), verifyAccount, "Kiểm tra phiên")}>Kiểm tra phiên nick chưa rõ</Button>}
+          </div>
+        </div>
+      )}
 
       {selNames.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-high/95 px-3 py-2 shadow-xl">

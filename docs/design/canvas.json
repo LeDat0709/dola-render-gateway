@@ -1,0 +1,13 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "title": "Studio — thẻ theo nick + timeline", "x": 0, "y": 0, "w": 1280, "h": 1180 },
+    { "file": "CaiDat.dc.html", "title": "Cài đặt — 4 khối", "x": 1400, "y": 0, "w": 1280, "h": 900 },
+    { "file": "TongQuan.dc.html", "title": "Tổng quan — hàng chờ + lọc theo lỗi", "x": 0, "y": 1320, "w": 1280, "h": 1180 },
+    { "file": "KhoTaiKhoan.dc.html", "title": "Kho tài khoản — tiến độ nhập kho", "x": 1400, "y": 1320, "w": 1280, "h": 960 },
+    { "file": "Proxy.dc.html", "title": "Proxy — cảnh báo quá tải", "x": 0, "y": 2640, "w": 1280, "h": 760 }
+  ],
+  "annotations": [
+    { "id": "brief", "x": 0, "y": -150, "w": 560, "text": "Bản vẽ cải tiến Dola Studio (theo docs/UI_SYSTEM_PROMPT.md, mục Việc cần cải tiến).\nStudio: thẻ theo nick với timeline 5 bước, thanh công cụ gom 3 nhóm, ước tính credit và giờ xong.\nCài đặt: 4 khối Máy chủ / Mạng / Vận hành / Thư mục.\nTổng quan: bỏ khối máy chủ, thêm hàng chờ + ETA, bấm nguyên nhân lỗi để lọc bảng.\nKho tài khoản: bảng tiến độ khi nhập kho file lớn, thanh chọn hàng loạt.\nProxy: cảnh báo đỏ khi proxy chung quá tải." }
+  ],
+  "launch": { "view": "canvas" }
+}

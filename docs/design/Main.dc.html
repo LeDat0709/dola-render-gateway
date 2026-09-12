@@ -1,0 +1,211 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+  <style>
+    body{margin:0;background:#0b0e15;color:#e0e2ec;font-family:Geist,Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+    a{color:#d0bcff}a:hover{color:#a078ff}
+    svg{width:16px;height:16px;flex:none}
+    .mono{font-family:"JetBrains Mono","SF Mono",Menlo,Consolas,monospace}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:32px;padding:0 12px;border-radius:6px;border:1px solid #323641;background:transparent;color:#e0e2ec;font-size:12px;font-weight:500;white-space:nowrap;box-sizing:border-box}
+    .btn svg{width:14px;height:14px}
+    .btn.primary{background:#d0bcff;color:#3c0091;border-color:transparent;height:36px;padding:0 16px;font-size:14px}
+    .btn.danger{border-color:rgba(255,180,171,.35);color:#ffb4ab}
+    .btn.icon{width:28px;height:28px;padding:0;border-color:transparent;color:#aaa2b9}
+    .chip{display:inline-flex;align-items:center;gap:4px;border-radius:6px;border:1px solid transparent;padding:2px 8px;font-size:11.5px;font-weight:600;line-height:1.4;white-space:nowrap}
+    .chip.success{border-color:rgba(78,222,163,.25);background:rgba(78,222,163,.15);color:#4edea3}
+    .chip.run{background:rgba(208,188,255,.15);color:#d0bcff}
+    .chip.warn{border-color:rgba(245,158,11,.3);background:rgba(245,158,11,.15);color:#f59e0b}
+    .chip.danger{border-color:rgba(255,180,171,.25);background:rgba(147,0,10,.3);color:#ffb4ab}
+    .chip.info{border-color:rgba(173,198,255,.25);background:rgba(173,198,255,.15);color:#adc6ff}
+    .chip.muted{background:#32353c;color:#aaa2b9}
+    .h2{font-family:"JetBrains Mono","SF Mono",Menlo,monospace;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#aaa2b9}
+    .lbl{font-family:"JetBrains Mono","SF Mono",Menlo,monospace;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#aaa2b9}
+    .sel{display:inline-flex;align-items:center;justify-content:space-between;gap:8px;height:36px;border-radius:6px;border:1px solid #323641;padding:4px 10px;font-size:14px;color:#e0e2ec;box-sizing:border-box}
+    .sel svg{width:14px;height:14px;color:#aaa2b9}
+    .sel.sm{height:28px;font-size:12px;padding:2px 8px}
+    .tab{display:inline-flex;align-items:center;gap:6px;border-radius:6px;padding:6px 14px;font-size:13px;font-weight:500;color:#aaa2b9;white-space:nowrap}
+    .tab.active{background:#1d2027;color:#d0bcff;box-shadow:0 1px 8px rgba(0,0,0,.3)}
+    .cb{width:14px;height:14px;border-radius:3px;border:1px solid #494454;flex:none;box-sizing:border-box}
+    .cb.on{background:#d0bcff;border-color:#d0bcff}
+    .nick{display:flex;flex-direction:column;gap:10px;border-radius:8px;background:#1d2027;padding:12px}
+    .seg{height:3px;border-radius:2px;background:#32353c}
+    .seg.done{background:#4edea3}.seg.now{background:#d0bcff}.seg.bad{background:#ffb4ab}
+    .step{flex:1;display:flex;flex-direction:column;gap:4px}
+    .step span{font-family:"JetBrains Mono",monospace;font-size:10px;color:#aaa2b9;white-space:nowrap}
+    .prompt{border-radius:6px;border:1px solid #323641;padding:6px 10px;font-size:13px;line-height:1.4;color:#e0e2ec;min-height:36px}
+  </style>
+</helmet>
+<div style="width:1280px;min-height:1180px;background:#0b0e15;box-sizing:border-box">
+  <div style="border-bottom:1px solid #272a31;background:rgba(25,28,35,.95)">
+    <div class="mono" style="display:flex;height:32px;align-items:center;gap:12px;background:#0b0e15;padding:0 20px;font-size:11.5px;color:#aaa2b9">
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:999px;background:#4edea3"></span><span style="color:#4edea3">Gateway online</span></span>
+      <span>http://127.0.0.1:8000</span>
+      <span style="border-radius:4px;background:#272a31;padding:2px 6px;color:#4edea3">13ms</span>
+      <span style="margin-left:auto"></span>
+      <span><b style="color:#e0e2ec">51</b> nick</span><span>•</span><span><b style="color:#e0e2ec">38</b> credit</span><span>•</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:999px;background:#d0bcff"></span><b style="color:#d0bcff">3</b> đang render</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;padding:10px 20px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="display:flex;width:32px;height:32px;align-items:center;justify-content:center;border-radius:12px;background:linear-gradient(135deg,#8B5CF6,#3B82F6);font-size:15px;font-weight:700;color:#ffffff">D</span>
+        <div style="line-height:1.2">
+          <div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:600;letter-spacing:-.01em">Dola Studio <span class="mono" style="border-radius:4px;background:#a078ff;padding:1px 6px;font-size:10px;font-weight:600;text-transform:uppercase;color:#340080">desktop</span></div>
+          <div class="mono" style="font-size:11px;color:#aaa2b9">Tạo video Dola hàng loạt</div>
+        </div>
+      </div>
+      <div style="display:inline-flex;height:40px;align-items:center;gap:4px;border-radius:8px;background:#0b0e15;padding:4px;box-sizing:border-box">
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"></rect><rect width="7" height="5" x="14" y="3" rx="1"></rect><rect width="7" height="9" x="14" y="12" rx="1"></rect><rect width="7" height="5" x="3" y="16" rx="1"></rect></svg>Tổng quan</span>
+        <span class="tab active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z"></path><path d="m6.2 5.3 3.1 3.9"></path><path d="m12.4 3.4 3.1 4"></path><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path></svg>Studio</span>
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>Kho tài khoản</span>
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="16" y="16" width="6" height="6" rx="1"></rect><rect x="2" y="16" width="6" height="6" rx="1"></rect><rect x="9" y="2" width="6" height="6" rx="1"></rect><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"></path><path d="M12 12V8"></path></svg>Proxy</span>
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9"></path><path d="M14 17H5"></path><circle cx="17" cy="17" r="3"></circle><circle cx="7" cy="7" r="3"></circle></svg>Cài đặt</span>
+      </div>
+      <span style="margin-left:auto"></span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"></path><path d="M18.4 6.6a9 9 0 1 1-12.77.04"></path></svg>Bật server</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64A9 9 0 0 1 20.77 15"></path><path d="M6.16 6.16a9 9 0 1 0 12.68 12.68"></path><path d="M12 2v4"></path><path d="m2 2 20 20"></path></svg>Tắt</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"></path></svg>Thư mục video</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></svg>Log</span>
+    </div>
+  </div>
+
+  <div style="max-width:1500px;margin:0 auto;padding:20px 24px;box-sizing:border-box">
+    <div style="display:flex;flex-direction:column;gap:16px;border-radius:12px;background:#191c23;padding:20px">
+      <div class="h2">Studio — mỗi nick một thẻ, prompt riêng</div>
+
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div class="lbl">Prompt</div>
+        <div style="display:flex;flex-direction:column;gap:2px;min-height:84px;border-radius:6px;border:1px solid #323641;padding:8px 12px;font-size:14px;line-height:1.5">
+          <div>con mèo lướt sóng ở biển Nha Trang, nắng vàng, quay chậm</div>
+          <div>con chó chạy trên bãi cát, ống kính rộng, buổi chiều</div>
+          <div style="color:#aaa2b9">Mỗi dòng là một prompt — dán nhiều dòng rồi bấm Điền tất cả</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"></path><path d="m19 12-7 7-7-7"></path></svg>Điền tất cả</span>
+          <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg>Mỗi dòng 1 nick</span>
+          <span class="mono" style="font-size:11px;color:#aaa2b9">2 dòng · 182 ký tự</span>
+          <span class="chip warn">Có từ dễ bị chặn: “súng”</span>
+          <span style="margin-left:auto"></span>
+          <span class="mono" style="font-size:11px;color:#aaa2b9">Prompt dài sẽ tự cắt cho khớp thời lượng</span>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="lbl" style="width:140px">Cấu hình mặc định</span>
+        <span class="sel" style="width:150px">seedance-2.5<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span>
+        <span class="sel" style="width:86px">15s<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span>
+        <span class="sel" style="width:86px">9:16<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span>
+        <span class="btn">Đồng bộ mặc định</span>
+        <span style="margin-left:auto"></span>
+        <div class="mono" style="display:flex;align-items:center;gap:10px;border-radius:8px;background:#1d2027;padding:8px 12px;font-size:12px;color:#aaa2b9">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#d0bcff"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+          <span>Sẽ dùng <b style="color:#e0e2ec">12 nick</b> × 4 credit</span><span>·</span><span>~6 phút / video</span><span>·</span><span>xong lúc <b style="color:#4edea3">~14:05</b></span>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:8px;border-top:1px solid #272a31;padding-top:16px">
+        <span class="lbl">Chọn nhanh</span>
+        <a href="#" style="font-size:12px;font-weight:500;text-decoration:none">Tất cả sẵn sàng</a>
+        <span style="color:#494454">·</span>
+        <a href="#" style="font-size:12px;font-weight:500;text-decoration:none">Nick còn ≥ 4 credit</a>
+        <span style="color:#494454">·</span>
+        <a href="#" style="font-size:12px;font-weight:500;text-decoration:none">Bỏ chọn</a>
+        <span style="margin-left:auto"></span>
+        <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>Chạy sẵn sàng</span>
+        <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>Chạy lại lỗi</span>
+        <span class="btn danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg>Dừng</span>
+        <span class="btn primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>Chạy đã chọn (12)</span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:12px">
+
+        <div class="nick">
+          <div style="display:flex;align-items:center;gap:8px"><span class="cb on"></span><span class="mono" style="font-size:12.5px;font-weight:600">fb61594178164998</span><span class="chip run">Đang chạy</span><span class="mono" style="margin-left:auto;font-size:11px;color:#aaa2b9">1/4 hôm nay · còn 3</span></div>
+          <div class="prompt">con mèo lướt sóng ở biển Nha Trang, nắng vàng, quay chậm</div>
+          <div style="display:flex;gap:6px"><span class="sel sm" style="flex:1">seedance-2.5</span><span class="sel sm" style="width:64px">9:16</span><span class="sel sm" style="width:58px">15s</span></div>
+          <div style="display:flex;gap:4px"><div class="step"><div class="seg done"></div><span>Hàng đợi</span></div><div class="step"><div class="seg done"></div><span>Gửi</span></div><div class="step"><div class="seg now"></div><span style="color:#d0bcff">Dựng · 2p 14s</span></div><div class="step"><div class="seg"></div><span>Tải về</span></div><div class="step"><div class="seg"></div><span>Xong</span></div></div>
+          <div style="display:flex;align-items:center;gap:4px"><span class="mono" style="font-size:11px;color:#aaa2b9">Dola đang dựng · theo dõi bằng HTTP</span><span style="margin-left:auto"></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.9 4.9 1.4 1.4"></path><path d="m17.7 17.7 1.4 1.4"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.3 17.7-1.4 1.4"></path><path d="m19.1 4.9-1.4 1.4"></path></svg></span></div>
+        </div>
+
+        <div class="nick">
+          <div style="display:flex;align-items:center;gap:8px"><span class="cb on"></span><span class="mono" style="font-size:12.5px;font-weight:600">fb61594419503988</span><span class="chip run">Đang chạy</span><span class="mono" style="margin-left:auto;font-size:11px;color:#aaa2b9">0/4 hôm nay · còn 4</span></div>
+          <div class="prompt">con chó chạy trên bãi cát, ống kính rộng, buổi chiều</div>
+          <div style="display:flex;gap:6px"><span class="sel sm" style="flex:1">seedance-2.5</span><span class="sel sm" style="width:64px">9:16</span><span class="sel sm" style="width:58px">15s</span></div>
+          <div style="display:flex;gap:4px"><div class="step"><div class="seg done"></div><span>Hàng đợi</span></div><div class="step"><div class="seg now"></div><span style="color:#d0bcff">Gửi · 8s</span></div><div class="step"><div class="seg"></div><span>Dựng</span></div><div class="step"><div class="seg"></div><span>Tải về</span></div><div class="step"><div class="seg"></div><span>Xong</span></div></div>
+          <div style="display:flex;align-items:center;gap:4px"><span class="mono" style="font-size:11px;color:#aaa2b9">Đang mở Chrome, gửi lệnh</span><span style="margin-left:auto"></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.9 4.9 1.4 1.4"></path><path d="m17.7 17.7 1.4 1.4"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.3 17.7-1.4 1.4"></path><path d="m19.1 4.9-1.4 1.4"></path></svg></span></div>
+        </div>
+
+        <div class="nick">
+          <div style="display:flex;align-items:center;gap:8px"><span class="cb on"></span><span class="mono" style="font-size:12.5px;font-weight:600">fb61594393736395</span><span class="chip run">Đang chạy</span><span class="mono" style="margin-left:auto;font-size:11px;color:#aaa2b9">1/4 hôm nay · còn 3</span></div>
+          <div class="prompt">cảnh chợ nổi Cần Thơ buổi sáng, thuyền chở trái cây, flycam</div>
+          <div style="display:flex;gap:6px"><span class="sel sm" style="flex:1">seedance-2.5</span><span class="sel sm" style="width:64px">9:16</span><span class="sel sm" style="width:58px">10s</span></div>
+          <div style="display:flex;gap:4px"><div class="step"><div class="seg done"></div><span>Hàng đợi</span></div><div class="step"><div class="seg done"></div><span>Gửi</span></div><div class="step"><div class="seg done"></div><span>Dựng · 5p 40s</span></div><div class="step"><div class="seg now"></div><span style="color:#d0bcff">Tải về · 63%</span></div><div class="step"><div class="seg"></div><span>Xong</span></div></div>
+          <div style="display:flex;align-items:center;gap:4px"><span class="mono" style="font-size:11px;color:#aaa2b9">Đang tải 12,4 MB / 19,6 MB</span><span style="margin-left:auto"></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.9 4.9 1.4 1.4"></path><path d="m17.7 17.7 1.4 1.4"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.3 17.7-1.4 1.4"></path><path d="m19.1 4.9-1.4 1.4"></path></svg></span></div>
+        </div>
+
+        <div class="nick" style="border:1px solid rgba(78,222,163,.25)">
+          <div style="display:flex;align-items:center;gap:8px"><span class="cb"></span><span class="mono" style="font-size:12.5px;font-weight:600">fb61594317059642</span><span class="chip success">Xong</span><span class="mono" style="margin-left:auto;font-size:11px;color:#aaa2b9">1/4 hôm nay · còn 3</span></div>
+          <div style="display:flex;align-items:center;gap:10px;border-radius:6px;background:#0b0e15;padding:8px 10px">
+            <div style="display:flex;width:56px;height:72px;align-items:center;justify-content:center;border-radius:4px;background:linear-gradient(160deg,#272a31,#0b0e15);color:#d0bcff"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:20px;height:20px"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg></div>
+            <div style="display:flex;flex-direction:column;gap:2px"><span class="mono" style="font-size:12px;font-weight:600">#0092 · 10s · 9:16</span><span class="mono" style="font-size:11px;color:#aaa2b9">0092_fb61594317059642_20260912_084306.mp4</span><span class="mono" style="font-size:11px;color:#4edea3">Dựng 4p 17s · −4 credit</span></div>
+          </div>
+          <div style="display:flex;gap:4px"><div class="step"><div class="seg done"></div><span>Hàng đợi</span></div><div class="step"><div class="seg done"></div><span>Gửi</span></div><div class="step"><div class="seg done"></div><span>Dựng</span></div><div class="step"><div class="seg done"></div><span>Tải về</span></div><div class="step"><div class="seg done"></div><span style="color:#4edea3">Xong · 08:43</span></div></div>
+          <div style="display:flex;align-items:center;gap:4px"><span class="btn" style="height:28px;font-size:11.5px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>Xem</span><span class="btn" style="height:28px;font-size:11.5px">Mở thư mục</span><span style="margin-left:auto"></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg></span></div>
+        </div>
+
+        <div class="nick" style="border:1px solid rgba(78,222,163,.25)">
+          <div style="display:flex;align-items:center;gap:8px"><span class="cb"></span><span class="mono" style="font-size:12.5px;font-weight:600">fb61594478601811</span><span class="chip success">Xong</span><span class="mono" style="margin-left:auto;font-size:11px;color:#aaa2b9">2/4 hôm nay · còn 0</span></div>
+          <div style="display:flex;align-items:center;gap:10px;border-radius:6px;background:#0b0e15;padding:8px 10px">
+            <div style="display:flex;width:56px;height:72px;align-items:center;justify-content:center;border-radius:4px;background:linear-gradient(160deg,#272a31,#0b0e15);color:#d0bcff"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:20px;height:20px"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg></div>
+            <div style="display:flex;flex-direction:column;gap:2px"><span class="mono" style="font-size:12px;font-weight:600">#0090 · 15s · 9:16</span><span class="mono" style="font-size:11px;color:#aaa2b9">0090_fb61594478601811_20260912_084249.mp4</span><span class="mono" style="font-size:11px;color:#4edea3">Dựng 6p 02s · −4 credit</span></div>
+          </div>
+          <div style="display:flex;gap:4px"><div class="step"><div class="seg done"></div><span>Hàng đợi</span></div><div class="step"><div class="seg done"></div><span>Gửi</span></div><div class="step"><div class="seg done"></div><span>Dựng</span></div><div class="step"><div class="seg done"></div><span>Tải về</span></div><div class="step"><div class="seg done"></div><span style="color:#4edea3">Xong · 08:42</span></div></div>
+          <div style="display:flex;align-items:center;gap:4px"><span class="btn" style="height:28px;font-size:11.5px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>Xem</span><span class="btn" style="height:28px;font-size:11.5px">Mở thư mục</span><span style="margin-left:auto"></span><span class="chip danger">Hết credit</span></div>
+        </div>
+
+        <div class="nick" style="border:1px solid rgba(255,180,171,.3)">
+          <div style="display:flex;align-items:center;gap:8px"><span class="cb on"></span><span class="mono" style="font-size:12.5px;font-weight:600">fb61594219802299</span><span class="chip danger">Lỗi</span><span class="mono" style="margin-left:auto;font-size:11px;color:#aaa2b9">1/4 hôm nay · còn 3</span></div>
+          <div class="prompt">phố cổ Hội An đêm rằm, đèn lồng, thuyền hoa đăng</div>
+          <div style="display:flex;gap:6px"><span class="sel sm" style="flex:1">seedance-2.5</span><span class="sel sm" style="width:64px">9:16</span><span class="sel sm" style="width:58px">15s</span></div>
+          <div style="display:flex;gap:4px"><div class="step"><div class="seg done"></div><span>Hàng đợi</span></div><div class="step"><div class="seg bad"></div><span style="color:#ffb4ab">Gửi · lỗi</span></div><div class="step"><div class="seg"></div><span>Dựng</span></div><div class="step"><div class="seg"></div><span>Tải về</span></div><div class="step"><div class="seg"></div><span>Xong</span></div></div>
+          <div style="display:flex;align-items:center;gap:8px"><span style="font-size:12px;line-height:1.35;color:#ffb4ab">Dola tạm chặn vì gửi quá dày (710022002) — app tự nghỉ 90 giây rồi gửi tiếp</span><span class="btn" style="height:28px;font-size:11.5px;flex:none;border-color:rgba(255,180,171,.35);color:#ffb4ab">Chạy lại</span></div>
+        </div>
+
+        <div class="nick" style="opacity:.55">
+          <div style="display:flex;align-items:center;gap:8px"><span class="cb"></span><span class="mono" style="font-size:12.5px;font-weight:600">fb61593882435506</span><span class="chip warn">Hết lượt hôm nay</span><span class="mono" style="margin-left:auto;font-size:11px;color:#aaa2b9">4/4 · reset 22:00</span></div>
+          <div class="prompt" style="color:#aaa2b9">Chưa có prompt</div>
+          <div style="display:flex;gap:6px"><span class="sel sm" style="flex:1">seedance-2.5</span><span class="sel sm" style="width:64px">9:16</span><span class="sel sm" style="width:58px">15s</span></div>
+          <div style="display:flex;gap:4px"><div class="step"><div class="seg"></div><span>Hàng đợi</span></div><div class="step"><div class="seg"></div><span>Gửi</span></div><div class="step"><div class="seg"></div><span>Dựng</span></div><div class="step"><div class="seg"></div><span>Tải về</span></div><div class="step"><div class="seg"></div><span>Xong</span></div></div>
+          <div style="display:flex;align-items:center;gap:4px"><span class="mono" style="font-size:11px;color:#aaa2b9">Hôm nay đã đủ 4 video · chạy lại sau 22:00</span></div>
+        </div>
+
+        <div class="nick">
+          <div style="display:flex;align-items:center;gap:8px"><span class="cb on"></span><span class="mono" style="font-size:12.5px;font-weight:600">fb61594089714304</span><span class="chip success">Sẵn sàng</span><span class="mono" style="margin-left:auto;font-size:11px;color:#aaa2b9">0/4 hôm nay · còn 4</span></div>
+          <div class="prompt">ruộng bậc thang Mù Cang Chải mùa lúa chín, sương sớm</div>
+          <div style="display:flex;gap:6px"><span class="sel sm" style="flex:1">seedance-2.5</span><span class="sel sm" style="width:64px">9:16</span><span class="sel sm" style="width:58px">15s</span></div>
+          <div style="display:flex;gap:4px"><div class="step"><div class="seg"></div><span>Hàng đợi</span></div><div class="step"><div class="seg"></div><span>Gửi</span></div><div class="step"><div class="seg"></div><span>Dựng</span></div><div class="step"><div class="seg"></div><span>Tải về</span></div><div class="step"><div class="seg"></div><span>Xong</span></div></div>
+          <div style="display:flex;align-items:center;gap:4px"><span class="mono" style="font-size:11px;color:#aaa2b9">Chưa chạy</span><span style="margin-left:auto"></span><span class="btn icon" style="color:#d0bcff"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.9 4.9 1.4 1.4"></path><path d="m17.7 17.7 1.4 1.4"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.3 17.7-1.4 1.4"></path><path d="m19.1 4.9-1.4 1.4"></path></svg></span></div>
+        </div>
+
+        <div class="nick">
+          <div style="display:flex;align-items:center;gap:8px"><span class="cb on"></span><span class="mono" style="font-size:12.5px;font-weight:600">fb61593847097985</span><span class="chip success">Sẵn sàng</span><span class="mono" style="margin-left:auto;font-size:11px;color:#aaa2b9">0/4 hôm nay · còn 4</span></div>
+          <div class="prompt" style="color:#aaa2b9">Chưa có prompt — bấm Điền tất cả</div>
+          <div style="display:flex;gap:6px"><span class="sel sm" style="flex:1">seedance-2.5</span><span class="sel sm" style="width:64px">9:16</span><span class="sel sm" style="width:58px">15s</span></div>
+          <div style="display:flex;gap:4px"><div class="step"><div class="seg"></div><span>Hàng đợi</span></div><div class="step"><div class="seg"></div><span>Gửi</span></div><div class="step"><div class="seg"></div><span>Dựng</span></div><div class="step"><div class="seg"></div><span>Tải về</span></div><div class="step"><div class="seg"></div><span>Xong</span></div></div>
+          <div style="display:flex;align-items:center;gap:4px"><span class="mono" style="font-size:11px;color:#aaa2b9">Chưa chạy</span><span style="margin-left:auto"></span><span class="btn icon" style="color:#d0bcff"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.9 4.9 1.4 1.4"></path><path d="m17.7 17.7 1.4 1.4"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.3 17.7-1.4 1.4"></path><path d="m19.1 4.9-1.4 1.4"></path></svg></span></div>
+        </div>
+
+      </div>
+      <div class="mono" style="display:flex;align-items:center;gap:12px;font-size:11px;color:#aaa2b9"><span>Hiện 9 / 51 nick</span><span>·</span><a href="#" style="text-decoration:none">Xem tất cả</a><span style="margin-left:auto"></span><span>Luồng: tối đa 10 video song song · 3 job đang chạy</span></div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

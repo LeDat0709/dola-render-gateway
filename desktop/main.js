@@ -152,6 +152,7 @@ ipcMain.handle("video:fetchGenerate", async (_e, { name, prompt, model, duration
 });
 
 ipcMain.handle("gateway:start", () => gateway.start());
+ipcMain.handle("app:version", () => ({ version: app.getVersion(), platform: process.platform, arch: process.arch, packaged: PACKAGED }));
 ipcMain.handle("gateway:stop", async () => { await gateway.stop(); return { ok: true, remote: isRemote() }; });
 // Khởi động lại: chờ tiến trình cũ nhả cổng rồi mới spawn (bật ngay là "address already in use").
 ipcMain.handle("gateway:restart", async () => { await gateway.stop(); return gateway.start(); });

@@ -1,0 +1,146 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+  <style>
+    body{margin:0;background:#0b0e15;color:#e0e2ec;font-family:Geist,Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+    a{color:#d0bcff}a:hover{color:#a078ff}
+    svg{width:16px;height:16px;flex:none}
+    .mono{font-family:"JetBrains Mono","SF Mono",Menlo,Consolas,monospace}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:32px;padding:0 12px;border-radius:6px;border:1px solid #323641;background:transparent;color:#e0e2ec;font-size:12px;font-weight:500;white-space:nowrap;box-sizing:border-box}
+    .btn svg{width:14px;height:14px}
+    .btn.primary{background:#d0bcff;color:#3c0091;border-color:transparent}
+    .chip{display:inline-flex;align-items:center;gap:4px;border-radius:6px;border:1px solid transparent;padding:2px 8px;font-size:11.5px;font-weight:600;line-height:1.4;white-space:nowrap}
+    .chip.success{border-color:rgba(78,222,163,.25);background:rgba(78,222,163,.15);color:#4edea3}
+    .chip.info{border-color:rgba(173,198,255,.25);background:rgba(173,198,255,.15);color:#adc6ff}
+    .h2{font-family:"JetBrains Mono","SF Mono",Menlo,monospace;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#aaa2b9}
+    .tab{display:inline-flex;align-items:center;gap:6px;border-radius:6px;padding:6px 14px;font-size:13px;font-weight:500;color:#aaa2b9;white-space:nowrap}
+    .tab.active{background:#1d2027;color:#d0bcff;box-shadow:0 1px 8px rgba(0,0,0,.3)}
+    .card{display:flex;flex-direction:column;gap:14px;border-radius:12px;background:#191c23;padding:20px}
+    .input{display:flex;align-items:center;height:36px;width:100%;box-sizing:border-box;border-radius:6px;border:1px solid #323641;background:transparent;padding:4px 12px;font-size:14px;color:#e0e2ec}
+    .input.ph{color:#aaa2b9}
+    .help{font-size:11px;line-height:1.45;color:#aaa2b9}
+    .ok{font-size:12px;color:#4edea3}
+    .row{display:flex;align-items:center;gap:12px}
+    .radio{width:14px;height:14px;border-radius:999px;border:1px solid #494454;box-sizing:border-box;flex:none}
+    .radio.on{border:4px solid #d0bcff;background:#0b0e15}
+    .sw{position:relative;width:36px;height:20px;border-radius:999px;background:#4edea3;flex:none}
+    .sw::after{content:"";position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:999px;background:#0b0e15}
+    .sw.off{background:#32353c}.sw.off::after{right:auto;left:2px;background:#aaa2b9}
+    .num{display:inline-flex;align-items:center;justify-content:flex-end;height:32px;width:96px;border-radius:6px;border:1px solid #323641;padding:0 10px;font-family:"JetBrains Mono",monospace;font-size:13px;box-sizing:border-box}
+    .path{font-family:"JetBrains Mono",monospace;font-size:12px;color:#aaa2b9;word-break:break-all}
+  </style>
+</helmet>
+<div style="width:1280px;min-height:900px;background:#0b0e15;box-sizing:border-box">
+  <div style="border-bottom:1px solid #272a31;background:rgba(25,28,35,.95)">
+    <div class="mono" style="display:flex;height:32px;align-items:center;gap:12px;background:#0b0e15;padding:0 20px;font-size:11.5px;color:#aaa2b9">
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:999px;background:#4edea3"></span><span style="color:#4edea3">Gateway online</span></span>
+      <span>http://127.0.0.1:8000</span>
+      <span style="border-radius:4px;background:#272a31;padding:2px 6px;color:#4edea3">13ms</span>
+      <span style="margin-left:auto"></span>
+      <span><b style="color:#e0e2ec">51</b> nick</span><span>•</span><span><b style="color:#e0e2ec">38</b> credit</span><span>•</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:999px;background:#d0bcff"></span><b style="color:#d0bcff">3</b> đang render</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;padding:10px 20px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="display:flex;width:32px;height:32px;align-items:center;justify-content:center;border-radius:12px;background:linear-gradient(135deg,#8B5CF6,#3B82F6);font-size:15px;font-weight:700;color:#ffffff">D</span>
+        <div style="line-height:1.2">
+          <div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:600;letter-spacing:-.01em">Dola Studio <span class="mono" style="border-radius:4px;background:#a078ff;padding:1px 6px;font-size:10px;font-weight:600;text-transform:uppercase;color:#340080">desktop</span></div>
+          <div class="mono" style="font-size:11px;color:#aaa2b9">Tạo video Dola hàng loạt</div>
+        </div>
+      </div>
+      <div style="display:inline-flex;height:40px;align-items:center;gap:4px;border-radius:8px;background:#0b0e15;padding:4px;box-sizing:border-box">
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"></rect><rect width="7" height="5" x="14" y="3" rx="1"></rect><rect width="7" height="9" x="14" y="12" rx="1"></rect><rect width="7" height="5" x="3" y="16" rx="1"></rect></svg>Tổng quan</span>
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z"></path><path d="m6.2 5.3 3.1 3.9"></path><path d="m12.4 3.4 3.1 4"></path><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path></svg>Studio</span>
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>Kho tài khoản</span>
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="16" y="16" width="6" height="6" rx="1"></rect><rect x="2" y="16" width="6" height="6" rx="1"></rect><rect x="9" y="2" width="6" height="6" rx="1"></rect><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"></path><path d="M12 12V8"></path></svg>Proxy</span>
+        <span class="tab active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9"></path><path d="M14 17H5"></path><circle cx="17" cy="17" r="3"></circle><circle cx="7" cy="7" r="3"></circle></svg>Cài đặt</span>
+      </div>
+      <span style="margin-left:auto"></span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"></path><path d="M18.4 6.6a9 9 0 1 1-12.77.04"></path></svg>Bật server</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64A9 9 0 0 1 20.77 15"></path><path d="M6.16 6.16a9 9 0 1 0 12.68 12.68"></path><path d="M12 2v4"></path><path d="m2 2 20 20"></path></svg>Tắt</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"></path></svg>Thư mục video</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></svg>Log</span>
+    </div>
+  </div>
+
+  <div style="max-width:1500px;margin:0 auto;padding:20px 24px;box-sizing:border-box;display:flex;flex-direction:column;gap:16px">
+    <div class="row">
+      <h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Cài đặt</h1>
+      <span class="mono" style="font-size:11px;color:#aaa2b9">Mỗi khối lưu riêng · khối nào cần khởi động lại server có ghi chú ngay dưới nút Lưu</span>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:16px">
+
+      <div class="card">
+        <div class="row"><span class="h2">Máy chủ</span><span style="margin-left:auto"></span><span class="chip success">Đang chạy trên máy này</span></div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <label class="row" style="gap:10px"><span class="radio on"></span><span style="font-size:13px;font-weight:500">Chạy server trên máy này</span><span class="help">— cần proxy Nhật/Hàn ở khối Mạng</span></label>
+          <label class="row" style="gap:10px"><span class="radio"></span><span style="font-size:13px;font-weight:500">Máy chủ từ xa (VPS Nhật/Hàn chạy server.py)</span><span class="help">— nhiều máy ở VN dùng chung, render không cần proxy</span></label>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;opacity:.6">
+          <div class="input ph">http://45.77.1.2:8000</div>
+          <div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:8px"><div class="input ph">API key (DOLA_API_KEYS)</div><div class="input ph">Admin key (DOLA_ADMIN_KEY)</div></div>
+        </div>
+        <div class="row" style="gap:8px"><span class="btn" style="flex:1">Kiểm tra</span><span class="btn">Lưu</span></div>
+        <div class="help">Cài máy chủ: chạy <span class="mono">deploy/vps-setup.sh</span> trên VPS, nó in ra 3 dòng để dán vào đây. Đăng nhập nick vẫn làm trên máy này, cookie tự đẩy lên máy chủ; video xong tự tải về.</div>
+      </div>
+
+      <div class="card">
+        <div class="row"><span class="h2">Mạng</span><span style="margin-left:auto"></span><span class="chip info">nối thẳng</span></div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <span style="font-size:13px;font-weight:500">Proxy chung</span>
+          <div class="input ph">user:pass@host:port · socks5://host:port · host:port:user:pass</div>
+          <div class="help">Ở Việt Nam bắt buộc có exit node Nhật hoặc Hàn khi server chạy trên máy này. Để trống = nối thẳng. Nick có proxy riêng (tab Proxy) dùng proxy riêng.</div>
+        </div>
+        <div class="row" style="gap:8px"><span class="btn" style="flex:1">Kiểm tra vào dola.com</span><span class="btn">Lưu</span></div>
+        <div class="ok">✓ Vào được dola.com (HTTP 200) — nối thẳng, 180 ms</div>
+        <div class="help">Đổi proxy xong: bấm "Tắt" rồi "Bật server" để áp dụng.</div>
+      </div>
+
+      <div class="card">
+        <div class="row"><span class="h2">Vận hành</span><span style="margin-left:auto"></span><span class="help">đọc từ server đang chạy</span></div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div class="row"><span style="font-size:13px;flex:1">Nick chạy song song</span><span class="num">10</span></div>
+          <div class="row"><span style="font-size:13px;flex:1">Giãn nhịp gửi lệnh (giây) <span class="help">+ ngẫu nhiên 0–3s</span></span><span class="num">3</span></div>
+          <div class="row"><span style="font-size:13px;flex:1">Giới hạn video mỗi nick mỗi ngày</span><span class="num">4</span></div>
+          <div class="row"><span style="font-size:13px;flex:1">Chờ video tối đa (phút)</span><span class="num">15</span></div>
+          <div class="row" style="gap:10px;padding-top:4px"><span class="sw"></span><span style="font-size:13px;font-weight:500">Tự thử lại / xoay nick khi lỗi</span></div>
+          <div class="help" style="margin-left:46px">Bật: Dola báo lỗi tạm thời thì gửi lại 1 lần trên chính nick đó; job không ghim nick thì thử nick khác. Job trong Studio luôn ghim đúng nick của thẻ.</div>
+          <div class="row" style="gap:10px"><span class="sw"></span><span style="font-size:13px;font-weight:500">Thông báo hệ thống khi xong đợt hoặc hết lượt</span></div>
+        </div>
+        <div class="row" style="gap:8px"><span class="btn" style="flex:1">Lưu</span></div>
+        <div class="help">Nick song song và giãn nhịp áp dụng ngay; giới hạn ngày và thời gian chờ cần Tắt rồi Bật server.</div>
+      </div>
+
+      <div class="card">
+        <div class="row"><span class="h2">Thư mục</span></div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <span style="font-size:13px;font-weight:500">Thư mục lưu video <span class="help">(tên file có số thứ tự)</span></span>
+          <div class="path">/Users/dat/Downloads/dola-render-gateway/downloads</div>
+          <div class="row" style="gap:8px"><span class="btn" style="flex:1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"></path></svg>Chọn thư mục…</span><span class="btn">Mở</span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <span style="font-size:13px;font-weight:500">Thư mục lưu profile nick</span>
+          <div class="path">/Users/dat/Library/Application Support/Dola Studio/accounts</div>
+          <div class="row" style="gap:8px"><span class="btn" style="flex:1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>Chọn thư mục…</span><span class="btn">Mở</span></div>
+        </div>
+        <div class="help">Đổi thư mục xong: bấm "Tắt" rồi "Bật server" để áp dụng.</div>
+      </div>
+
+    </div>
+
+    <div class="row mono" style="font-size:11px;color:#aaa2b9;padding:4px 2px">
+      <span>Dola Studio 1.0.8 · macOS arm64</span><span>·</span><a href="#" style="text-decoration:none">Kiểm tra bản mới</a><span>·</span><a href="#" style="text-decoration:none">Mở file .env.local</a><span style="margin-left:auto"></span><span>Dữ liệu: ~/Library/Application Support/Dola Studio</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

@@ -53,7 +53,7 @@ export default function App() {
         <TabsContent value="overview" forceMount><OverviewTab health={health} onPlay={(u) => setVideo(u)} onGo={setTab} active={tab === "overview"} /></TabsContent>
         <TabsContent value="make" forceMount>
           <div className="rounded-xl bg-surface-low p-5">
-            <h2 className="mb-4 font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Studio — mỗi nick một dòng, prompt riêng</h2>
+            <h2 className="mb-4 font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Studio — mỗi nick một thẻ, prompt riêng</h2>
             <StudioTab health={health} onRefresh={refresh} onPlay={(u) => setVideo(u)} />
           </div>
         </TabsContent>

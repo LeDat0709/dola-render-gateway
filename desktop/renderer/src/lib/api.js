@@ -260,14 +260,18 @@ export async function exportAccounts() {
 }
 // Nhập gói: từng nick đi qua đúng import-cookie (server nạp cookie vào profile Chrome + kiểm tra
 // phiên, ghi proxy riêng trước khi mở Chrome) rồi ghi chú / lịch. Chạy được cả khi nối server từ xa.
-export async function importAccounts(bundle, onStep) {
+// onStep(text, progress) — progress = {i, total, name, ok, unverified, bad} để vẽ thanh tiến độ;
+// isStopped() trả true thì dừng SAU nick đang nhập (không bỏ dở một nick giữa chừng).
+export async function importAccounts(bundle, onStep, isStopped) {
   await ensureConfig();
   const list = normalizeBundle(bundle).accounts;   // nhận cả file seedance-accounts của tool khác
   if (!list.length) throw new Error("file không có nick nào (đúng file xuất từ Kho tài khoản?)");
-  let ok = 0, unverified = 0, why = ""; const bad = [];
-  for (let i = 0; i < list.length; i++) {
+  let ok = 0, unverified = 0, why = "", stopped = false, i = 0; const bad = [];
+  for (; i < list.length; i++) {
+    if (isStopped?.()) { stopped = true; break; }
     const a = list[i];
-    onStep?.(`Nhập ${i + 1}/${list.length}: ${a.name}… (mỗi nick 5–30s, server mở Chrome kiểm tra phiên)`);
+    onStep?.(`Nhập ${i + 1}/${list.length}: ${a.name}… (mỗi nick 5–30s, server mở Chrome kiểm tra phiên)`,
+             { i: i + 1, total: list.length, name: a.name, ok, unverified, bad: bad.length });
     try {
       const r = await fetch(cfg.base + "/api/admin/accounts/import-cookie", {
         method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() },
@@ -281,7 +285,7 @@ export async function importAccounts(bundle, onStep) {
       else if (j.ok == null) { unverified++; why = j.message || why; }   // server không tới được Dola (proxy) — cookie vẫn đã lưu
     } catch (e) { bad.push(`${a.name}: ${String(e.message || e).slice(0, 80)}`); }
   }
-  return { ok, total: list.length, bad, unverified, why };
+  return { ok, total: list.length, done: i, bad, unverified, why, stopped };
 }
 // Chip trạng thái theo bản Stitch: tách "hết credit" với "hết lượt hôm nay", ghi giờ hết nghỉ.
 export function accChip(a) {

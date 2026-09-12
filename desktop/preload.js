@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("api", {
   getConfig: () => ipcRenderer.invoke("config:get"),
   startGateway: () => ipcRenderer.invoke("gateway:start"),
+  getVersion: () => ipcRenderer.invoke("app:version"),
   stopGateway: () => ipcRenderer.invoke("gateway:stop"),
   restartGateway: () => ipcRenderer.invoke("gateway:restart"),
   importAccount: (name, lang) => ipcRenderer.invoke("account:import", { name, lang }),

@@ -1,0 +1,143 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+  <style>
+    body{margin:0;background:#0b0e15;color:#e0e2ec;font-family:Geist,Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+    a{color:#d0bcff}a:hover{color:#a078ff}
+    svg{width:16px;height:16px;flex:none}
+    .mono{font-family:"JetBrains Mono","SF Mono",Menlo,Consolas,monospace}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:32px;padding:0 12px;border-radius:6px;border:1px solid #323641;background:transparent;color:#e0e2ec;font-size:12px;font-weight:500;white-space:nowrap;box-sizing:border-box}
+    .btn svg{width:14px;height:14px}
+    .btn.primary{background:#d0bcff;color:#3c0091;border-color:transparent}
+    .btn.icon{width:28px;height:28px;padding:0;border-color:transparent;color:#aaa2b9}
+    .chip{display:inline-flex;align-items:center;gap:4px;border-radius:6px;border:1px solid transparent;padding:2px 8px;font-size:11.5px;font-weight:600;line-height:1.4;white-space:nowrap}
+    .chip.success{border-color:rgba(78,222,163,.25);background:rgba(78,222,163,.15);color:#4edea3}
+    .chip.warn{border-color:rgba(245,158,11,.3);background:rgba(245,158,11,.15);color:#f59e0b}
+    .chip.danger{border-color:rgba(255,180,171,.25);background:rgba(147,0,10,.3);color:#ffb4ab}
+    .chip.info{border-color:rgba(173,198,255,.25);background:rgba(173,198,255,.15);color:#adc6ff}
+    .chip.muted{background:#32353c;color:#aaa2b9}
+    .h2{font-family:"JetBrains Mono","SF Mono",Menlo,monospace;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#aaa2b9}
+    .lbl{font-family:"JetBrains Mono","SF Mono",Menlo,monospace;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#aaa2b9}
+    .tab{display:inline-flex;align-items:center;gap:6px;border-radius:6px;padding:6px 14px;font-size:13px;font-weight:500;color:#aaa2b9;white-space:nowrap}
+    .tab.active{background:#1d2027;color:#d0bcff;box-shadow:0 1px 8px rgba(0,0,0,.3)}
+    .tile{border-radius:8px;background:#191c23;padding:12px}
+    .tile .v{margin-top:2px;font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2}
+    .tile .s{font-family:"JetBrains Mono",monospace;font-size:11px;color:#aaa2b9;margin-top:2px}
+    table{width:100%;border-collapse:collapse}
+    th{height:36px;padding:0 12px;text-align:left;font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#aaa2b9;white-space:nowrap}
+    td{padding:10px 12px;vertical-align:middle;border-top:1px solid #272a31;font-size:13px}
+    .row{display:flex;align-items:center;gap:8px}
+  </style>
+</helmet>
+<div style="width:1280px;min-height:760px;background:#0b0e15;box-sizing:border-box">
+  <div style="border-bottom:1px solid #272a31;background:rgba(25,28,35,.95)">
+    <div class="mono" style="display:flex;height:32px;align-items:center;gap:12px;background:#0b0e15;padding:0 20px;font-size:11.5px;color:#aaa2b9">
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:999px;background:#4edea3"></span><span style="color:#4edea3">Gateway online</span></span>
+      <span>http://127.0.0.1:8000</span>
+      <span style="border-radius:4px;background:#272a31;padding:2px 6px;color:#4edea3">20ms</span>
+      <span style="margin-left:auto"></span>
+      <span><b style="color:#e0e2ec">51</b> nick</span><span>•</span><span><b style="color:#e0e2ec">38</b> credit</span><span>•</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:999px;background:#d0bcff"></span><b style="color:#d0bcff">3</b> đang render</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;padding:10px 20px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="display:flex;width:32px;height:32px;align-items:center;justify-content:center;border-radius:12px;background:linear-gradient(135deg,#8B5CF6,#3B82F6);font-size:15px;font-weight:700;color:#ffffff">D</span>
+        <div style="line-height:1.2">
+          <div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:600;letter-spacing:-.01em">Dola Studio <span class="mono" style="border-radius:4px;background:#a078ff;padding:1px 6px;font-size:10px;font-weight:600;text-transform:uppercase;color:#340080">desktop</span></div>
+          <div class="mono" style="font-size:11px;color:#aaa2b9">Tạo video Dola hàng loạt</div>
+        </div>
+      </div>
+      <div style="display:inline-flex;height:40px;align-items:center;gap:4px;border-radius:8px;background:#0b0e15;padding:4px;box-sizing:border-box">
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"></rect><rect width="7" height="5" x="14" y="3" rx="1"></rect><rect width="7" height="9" x="14" y="12" rx="1"></rect><rect width="7" height="5" x="3" y="16" rx="1"></rect></svg>Tổng quan</span>
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z"></path><path d="m6.2 5.3 3.1 3.9"></path><path d="m12.4 3.4 3.1 4"></path><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path></svg>Studio</span>
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>Kho tài khoản</span>
+        <span class="tab active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="16" y="16" width="6" height="6" rx="1"></rect><rect x="2" y="16" width="6" height="6" rx="1"></rect><rect x="9" y="2" width="6" height="6" rx="1"></rect><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"></path><path d="M12 12V8"></path></svg>Proxy</span>
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9"></path><path d="M14 17H5"></path><circle cx="17" cy="17" r="3"></circle><circle cx="7" cy="7" r="3"></circle></svg>Cài đặt</span>
+      </div>
+      <span style="margin-left:auto"></span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"></path><path d="M18.4 6.6a9 9 0 1 1-12.77.04"></path></svg>Bật server</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64A9 9 0 0 1 20.77 15"></path><path d="M6.16 6.16a9 9 0 1 0 12.68 12.68"></path><path d="M12 2v4"></path><path d="m2 2 20 20"></path></svg>Tắt</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"></path></svg>Thư mục video</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></svg>Log</span>
+    </div>
+  </div>
+
+  <div style="max-width:1500px;margin:0 auto;padding:20px 24px;box-sizing:border-box;display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;flex-direction:column;gap:6px;border-radius:12px;background:#191c23;padding:16px 20px">
+      <div class="row" style="gap:12px">
+        <h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Quản lý Proxy</h1>
+        <span class="chip info">tối đa 5 nick / IP</span>
+        <span style="margin-left:auto"></span>
+        <span class="btn primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Thêm proxy &amp; chia nick</span>
+        <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>Kiểm tra toàn bộ</span>
+      </div>
+      <div style="font-size:12px;color:#aaa2b9">Dola đánh giá rủi ro theo cặp IP + nick. Nhiều nick chung một IP là lý do tool đối thủ bị khoá cả loạt. Mỗi nick một proxy cố định, mỗi IP không quá 5 nick.</div>
+    </div>
+
+    <div class="row" style="gap:12px;border-radius:8px;border:1px solid rgba(255,180,171,.3);background:rgba(147,0,10,.22);padding:12px 16px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;color:#ffb4ab"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <span style="font-size:13.5px;font-weight:600;color:#ffb4ab">Proxy chung đang gánh 51 nick (tối đa 5)</span>
+        <span style="font-size:12px;color:#ffdad6">Đây là lý do Dola báo "gửi quá dày" (710022002) hôm nay: mọi lệnh đi ra từ một IP. Chia nick sang proxy riêng trước khi chạy đợt tiếp.</span>
+      </div>
+      <span style="margin-left:auto"></span>
+      <span class="btn" style="border-color:rgba(255,180,171,.35);color:#ffb4ab">Nhập danh sách proxy</span>
+      <span class="btn primary">Chia proxy tự động</span>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:12px">
+      <div class="tile"><div class="lbl">Proxy riêng đang dùng</div><div class="v">2</div><div class="s">8 nick có proxy riêng</div></div>
+      <div class="tile"><div class="lbl">Nick dùng proxy chung</div><div class="v" style="color:#ffb4ab">43</div><div class="s">quá 5 nick một IP → nên chia proxy</div></div>
+      <div class="tile"><div class="lbl">IP đang bị Dola soi</div><div class="v">0</div><div class="s">có nick nghỉ risk-control</div></div>
+      <div class="tile"><div class="lbl">Tổng nick</div><div class="v">51</div><div class="s">3 đang render</div></div>
+    </div>
+
+    <div style="border-radius:12px;background:#191c23;padding:4px 0;overflow:hidden">
+      <table>
+        <thead><tr><th>Proxy</th><th>Giao thức</th><th>Tải nick</th><th>Nick</th><th>Trạng thái Dola</th><th style="text-align:right">Tác vụ</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><div style="font-size:13px;font-weight:500">Proxy chung của gateway</div><div class="mono" style="font-size:11px;color:#aaa2b9">nối thẳng (không proxy) — đặt ở Cài đặt</div></td>
+            <td class="mono" style="color:#aaa2b9">—</td>
+            <td><span class="row"><span class="mono" style="font-size:13px">43 / 5</span><span class="chip danger">Quá tải</span></span></td>
+            <td class="mono" style="font-size:11.5px;color:#aaa2b9"><span style="color:#4edea3">4 sẵn sàng</span> · <span style="color:#d0bcff">3 chạy</span> · 36 khác</td>
+            <td><span class="chip muted">Chưa kiểm tra</span></td>
+            <td style="text-align:right"><span class="row" style="justify-content:flex-end;gap:4px"><span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>Kiểm tra</span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></span></span></td>
+          </tr>
+          <tr>
+            <td><div class="mono" style="font-size:13px;font-weight:500">45.77.1.2:8080</div><div class="mono" style="font-size:11px;color:#aaa2b9">Tokyo, JP · user ****</div></td>
+            <td class="mono">http</td>
+            <td><span class="row"><span class="mono" style="font-size:13px">5 / 5</span><span class="chip warn">Đầy</span></span></td>
+            <td class="mono" style="font-size:11.5px;color:#aaa2b9"><span style="color:#4edea3">3 sẵn sàng</span> · <span style="color:#d0bcff">2 chạy</span></td>
+            <td><span class="chip success">OK · 180 ms</span></td>
+            <td style="text-align:right"><span class="row" style="justify-content:flex-end;gap:4px"><span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>Kiểm tra</span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></span></span></td>
+          </tr>
+          <tr>
+            <td><div class="mono" style="font-size:13px;font-weight:500">103.1.2.3:1080</div><div class="mono" style="font-size:11px;color:#aaa2b9">Seoul, KR · user ****</div></td>
+            <td class="mono">socks5</td>
+            <td><span class="row"><span class="mono" style="font-size:13px">3 / 5</span><span class="chip success">Còn 2 chỗ</span></span></td>
+            <td class="mono" style="font-size:11.5px;color:#aaa2b9"><span style="color:#4edea3">2 sẵn sàng</span> · 1 hết lượt</td>
+            <td><span class="chip warn">Chậm · 900 ms</span></td>
+            <td style="text-align:right"><span class="row" style="justify-content:flex-end;gap:4px"><span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>Kiểm tra</span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></span></span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px;border-radius:12px;background:#191c23;padding:16px 20px">
+      <div class="row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#aaa2b9"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m17 8-5-5-5 5"></path><path d="M12 3v12"></path></svg><span style="font-size:13px;font-weight:600">Đẩy nick kèm proxy từ máy khác</span></div>
+      <div style="font-size:12px;color:#aaa2b9">Có danh sách proxy trong file <span class="mono">proxies.txt</span> thì chạy trên máy đang giữ nick:</div>
+      <div class="mono" style="border-radius:6px;background:#0b0e15;padding:8px 12px;font-size:12px;color:#d0bcff">.venv/bin/python deploy/push_nicks.py http://127.0.0.1:8000 ADMIN_KEY --proxies proxies.txt --per-ip 5</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

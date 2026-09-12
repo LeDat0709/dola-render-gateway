@@ -48,3 +48,7 @@ build/
 .DS_Store
 *.bak
 DomixHub-Seedance.exe
+
+# Canvas Claude Design đã đóng gói (2MB, sinh lại từ docs/design/*.dc.html)
+docs/design/*.html
+!docs/design/*.dc.html

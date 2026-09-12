@@ -95,6 +95,10 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
   const done = today.filter((t) => t.status === "completed");
   const failed = today.filter((t) => t.status === "failed");
   const running = tasks.filter((t) => t.status === "processing");
+  const queued = tasks.filter((t) => t.status === "queued");
+  const [reasonFilter, setReasonFilter] = useState("");
+  const reasonKey = (t) => { const e = fmtError(t.error); return e.icon + " " + e.short; };
+  const shownTasks = reasonFilter ? failed.filter((t) => reasonKey(t) === reasonFilter) : tasks;
   const renders = done.filter((t) => t.started_at && t.finished_at).map((t) => t.finished_at - t.started_at);
   const median = quantile(renders, 0.5), p90 = quantile(renders, 0.9), fastest = renders.length ? Math.min(...renders) : 0;
   const reasons = useMemo(() => {
@@ -117,37 +121,37 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
         {!cfg.remote && <Button variant="secondary" size="sm" className="text-primary" onClick={() => api.restartGateway?.()}>Khởi động lại Gateway</Button>}
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-12">
-        <div className="flex flex-col gap-3 rounded-xl bg-surface-low p-4 lg:col-span-7">
-          <div className="flex items-center gap-2 text-[15px] font-medium"><Server className="h-4 w-4 text-primary" />Máy chủ Gateway</div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg bg-surface p-3">
-              <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Địa chỉ {cfg.remote ? "server từ xa" : "gateway máy này"}</div>
-              <div className="mt-1 flex items-center justify-between gap-2"><span className="truncate font-mono text-[13px] text-primary">{cfg.base}</span>
-                <button className="rounded p-1 text-muted-foreground hover:bg-surface-high hover:text-foreground" title="Sao chép" onClick={() => navigator.clipboard?.writeText(cfg.base)}><Copy className="h-3.5 w-3.5" /></button></div>
-            </div>
-            <div className="rounded-lg bg-surface p-3">
-              <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Proxy chung</div>
-              <div className="mt-1 truncate font-mono text-[13px]" title={maskProxy(gproxy)}>{gproxy ? maskProxy(gproxy) : <span className="text-muted-foreground">nối thẳng (không proxy)</span>}</div>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-2 font-mono text-[11px] text-muted-foreground">
-            <div>Nick chạy song song<div className="text-base font-semibold text-foreground">{conc}</div></div>
-            <div>Tự thử lại / xoay nick<div className={"text-base font-semibold " + (health?.auto_retry ? "text-tertiary" : "text-warn")}>{health ? (health.auto_retry ? "bật" : "tắt") : "—"}</div></div>
-            <div>Theo dõi qua HTTP<div className="text-base font-semibold text-foreground">{health ? (health.http_poll ? "bật" : "tắt") : "—"}</div></div>
-          </div>
-        </div>
-        <div className="flex flex-col justify-between gap-3 rounded-xl bg-surface-low p-4 lg:col-span-5">
+      {/* Địa chỉ gateway / proxy chung đã có ở dải trạng thái trên cùng và tab Cài đặt — ở đây chỉ còn tải + hàng chờ. */}
+      <div className="grid gap-3 lg:grid-cols-2">
+        <div className="flex flex-col justify-between gap-3 rounded-xl bg-surface-low p-4">
           <div className="flex items-center justify-between"><span className="flex items-center gap-2 text-[15px] font-medium"><Gauge className="h-4 w-4 text-info" />Tải xử lý</span>
             <span className="rounded bg-surface px-1.5 py-0.5 font-mono text-[11px] text-info">{Math.round((running.length / conc) * 100)}% slot</span></div>
           <div>
             <div className="flex justify-between text-xs text-muted-foreground"><span>Đang render</span><span className="font-mono text-foreground">{running.length} <span className="text-muted-foreground">/ {conc} nick</span></span></div>
             <div className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-surface"><div className="h-full rounded-full bg-primary transition-all" style={{ width: Math.min(100, (running.length / conc) * 100) + "%" }} /></div>
           </div>
-          <div className="flex items-center justify-between rounded-lg bg-surface p-3">
-            <div className="flex items-center gap-2"><Timer className="h-5 w-5 text-info" /><div><div className="text-sm font-medium">{pending} tác vụ đang xếp hàng</div>
-              <div className="font-mono text-[11px] text-muted-foreground">{eta ? `dự kiến xong trong ~${fmtSec(eta)}` : "hàng chờ trống"}</div></div></div>
-            {median > 0 && <span className="rounded bg-info/10 px-2 py-1 font-mono text-[11px] text-info">{fmtSec(median)} / video</span>}
+          <div className="flex flex-wrap gap-5 font-mono text-[11px] text-muted-foreground">
+            <div>Dựng trung vị hôm nay<div className="text-lg font-semibold text-foreground">{median ? fmtSec(median) : "—"}</div></div>
+            <div>P90<div className="text-[13px] font-medium text-warn">{p90 ? fmtSec(p90) : "—"}</div></div>
+            <div>Nhanh nhất<div className="text-[13px] font-medium text-tertiary">{fastest ? fmtSec(fastest) : "—"}</div></div>
+            <div>Mẫu<div className="text-[13px] font-medium text-foreground">{renders.length}</div></div>
+            <div>Tự thử lại<div className={"text-[13px] font-medium " + (health?.auto_retry ? "text-tertiary" : "text-warn")}>{health ? (health.auto_retry ? "bật" : "tắt") : "—"}</div></div>
+          </div>
+        </div>
+        <div className="flex flex-col gap-3 rounded-xl bg-surface-low p-4">
+          <div className="flex items-center gap-2"><span className="flex items-center gap-2 text-[15px] font-medium"><Timer className="h-4 w-4 text-info" />Hàng chờ</span>
+            <Badge variant={queued.length ? "default" : "secondary"}>{queued.length} tác vụ</Badge><span className="ml-auto" />
+            <span className="font-mono text-[11px] text-muted-foreground">{eta ? <>cả đợt xong lúc <b className="text-tertiary">~{new Date(Date.now() + eta * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</b></> : "hàng chờ trống"}</span></div>
+          <div className="flex flex-col gap-1.5 font-mono text-[12px]">
+            {queued.slice(0, 4).map((t, i) => (
+              <div key={t.id} className="flex items-center gap-2">
+                <span className="text-muted-foreground">#{String(t.id).slice(0, 8)}</span><span>{t.account || "—"}</span>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground" title={t.prompt}>{t.prompt}</span>
+                <span className="text-muted-foreground">{median ? `~${new Date(Date.now() + Math.ceil((i + 1) / conc) * median * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}` : "chờ slot"}</span>
+              </div>
+            ))}
+            {queued.length > 4 && <div className="text-[11px] text-muted-foreground">+{queued.length - 4} tác vụ nữa</div>}
+            {!queued.length && <div className="text-[11px] text-muted-foreground">Không có tác vụ nào chờ — {median > 0 ? `mỗi video mất ~${fmtSec(median)}` : "gửi prompt ở tab Studio"}.</div>}
           </div>
         </div>
       </div>
@@ -175,27 +179,24 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
             <Stat label="Xong" icon={<CheckCircle2 className="h-4 w-4 text-tertiary" />} value={done.length} tone="text-tertiary" sub={today.length ? `${Math.round((done.length / today.length) * 100)}% thành công` : "chưa có job"} />
             <Stat label="Lỗi" icon={<XCircle className="h-4 w-4 text-error" />} value={failed.length} tone="text-error" sub={today.length ? `${Math.round((failed.length / today.length) * 100)}% thất bại` : "—"} />
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-surface-low p-4">
-            <div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-lg bg-surface text-primary"><Timer className="h-6 w-6" /></span>
-              <div><div className="text-xs text-muted-foreground">Thời gian dựng trung vị hôm nay</div><div className="text-xl font-semibold tracking-tight">{median ? fmtSec(median) : "—"}</div></div></div>
-            <div className="flex gap-5 font-mono text-[11px] text-muted-foreground">
-              <div className="text-right">P90<div className="text-[13px] font-medium text-warn">{p90 ? fmtSec(p90) : "—"}</div></div>
-              <div className="text-right">Nhanh nhất<div className="text-[13px] font-medium text-tertiary">{fastest ? fmtSec(fastest) : "—"}</div></div>
-              <div className="text-right">Mẫu<div className="text-[13px] font-medium text-foreground">{renders.length}</div></div>
-            </div>
+          <div className="flex flex-wrap items-center gap-3 rounded-xl bg-surface-low p-4 text-xs text-muted-foreground">
+            <Timer className="h-4 w-4 text-primary" />
+            {chips.day > 0 ? <span><b className="text-foreground">{chips.day} nick</b> hết lượt hôm nay sẽ mở lại lúc <b className="font-mono text-foreground">{health?.limit_reset_at ? new Date(health.limit_reset_at * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "0h giờ Nhật"}</b>.</span> : <span>Không nick nào hết lượt hôm nay.</span>}
+            {reasons.some(([k]) => /gửi quá dày/i.test(k)) && <button type="button" className="text-primary hover:underline" onClick={() => onGo?.("proxy")}>Lỗi "gửi quá dày" giảm khi chia proxy riêng → mở tab Proxy</button>}
           </div>
         </div>
         <div className="flex flex-col gap-3 rounded-xl bg-surface-low p-4 lg:col-span-5">
-          <div className="flex items-center justify-between"><span className="flex items-center gap-2 text-[15px] font-medium"><PieChart className="h-4 w-4 text-error" />Nguyên nhân lỗi ({failed.length})</span><span className="font-mono text-[11px] text-muted-foreground">hôm nay</span></div>
+          <div className="flex items-center justify-between"><span className="flex items-center gap-2 text-[15px] font-medium"><PieChart className="h-4 w-4 text-error" />Nguyên nhân lỗi ({failed.length})</span><span className="font-mono text-[11px] text-muted-foreground">hôm nay · bấm để lọc bảng</span></div>
           <div className="flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-surface">
             {reasons.map(([k, n], i) => <div key={k} className={"h-full " + colors[i % colors.length]} style={{ width: (n / failed.length) * 100 + "%" }} title={`${k}: ${n}`} />)}
           </div>
           <div className="flex flex-col gap-1">
             {reasons.map(([k, n], i) => (
-              <div key={k} className="flex items-center justify-between rounded px-1 py-1 text-sm hover:bg-surface">
+              <button type="button" key={k} onClick={() => setReasonFilter((f) => (f === k ? "" : k))}
+                className={"flex w-full items-center justify-between rounded px-1.5 py-1 text-left text-sm hover:bg-surface " + (reasonFilter === k ? "bg-surface-high ring-1 ring-primary/35" : "")}>
                 <span className="flex items-center gap-2"><span className={"h-2.5 w-2.5 rounded-sm " + colors[i % colors.length]} />{k}</span>
                 <span className="font-mono text-[11px] text-muted-foreground">{n} lần · {Math.round((n / failed.length) * 100)}%</span>
-              </div>
+              </button>
             ))}
             {!failed.length && <div className="text-xs text-muted-foreground">Chưa có lỗi nào hôm nay.</div>}
           </div>
@@ -203,14 +204,16 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
       </div>
 
       <div>
-        <div className="mb-2 flex items-center gap-2 text-[15px] font-medium"><Zap className="h-4 w-4 text-tertiary" />Tác vụ gần nhất<span className="ml-auto font-mono text-[11px] font-normal text-muted-foreground">tự cập nhật</span></div>
+        <div className="mb-2 flex items-center gap-2 text-[15px] font-medium"><Zap className="h-4 w-4 text-tertiary" />Tác vụ gần nhất
+          {reasonFilter && <button type="button" onClick={() => setReasonFilter("")} title="Bỏ lọc"><Badge variant="warn">Lọc: {reasonFilter} ✕</Badge></button>}
+          <span className="ml-auto font-mono text-[11px] font-normal text-muted-foreground">{reasonFilter ? `${shownTasks.length} tác vụ lỗi này hôm nay` : "tự cập nhật"}</span></div>
         <div className="overflow-x-auto rounded-xl bg-surface-low">
           <table className="w-full text-left text-[13px]">
             <thead><tr className="bg-surface-lowest font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
               <th className="px-3 py-2.5">Mã job</th><th className="px-3 py-2.5">Prompt</th><th className="px-3 py-2.5">Nick</th><th className="px-3 py-2.5 text-right">Thời gian</th><th className="px-3 py-2.5">Trạng thái</th><th className="px-3 py-2.5 text-center">Mở</th>
             </tr></thead>
             <tbody>
-              {tasks.slice(0, 8).map((t) => {
+              {shownTasks.slice(0, 8).map((t) => {
                 const secs = t.status === "processing" ? Date.now() / 1000 - (t.started_at || t.created_at) : (t.finished_at && t.started_at ? t.finished_at - t.started_at : 0);
                 return (
                   <tr key={t.id} className="border-t border-surface hover:bg-surface/60">
@@ -223,7 +226,7 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
                   </tr>
                 );
               })}
-              {!tasks.length && <tr><td colSpan={6} className="px-3 py-6 text-center text-sm text-muted-foreground">Chưa có tác vụ nào — sang tab Studio để gửi prompt.</td></tr>}
+              {!shownTasks.length && <tr><td colSpan={6} className="px-3 py-6 text-center text-sm text-muted-foreground">{reasonFilter ? "Không còn tác vụ nào với lỗi này." : "Chưa có tác vụ nào — sang tab Studio để gửi prompt."}</td></tr>}
             </tbody>
           </table>
         </div>

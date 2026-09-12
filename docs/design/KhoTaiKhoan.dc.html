@@ -1,0 +1,164 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+  <style>
+    body{margin:0;background:#0b0e15;color:#e0e2ec;font-family:Geist,Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+    a{color:#d0bcff}a:hover{color:#a078ff}
+    svg{width:16px;height:16px;flex:none}
+    .mono{font-family:"JetBrains Mono","SF Mono",Menlo,Consolas,monospace}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:32px;padding:0 12px;border-radius:6px;border:1px solid #323641;background:transparent;color:#e0e2ec;font-size:12px;font-weight:500;white-space:nowrap;box-sizing:border-box}
+    .btn svg{width:14px;height:14px}
+    .btn.primary{background:#d0bcff;color:#3c0091;border-color:transparent}
+    .btn.danger{border-color:rgba(255,180,171,.35);color:#ffb4ab}
+    .btn.icon{width:26px;height:26px;padding:0;border-color:transparent;color:#aaa2b9}
+    .chip{display:inline-flex;align-items:center;gap:4px;border-radius:6px;border:1px solid transparent;padding:2px 8px;font-size:11.5px;font-weight:600;line-height:1.4;white-space:nowrap}
+    .chip.success{border-color:rgba(78,222,163,.25);background:rgba(78,222,163,.15);color:#4edea3}
+    .chip.run{background:rgba(208,188,255,.15);color:#d0bcff}
+    .chip.warn{border-color:rgba(245,158,11,.3);background:rgba(245,158,11,.15);color:#f59e0b}
+    .chip.danger{border-color:rgba(255,180,171,.25);background:rgba(147,0,10,.3);color:#ffb4ab}
+    .chip.info{border-color:rgba(173,198,255,.25);background:rgba(173,198,255,.15);color:#adc6ff}
+    .chip.muted{background:#32353c;color:#aaa2b9}
+    .lbl{font-family:"JetBrains Mono","SF Mono",Menlo,monospace;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#aaa2b9}
+    .tab{display:inline-flex;align-items:center;gap:6px;border-radius:6px;padding:6px 14px;font-size:13px;font-weight:500;color:#aaa2b9;white-space:nowrap}
+    .tab.active{background:#1d2027;color:#d0bcff;box-shadow:0 1px 8px rgba(0,0,0,.3)}
+    .tile{border-radius:8px;background:#191c23;padding:12px}
+    .tile .v{margin-top:2px;font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2}
+    .tile .s{font-family:"JetBrains Mono",monospace;font-size:11px;color:#aaa2b9;margin-top:2px}
+    .input{display:flex;align-items:center;gap:8px;height:36px;box-sizing:border-box;border-radius:6px;border:1px solid #323641;background:transparent;padding:4px 12px;font-size:14px;color:#aaa2b9}
+    .sel{display:inline-flex;align-items:center;justify-content:space-between;gap:8px;height:36px;border-radius:6px;border:1px solid #323641;padding:4px 10px;font-size:14px;color:#e0e2ec;box-sizing:border-box}
+    .sel svg{width:14px;height:14px;color:#aaa2b9}
+    table{width:100%;border-collapse:collapse}
+    th{height:36px;padding:0 12px;text-align:left;font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#aaa2b9;white-space:nowrap}
+    td{padding:8px 12px;vertical-align:middle;border-top:1px solid #272a31;font-size:13px}
+    .row{display:flex;align-items:center;gap:8px}
+    .cb{width:14px;height:14px;border-radius:3px;border:1px solid #494454;flex:none;box-sizing:border-box}
+    .cb.on{background:#d0bcff;border-color:#d0bcff}
+    .av{display:inline-flex;width:28px;height:28px;align-items:center;justify-content:center;border-radius:999px;background:#272a31;font-family:"JetBrains Mono",monospace;font-size:10px;color:#aaa2b9;flex:none}
+    .sw{position:relative;width:32px;height:18px;border-radius:999px;background:#4edea3;flex:none}
+    .sw::after{content:"";position:absolute;top:2px;right:2px;width:14px;height:14px;border-radius:999px;background:#0b0e15}
+    .bar{height:6px;border-radius:999px;background:#272a31;overflow:hidden}
+    .bar > div{height:100%;border-radius:999px;background:#d0bcff}
+    .note{display:inline-flex;align-items:center;height:26px;width:88px;border-radius:4px;border:1px solid #323641;padding:0 8px;font-size:12px;color:#aaa2b9;box-sizing:border-box}
+    .acts{display:flex;justify-content:flex-end;gap:2px}
+  </style>
+</helmet>
+<div style="width:1280px;min-height:960px;background:#0b0e15;box-sizing:border-box">
+  <div style="border-bottom:1px solid #272a31;background:rgba(25,28,35,.95)">
+    <div class="mono" style="display:flex;height:32px;align-items:center;gap:12px;background:#0b0e15;padding:0 20px;font-size:11.5px;color:#aaa2b9">
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:999px;background:#4edea3"></span><span style="color:#4edea3">Gateway online</span></span>
+      <span>http://127.0.0.1:8000</span>
+      <span style="border-radius:4px;background:#272a31;padding:2px 6px;color:#4edea3">18ms</span>
+      <span style="margin-left:auto"></span>
+      <span><b style="color:#e0e2ec">51</b> nick</span><span>•</span><span><b style="color:#e0e2ec">38</b> credit</span><span>•</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:999px;background:#d0bcff"></span><b style="color:#d0bcff">3</b> đang render</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;padding:10px 20px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="display:flex;width:32px;height:32px;align-items:center;justify-content:center;border-radius:12px;background:linear-gradient(135deg,#8B5CF6,#3B82F6);font-size:15px;font-weight:700;color:#ffffff">D</span>
+        <div style="line-height:1.2">
+          <div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:600;letter-spacing:-.01em">Dola Studio <span class="mono" style="border-radius:4px;background:#a078ff;padding:1px 6px;font-size:10px;font-weight:600;text-transform:uppercase;color:#340080">desktop</span></div>
+          <div class="mono" style="font-size:11px;color:#aaa2b9">Tạo video Dola hàng loạt</div>
+        </div>
+      </div>
+      <div style="display:inline-flex;height:40px;align-items:center;gap:4px;border-radius:8px;background:#0b0e15;padding:4px;box-sizing:border-box">
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"></rect><rect width="7" height="5" x="14" y="3" rx="1"></rect><rect width="7" height="9" x="14" y="12" rx="1"></rect><rect width="7" height="5" x="3" y="16" rx="1"></rect></svg>Tổng quan</span>
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z"></path><path d="m6.2 5.3 3.1 3.9"></path><path d="m12.4 3.4 3.1 4"></path><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path></svg>Studio</span>
+        <span class="tab active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>Kho tài khoản</span>
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="16" y="16" width="6" height="6" rx="1"></rect><rect x="2" y="16" width="6" height="6" rx="1"></rect><rect x="9" y="2" width="6" height="6" rx="1"></rect><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"></path><path d="M12 12V8"></path></svg>Proxy</span>
+        <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9"></path><path d="M14 17H5"></path><circle cx="17" cy="17" r="3"></circle><circle cx="7" cy="7" r="3"></circle></svg>Cài đặt</span>
+      </div>
+      <span style="margin-left:auto"></span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"></path><path d="M18.4 6.6a9 9 0 1 1-12.77.04"></path></svg>Bật server</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64A9 9 0 0 1 20.77 15"></path><path d="M6.16 6.16a9 9 0 1 0 12.68 12.68"></path><path d="M12 2v4"></path><path d="m2 2 20 20"></path></svg>Tắt</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"></path></svg>Thư mục video</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></svg>Log</span>
+    </div>
+  </div>
+
+  <div style="max-width:1500px;margin:0 auto;padding:20px 24px;box-sizing:border-box;display:flex;flex-direction:column;gap:12px">
+    <div style="display:grid;grid-template-columns:repeat(6, minmax(0, 1fr));gap:8px">
+      <div class="tile"><div class="lbl">Tổng số nick</div><div class="v">51</div><div class="s">43 chưa có proxy riêng</div></div>
+      <div class="tile"><div class="lbl">Sẵn sàng</div><div class="v" style="color:#4edea3">4</div><div class="s">8%</div></div>
+      <div class="tile"><div class="lbl">Đang render</div><div class="v" style="color:#d0bcff">3</div><div class="s">&nbsp;</div></div>
+      <div class="tile"><div class="lbl">Tổng credit còn</div><div class="v">38</div><div class="s">≈ 9 video 10s</div></div>
+      <div class="tile"><div class="lbl">Hết credit / lượt</div><div class="v" style="color:#f59e0b">44</div><div class="s">32 credit · 12 lượt ngày</div></div>
+      <div class="tile"><div class="lbl">Chưa đăng nhập</div><div class="v">0</div><div class="s">cần cookie mới</div></div>
+    </div>
+
+    <div class="row" style="flex-wrap:wrap">
+      <span style="font-size:16px;font-weight:600">Kho tài khoản</span>
+      <span class="chip muted mono">51 nick · 4 sẵn sàng</span>
+      <span style="margin-left:auto"></span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5"></path><path d="M8.5 8.5v.01"></path><path d="M16 15.5v.01"></path><path d="M12 12v.01"></path></svg>Nhập cookie</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="16" y="16" width="6" height="6" rx="1"></rect><rect x="2" y="16" width="6" height="6" rx="1"></rect><rect x="9" y="2" width="6" height="6" rx="1"></rect><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"></path><path d="M12 12V8"></path></svg>Chia proxy tự động</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>Kiểm tra phiên</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M7 10l5 5 5-5"></path><path d="M12 15V3"></path></svg>Xuất kho</span>
+      <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m17 8-5-5-5 5"></path><path d="M12 3v12"></path></svg>Nhập kho</span>
+      <span class="btn primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"></path></svg>Thêm bằng Facebook</span>
+    </div>
+
+    <div class="row">
+      <div class="input" style="flex:1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>Tìm theo tên nick, email, ghi chú, IP proxy…</div>
+      <span class="sel" style="width:170px">Tất cả trạng thái<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span>
+      <span class="sel" style="width:170px">Xếp: Trạng thái<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px;border-radius:8px;border:1px solid rgba(208,188,255,.3);background:#1d2027;padding:12px 16px">
+      <div class="row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#d0bcff"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m17 8-5-5-5 5"></path><path d="M12 3v12"></path></svg>
+        <span style="font-size:13.5px;font-weight:600">Đang nhập kho — <span class="mono">37 / 130</span> nick</span>
+        <span class="mono" style="font-size:11px;color:#aaa2b9">file seedance-accounts · bỏ 2 bản ghi trùng tài khoản Dola</span>
+        <span style="margin-left:auto"></span>
+        <span class="mono" style="font-size:11px;color:#aaa2b9">còn ~12 phút</span>
+        <span class="btn danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg>Dừng</span>
+      </div>
+      <div class="bar"><div style="width:28%"></div></div>
+      <div class="row" style="flex-wrap:wrap">
+        <span class="mono" style="font-size:11.5px;color:#aaa2b9">Đang: <span style="color:#e0e2ec">FB_61594283488769</span> — kiểm tra phiên qua proxy chung…</span>
+        <span style="margin-left:auto"></span>
+        <span class="chip success">31 đã vào</span>
+        <span class="chip info">4 chưa kiểm tra được phiên</span>
+        <span class="chip danger">2 lỗi</span>
+        <span class="btn" style="height:28px;font-size:11.5px">Kiểm tra phiên 4 nick chưa rõ</span>
+      </div>
+    </div>
+
+    <div class="row" style="border-radius:8px;background:#191c23;padding:8px 12px">
+      <span class="cb on"></span>
+      <span style="font-size:12.5px;font-weight:600">Đã chọn 3 nick</span>
+      <span style="color:#494454">·</span>
+      <span class="btn" style="height:28px;font-size:11.5px">Kiểm tra phiên</span>
+      <span class="btn" style="height:28px;font-size:11.5px">Đổi proxy</span>
+      <span class="btn" style="height:28px;font-size:11.5px">Tắt lịch</span>
+      <span class="btn" style="height:28px;font-size:11.5px">Xoá cookie</span>
+      <span class="btn danger" style="height:28px;font-size:11.5px">Xoá nick</span>
+      <span style="margin-left:auto"></span>
+      <a href="#" style="font-size:12px;text-decoration:none">Bỏ chọn</a>
+    </div>
+
+    <div style="border-radius:12px;background:#191c23;padding:4px 0;overflow:hidden">
+      <table>
+        <thead><tr><th style="width:32px"><span class="cb"></span></th><th>Tên nick &amp; email</th><th>Trạng thái</th><th>Credit</th><th>Lượt hôm nay</th><th>Proxy</th><th>Lần cuối</th><th>Ghi chú</th><th>Lịch</th><th style="text-align:right">Hành động</th></tr></thead>
+        <tbody>
+          <tr><td><span class="cb on"></span></td><td><span class="row"><span class="av">98</span><div><div class="mono" style="font-size:12.5px;font-weight:600">fb61594178164998</div><div class="mono" style="font-size:11px;color:#aaa2b9">—</div></div></span></td><td><span class="chip run">Đang chạy</span></td><td class="mono">3</td><td class="mono">1/4</td><td class="mono" style="color:#aaa2b9">proxy chung</td><td class="mono" style="color:#aaa2b9">2g</td><td><span class="note">ghi chú…</span></td><td><span class="sw"></span></td><td><div class="acts"><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg></span></div></td></tr>
+          <tr><td><span class="cb on"></span></td><td><span class="row"><span class="av">09</span><div><div class="mono" style="font-size:12.5px;font-weight:600">fb61594181076309</div><div class="mono" style="font-size:11px;color:#aaa2b9">—</div></div></span></td><td><span class="chip success">Sẵn sàng</span></td><td class="mono">4</td><td class="mono">0/4</td><td class="mono" style="color:#aaa2b9">proxy chung</td><td class="mono" style="color:#aaa2b9">—</td><td><span class="note">ghi chú…</span></td><td><span class="sw"></span></td><td><div class="acts"><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg></span></div></td></tr>
+          <tr><td><span class="cb on"></span></td><td><span class="row"><span class="av">99</span><div><div class="mono" style="font-size:12.5px;font-weight:600">fb61594219802299</div><div class="mono" style="font-size:11px;color:#aaa2b9">—</div></div></span></td><td><span class="chip info">Nghỉ đến 10:41</span></td><td class="mono">3</td><td class="mono">1/4</td><td class="mono" style="color:#aaa2b9">proxy chung</td><td class="mono" style="color:#aaa2b9">10g</td><td><span class="note">ghi chú…</span></td><td><span class="sw"></span></td><td><div class="acts"><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg></span></div></td></tr>
+          <tr><td><span class="cb"></span></td><td><span class="row"><span class="av">17</span><div><div class="mono" style="font-size:12.5px;font-weight:600">FB_61594283488769</div><div class="mono" style="font-size:11px;color:#aaa2b9">FB 61594283488769 · vừa nhập</div></div></span></td><td><span class="chip muted">Chưa kiểm tra</span></td><td class="mono" style="color:#aaa2b9">?</td><td class="mono">0/4</td><td class="mono" style="color:#aaa2b9">proxy chung</td><td class="mono" style="color:#aaa2b9">—</td><td><span class="note">ghi chú…</span></td><td><span class="sw"></span></td><td><div class="acts"><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg></span></div></td></tr>
+          <tr><td><span class="cb"></span></td><td><span class="row"><span class="av">95</span><div><div class="mono" style="font-size:12.5px;font-weight:600">fb61593608135495</div><div class="mono" style="font-size:11px;color:#aaa2b9">—</div></div></span></td><td><span class="chip danger">Hết credit</span></td><td class="mono" style="color:#ffb4ab">0</td><td class="mono">1/4</td><td class="mono" style="color:#aaa2b9">proxy chung</td><td class="mono" style="color:#aaa2b9">2g</td><td><span class="note">ghi chú…</span></td><td><span class="sw"></span></td><td><div class="acts"><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg></span></div></td></tr>
+          <tr><td><span class="cb"></span></td><td><span class="row"><span class="av">06</span><div><div class="mono" style="font-size:12.5px;font-weight:600">fb61593882435506</div><div class="mono" style="font-size:11px;color:#aaa2b9">—</div></div></span></td><td><span class="chip warn">Hết lượt hôm nay</span></td><td class="mono">4</td><td class="mono">4/4</td><td class="mono">45.77.1.2</td><td class="mono" style="color:#aaa2b9">3g</td><td><span class="note">ghi chú…</span></td><td><span class="sw"></span></td><td><div class="acts"><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg></span><span class="btn icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg></span></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="mono" style="font-size:11px;color:#aaa2b9;padding:0 4px">Hiện 6 / 51 nick · cuộn để xem tiếp</div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
