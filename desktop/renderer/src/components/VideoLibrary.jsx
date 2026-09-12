@@ -19,6 +19,8 @@ export default function VideoLibrary({ active = true, onPlay }) {
   const [range, setRange] = useState("7");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState(() => { try { return localStorage.getItem("dolaVideoView") || "grid"; } catch { return "grid"; } });
+  const pickView = (v) => { setView(v); try { localStorage.setItem("dolaVideoView", v); } catch {} };
   const load = useCallback(async () => {
     setBusy(true);
     const all = await recentTasks(2000);   // server cũ cắt còn 200 — vẫn chạy, chỉ thấy ít video hơn
@@ -79,10 +81,45 @@ export default function VideoLibrary({ active = true, onPlay }) {
             {nicks.map((n) => <option key={n} value={n}>{n}</option>)}
           </SelectNative>
           <SelectNative className="h-8 w-auto text-xs" value={range} onChange={(e) => setRange(e.target.value)}>{RANGES.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</SelectNative>
+          <div className="flex rounded-md bg-surface-lowest p-0.5">
+            {[["grid", "Lưới"], ["table", "Bảng"]].map(([v, t]) => (
+              <button key={v} type="button" onClick={() => pickView(v)} className={"rounded px-2.5 py-1 text-xs font-medium " + (view === v ? "bg-surface text-primary" : "text-muted-foreground hover:text-foreground")}>{t}</button>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl bg-surface-low">
+      {view === "grid" && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+          {rows.map((t) => {
+            const stt = sttFromUrl(t.video_url); const f = fnameFromUrl(t.video_url);
+            return (
+              <div key={t.id} className="flex flex-col gap-2 rounded-xl bg-surface-low p-2.5">
+                <div className="group relative aspect-[9/16] max-h-[220px] w-full cursor-pointer overflow-hidden rounded-lg bg-surface-lowest" onClick={() => onPlay?.(t.video_url)} title={f}>
+                  <video className="h-full w-full object-cover" src={t.video_url + "#t=0.6"} muted preload="metadata" />
+                  <span className="absolute left-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[11px] font-bold text-primary">{stt ? `#${stt}` : "—"}</span>
+                  <span className="absolute right-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] text-white">{t.duration ? `${t.duration}s` : ""}</span>
+                  <span className="absolute inset-0 flex items-center justify-center opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100"><span className="rounded-full bg-primary p-2"><Play className="h-4 w-4 fill-primary-foreground text-primary-foreground" /></span></span>
+                </div>
+                <div className="flex items-center gap-1 font-mono text-[11.5px]"><span className="truncate font-semibold" title={t.account}>{t.account || "—"}</span><span className="ml-auto flex-none text-[10.5px] text-muted-foreground">{perNick.get(t.account)} video</span></div>
+                <div className="line-clamp-3 text-[12px] leading-snug text-on-variant" title={t.prompt}>{t.prompt}</div>
+                <div className="flex items-center gap-1 font-mono text-[10.5px] text-muted-foreground"><span className="truncate">{t.model || "—"} · {t.ratio || "—"}</span><span className="ml-auto flex-none">{timeAgo(t.finished_at)}{renderSec(t) ? ` · dựng ${fmtSec(renderSec(t))}` : ""}</span></div>
+                <div className="flex items-center gap-0.5 border-t border-surface pt-1.5">
+                  <button type="button" className="font-mono text-[10.5px] text-muted-foreground hover:text-primary" onClick={() => copy(t.prompt || "", "prompt")}>copy prompt</button>
+                  <span className="ml-auto" />
+                  <Button variant="ghost" size="icon" className="h-7 w-7" title="Xem" onClick={() => onPlay?.(t.video_url)}><Play className="h-3.5 w-3.5" /></Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7" title="Mở thư mục" onClick={() => api.openDownloads?.()}><FolderOpen className="h-3.5 w-3.5" /></Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7" title="Copy tên file" onClick={() => copy(f, "tên file")}><Copy className="h-3.5 w-3.5" /></Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7" title="Xoá logo Dola" onClick={() => removeWm(t.video_url)}><Eraser className="h-3.5 w-3.5" /></Button>
+                </div>
+              </div>
+            );
+          })}
+          {!rows.length && <div className="col-span-full rounded-xl bg-surface-low px-3 py-8 text-center text-sm text-muted-foreground">{tasks.length ? "Không có video nào khớp bộ lọc." : "Chưa có video nào — sang tab Studio để tạo."}</div>}
+        </div>
+      )}
+
+      {view === "table" && <div className="overflow-x-auto rounded-xl bg-surface-low">
         <table className="w-full border-collapse text-[12.5px]">
           <thead><tr className="bg-surface-lowest">
             <th className={th + " w-[72px]"}>Video</th><th className={th + " w-[64px]"}>Số</th><th className={th}>Nick</th><th className={th}>Prompt</th>
@@ -114,7 +151,7 @@ export default function VideoLibrary({ active = true, onPlay }) {
             {!rows.length && <tr><td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">{tasks.length ? "Không có video nào khớp bộ lọc." : "Chưa có video nào — sang tab Studio để tạo."}</td></tr>}
           </tbody>
         </table>
-      </div>
+      </div>}
       {msg && <div className="text-xs text-muted-foreground">{msg}</div>}
       {nick && <Badge variant="info" className="cursor-pointer" onClick={() => setNick("")}>Đang lọc nick {nick} ✕</Badge>}
     </div>
