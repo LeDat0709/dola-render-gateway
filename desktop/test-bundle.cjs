@@ -12,6 +12,8 @@ const assert = require("node:assert/strict");
   // file lạ → báo lỗi rõ
   assert.throws(() => normalizeBundle({ foo: 1 }), /không phải file/);
   assert.throws(() => normalizeBundle({ loai: "seedance-accounts" }), /không phải file/);
+  // JSON dán tay chỉ có tai_khoan (không có "loai") vẫn nhận
+  assert.equal(normalizeBundle({ tai_khoan: [{ name: "FB 5", fb_uid: "5", cookies: { sessionid: "x" } }] }).accounts[0].name, "fb5");
 
   // tên nick: bỏ ký tự lạ, cắt 32 ký tự, rỗng thì dùng dự phòng
   assert.equal(safeName("FB 61594283488769", "x"), "FB_61594283488769");

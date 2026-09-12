@@ -51,10 +51,10 @@ function pyEnv() {
 }
 
 // Mọi lệnh Python đi qua đây: script nằm ở APP_DIR, còn dữ liệu ghi vào DATA_DIR.
+// Tên script .py ở bất kỳ vị trí nào (kể cả sau "-u") đều được trỏ về APP_DIR — xem desktop/pyargs.cjs.
+const { resolvePyArgs } = require("./pyargs.cjs");
 function spawnPy(args, opts = {}) {
-  const a = args.slice();
-  if (a[0] && a[0].endsWith(".py")) a[0] = path.join(APP_DIR, a[0]);
-  return spawn(VENV_PY, a, { cwd: DATA_DIR, env: pyEnv(), ...opts });
+  return spawn(VENV_PY, resolvePyArgs(args, APP_DIR), { cwd: DATA_DIR, env: pyEnv(), ...opts });
 }
 
 // Vòng đời uvicorn ở một chỗ (gateway.cjs): đăng nhập / nạp cookie tạm dừng gateway rồi TỰ BẬT LẠI.
@@ -839,28 +839,8 @@ ipcMain.handle("account:setProxy", async (_e, { name, proxy }) => {
   } catch (e) { return { ok: false, error: String(e) }; }
 });
 
-ipcMain.handle("account:bulkImport", async (_e, { json, verify }) => {
-  if (isRemote()) return REMOTE_ONLY;
-  const text = (json || "").trim();
-  if (!text) return { ok: false, error: "Chưa dán nội dung JSON export" };
-  try { JSON.parse(text); } catch (e) { return { ok: false, error: "JSON không hợp lệ: " + String(e).slice(0, 80) }; }
-  const tmp = path.join(os.tmpdir(), `dola-bulk-${Date.now()}.json`);
-  fs.writeFileSync(tmp, text, "utf8");
-  const args = ["-u", "import_seedance_export.py", tmp];
-  if (!verify) args.push("--no-verify");
-  return await new Promise((resolve) => {
-    const proc = spawnPy(args);
-    let out = "", err = "";
-    proc.stdout.on("data", (d) => {
-      out += d;
-      for (const line of String(d).split(/\r?\n/)) if (line.trim()) _e.sender.send("account:bulkStep", { line: line.trim() });
-    });
-    proc.stderr.on("data", (d) => (err += d));
-    proc.on("exit", (code) => { try { fs.unlinkSync(tmp); } catch (_) {}
-      resolve({ ok: code === 0, output: out.trim(), error: code ? (err.trim() || `exit ${code}`) : "" }); });
-    proc.on("error", (e) => { try { fs.unlinkSync(tmp); } catch (_) {} resolve({ ok: false, error: String(e) }); });
-  });
-});
+// "Dán JSON export" trong Kho tài khoản giờ đi cùng đường HTTP với "Nhập kho" (importAccounts trong
+// renderer), không còn gọi import_seedance_export.py qua IPC — script vẫn dùng được từ dòng lệnh.
 
 ipcMain.handle("account:getProxy", async (_e, { name }) => {
   if (!NAME_RE.test(name || "")) return { ok: true, proxy: "" };   // như setProxy: không cho "../" đi ra ngoài accounts/

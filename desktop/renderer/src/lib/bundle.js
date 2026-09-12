@@ -61,6 +61,6 @@ function fromSeedance(b) {
 
 export function normalizeBundle(b) {
   if (b?.kind === "dola-studio-accounts" && Array.isArray(b.accounts)) return b;
-  if (b?.loai === "seedance-accounts" && Array.isArray(b.tai_khoan)) return fromSeedance(b);
+  if (Array.isArray(b?.tai_khoan)) return fromSeedance(b);   // có hay không có "loai" đều nhận (JSON dán tay hay thiếu đầu)
   throw new Error("không phải file xuất từ Kho tài khoản của Dola Studio, cũng không phải file seedance-accounts");
 }

@@ -18,8 +18,6 @@ contextBridge.exposeInMainWorld("api", {
   deleteAccount: (name) => ipcRenderer.invoke("account:delete", { name }),
   fetchGenerate: (opts) => ipcRenderer.invoke("video:fetchGenerate", opts),
   onFetchStep: (cb) => ipcRenderer.on("video:fetchStep", (_e, data) => cb(data)),
-  bulkImport: (json, verify) => ipcRenderer.invoke("account:bulkImport", { json, verify }),
-  onBulkStep: (cb) => ipcRenderer.on("account:bulkStep", (_e, data) => cb(data)),
   setProxy: (name, proxy) => ipcRenderer.invoke("account:setProxy", { name, proxy }),
   getProxy: (name) => ipcRenderer.invoke("account:getProxy", { name }),
   getGlobalProxy: () => ipcRenderer.invoke("proxy:getGlobal"),

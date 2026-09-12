@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { SelectNative } from "@/components/ui/select-native";
-import { api } from "@/lib/api";
+import { api, importAccounts } from "@/lib/api";
 import AccountWarehouse from "@/components/AccountWarehouse";
 
 const fbUid = (line) => { const m = String(line || "").match(/c_user=(\d{5,})/); if (m) return m[1]; const f = String(line || "").split("|")[0].trim(); return /^\d{5,}$/.test(f) ? f : ""; };
@@ -14,11 +14,11 @@ const fbUid = (line) => { const m = String(line || "").match(/c_user=(\d{5,})/);
 export default function AccountsTab({ onRefresh, active = true }) {
   const [name, setName] = useState(""); const [lang, setLang] = useState("ja");
   const [open, setOpen] = useState(""); // "fb" | "cookie" | "bulk" | ""
-  const [fbText, setFbText] = useState(""); const [cookie, setCookie] = useState(""); const [bulk, setBulk] = useState(""); const [verify, setVerify] = useState(false);
+  const [fbText, setFbText] = useState(""); const [cookie, setCookie] = useState(""); const [bulk, setBulk] = useState("");
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
   useEffect(() => {
-    const off = api.onFbStep?.(({ line }) => setMsg(line)); const off2 = api.onBulkStep?.(({ line }) => setMsg(line));
-    return () => { if (typeof off === "function") off(); if (typeof off2 === "function") off2(); };   // không gỡ = mount lại là nhân đôi listener
+    const off = api.onFbStep?.(({ line }) => setMsg(line));
+    return () => { if (typeof off === "function") off(); };   // không gỡ = mount lại là nhân đôi listener
   }, []);
 
   async function submitFb() {
@@ -44,7 +44,20 @@ export default function AccountsTab({ onRefresh, active = true }) {
     const nm = name.trim(); if (!nm) { setMsg("Nhập tên nick."); return; } if (!cookie.trim()) { setMsg("Dán cookie."); return; }
     setBusy(true); try { const r = await api.importAccountText?.(nm, cookie.trim(), lang); setMsg(r?.ok ? "✓ Đã nạp cookie vào " + nm : "Lỗi: " + (r?.error || "?")); if (r?.ok) { setCookie(""); setName(""); setOpen(""); onRefresh(); } } finally { setBusy(false); }
   }
-  async function submitBulk() { if (!bulk.trim()) { setMsg("Dán JSON export."); return; } setBusy(true); setMsg("Đang nạp hàng loạt…"); try { const r = await api.bulkImport?.(bulk.trim(), verify); const last = (r?.output || "").split(/\r?\n/).filter((l) => l.trim()).pop() || ""; setMsg(r?.ok ? "✓ " + (last || "Xong") : "Lỗi: " + (r?.error || last)); if (r?.ok) { setBulk(""); setOpen(""); onRefresh(); } } finally { setBusy(false); } }
+  // Cùng đường với "Nhập kho" (importAccounts qua HTTP): 4 nick cùng lúc, kiểm tra phiên, chạy cả khi
+  // dùng máy chủ từ xa. Trước đây gọi import_seedance_export.py qua IPC — bản đóng gói tìm sai đường dẫn script.
+  async function submitBulk() {
+    if (!bulk.trim()) { setMsg("Dán JSON export."); return; }
+    let data;
+    try { data = JSON.parse(bulk); } catch (e) { setMsg("JSON không hợp lệ: " + String(e?.message || e).slice(0, 80)); return; }
+    setBusy(true); setMsg("Đang nạp hàng loạt…");
+    try {
+      const r = await importAccounts(data, (text) => setMsg(text));
+      setMsg(`✓ ${r.ok}/${r.total} nick đã vào` + (r.bad.length ? ` · ${r.bad.length} lỗi: ${r.bad.slice(0, 3).join("; ")}` : "") + (r.paused ? ` · ${r.paused} tạm ngưng theo file` : ""));
+      if (r.ok) { setBulk(""); setOpen(""); onRefresh(); }
+    } catch (e) { setMsg("Lỗi: " + (e?.message || e)); }
+    finally { setBusy(false); }
+  }
   async function login() { const nm = name.trim(); if (!nm) { setMsg("Nhập tên nick."); return; } setBusy(true); setMsg("Đang mở cửa sổ đăng nhập…"); try { const r = await api.loginElectron?.(nm, lang); setMsg(r?.ok ? "✓ đăng nhập xong" : "Lỗi: " + (r?.error || r?.output || "?")); if (r?.ok) { setName(""); onRefresh(); } } finally { setBusy(false); } }
   async function fromFile() { const nm = name.trim(); if (!nm) { setMsg("Nhập tên nick."); return; } setBusy(true); try { const r = await api.importAccount?.(nm, lang); setMsg(r?.ok ? "✓ Đã nạp từ file" : "Lỗi: " + (r?.error || "?")); if (r?.ok) { setName(""); onRefresh(); } } finally { setBusy(false); } }
 
@@ -86,7 +99,6 @@ export default function AccountsTab({ onRefresh, active = true }) {
           {open === "bulk" && <div className={box}>
             <Label>Dán JSON export (dạng {'{"tai_khoan":[...]}'}) — nạp tất cả một lần</Label>
             <Textarea rows={5} value={bulk} onChange={(e) => setBulk(e.target.value)} placeholder='{"tai_khoan":[{"name":"...","cookies":{...}}, ...]}' />
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={verify} onChange={(e) => setVerify(e.target.checked)} />Verify từng nick (chậm) — bỏ chọn để nhanh</label>
             <div className="flex gap-2"><Button className="flex-1" onClick={submitBulk} disabled={busy}>Nạp tất cả</Button><Button variant="outline" onClick={() => setOpen("")}>Đóng</Button></div>
           </div>}
 
