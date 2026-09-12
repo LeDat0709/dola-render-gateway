@@ -725,6 +725,34 @@ async def admin_account_proxy_get(name: str, x_admin_key: str | None = Header(de
     return {"proxy": account_proxy_raw(name)}
 
 
+@app.get("/api/admin/accounts/{name}/check-proxy")
+async def admin_account_check_proxy(name: str, x_admin_key: str | None = Header(default=None)):
+    """Kiểm tra proxy ĐÃ áp vào nick chưa: đi ĐÚNG proxy của nick (riêng, thiếu thì proxy chung) ra
+    ngoài lấy IP thoát + thử vào dola.com. IP thoát khác IP máy chủ = proxy đã áp thật; tới được Dola
+    = proxy dùng được. Chạy TỪ máy chủ (đúng nơi mở Chrome cho nick), nên đúng cả chế độ VPS từ xa."""
+    _admin_auth(x_admin_key)
+    if name not in pool.accounts:
+        raise HTTPException(404, "account not found")
+    from browser import account_proxy_url, account_proxy_raw
+    import aiohttp
+    raw = account_proxy_raw(name)
+    url = account_proxy_url(name) or None      # proxy nick, thiếu thì rơi về proxy chung
+    out = {"ok": False, "has_own": bool(raw), "via": "riêng" if raw else ("chung" if config.PROXY else "nối thẳng")}
+    t0 = time.time()
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+            async with s.get("https://api.ipify.org?format=json", proxy=url) as r:
+                out["egress_ip"] = (await r.json()).get("ip")
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+            async with s.get("https://www.dola.com/", proxy=url) as r:
+                out["dola"] = r.status < 500
+        out["ok"] = True
+    except Exception as e:
+        out["error"] = str(e)[:120]
+    out["ms"] = int((time.time() - t0) * 1000)
+    return out
+
+
 @app.delete("/api/admin/accounts/{name}")
 async def admin_account_delete(name: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)

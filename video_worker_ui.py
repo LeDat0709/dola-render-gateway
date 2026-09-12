@@ -486,22 +486,35 @@ def _is_status_text(text: str) -> bool:
     return any(m in text or m in low for m in _STATUS_MARKERS)
 
 
-VIDEO_BTN_ALTS = ("動画を作成", "Tạo video", "Create video", "生成视频")   # action-bar entry (JA UI first)
-_CONSENT_LABELS = ("OK", "Đồng ý", "同意する", "Accept", "Chấp nhận")        # cookie banner steals the first click
-_NEW_CHAT_LABELS = ("新しいチャット", "New chat", "Cuộc trò chuyện mới", "新对话")
+VIDEO_BTN_ALTS = ("動画を作成", "動画生成", "動画", "Tạo video", "Create video", "生成视频", "视频生成", "Video")  # action-bar entry
+_CONSENT_LABELS = ("OK", "Đồng ý", "同意する", "Accept", "Chấp nhận", "同意")        # cookie banner steals the first click
+_NEW_CHAT_LABELS = ("新しいチャット", "New chat", "Cuộc trò chuyện mới", "新对话", "新規チャット")
 ENTRY_ATTEMPTS = 15
 CAPTCHA_FRAME_KEY = "bdcaptcha.html"   # Captcha verifycenter iframe
 
 
 async def _click_first_visible(page, labels, exact: bool = True, timeout: int = 3000) -> bool:
-    for label in labels:
-        try:
-            loc = page.get_by_text(label, exact=exact).first
-            if await loc.count() and await loc.is_visible():
-                await loc.click(timeout=timeout)
+    """Bấm nhãn đầu tiên thấy được. Thử khớp CHÍNH XÁC trước rồi GẦN ĐÚNG (nút có icon/khoảng trắng
+    hoặc chữ nằm trong span con thì exact=True trượt); nếu phần tử text không bấm được thì bấm nút
+    tổ tiên gần nhất (button/[role=button]) — Dola hay bọc chữ trong span không nhận click."""
+    modes = [True, False] if exact else [False]
+    for want_exact in modes:
+        for label in labels:
+            try:
+                loc = page.get_by_text(label, exact=want_exact).first
+                if not (await loc.count()) or not (await loc.is_visible()):
+                    continue
+                try:
+                    await loc.click(timeout=timeout)
+                except Exception:
+                    btn = loc.locator("xpath=ancestor-or-self::*[self::button or @role='button'][1]").first
+                    if await btn.count():
+                        await btn.click(timeout=timeout)
+                    else:
+                        await loc.evaluate("e => e.click()")
                 return True
-        except Exception:
-            continue
+            except Exception:
+                continue
     return False
 
 
@@ -511,17 +524,24 @@ async def _open_video_composer(page) -> None:
     The action bar with 動画を作成 only renders on an empty new chat, and the consent
     banner swallows the first click, so both steps are required (Dola UI, 2026-09).
     """
-    if await _click_first_visible(page, _CONSENT_LABELS):
+    if await _click_first_visible(page, _CONSENT_LABELS, exact=False):
         await page.wait_for_timeout(500)
-    if await _click_first_visible(page, _NEW_CHAT_LABELS):
+    if await _click_first_visible(page, _NEW_CHAT_LABELS, exact=False):
         await page.wait_for_timeout(1200)
-    for _ in range(ENTRY_ATTEMPTS):
-        if await _click_first_visible(page, VIDEO_BTN_ALTS, timeout=4000):
+    for i in range(ENTRY_ATTEMPTS):
+        if await _click_first_visible(page, VIDEO_BTN_ALTS, exact=False, timeout=4000):
             await page.wait_for_timeout(1500)
             return
+        # Action bar chỉ hiện trên chat trống — thử mở cuộc trò chuyện mới lại giữa chừng nếu bị kẹt.
+        if i in (4, 9):
+            await _click_first_visible(page, _NEW_CHAT_LABELS, exact=False)
         await page.wait_for_timeout(1500)
-    await page.screenshot(path="no_entry_btn.png")
-    raise RuntimeError("Video entry button not found (動画を作成 / Tạo video)")
+    try:
+        await page.screenshot(path="no_entry_btn.png")
+    except Exception:
+        pass
+    raise RuntimeError("Không mở được khung tạo video trên Dola (nút '動画を作成/Tạo video' không thấy — "
+                       "Dola có thể đang bắt xác minh/đổi giao diện, hoặc chat chưa về trạng thái trống).")
 
 
 def _log_submit_payload(account: str):
