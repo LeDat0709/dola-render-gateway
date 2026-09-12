@@ -180,9 +180,11 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
     } catch (e) { setMsg("Lỗi nhập kho: " + msgOf(e)); setImp(null); }
     finally { mark(-1); await done(); }
   };
+  // Chọn cả 179 nick thì liệt kê hết tên làm hộp window.confirm tràn khỏi màn hình → cắt còn vài tên.
+  const briefNames = (a, max = 10) => a.length <= max ? a.join(", ") : `${a.slice(0, max).join(", ")} …và ${a.length - max} nick khác`;
   const del = (n) => { if (window.confirm(`XOÁ HẲN nick ${n}?\nToàn bộ profile và phiên đăng nhập sẽ mất (không hoàn tác).`)) one(n, deleteAccount, "xoá"); };
-  const bulkDel = () => { if (window.confirm(`XOÁ HẲN ${selNames.length} nick?\n${selNames.join(", ")}\nKhông hoàn tác.`)) each(selNames, deleteAccount, "Xoá nick", true); };
-  const bulkClear = () => { if (window.confirm(`Xoá cookie của ${selNames.length} nick?\n${selNames.join(", ")}\nCác nick này sẽ phải đăng nhập lại.`)) each(selNames, clearCookies, "Xoá cookie", true); };
+  const bulkDel = () => { if (window.confirm(`XOÁ HẲN ${selNames.length} nick?\n${briefNames(selNames)}\nKhông hoàn tác.`)) each(selNames, deleteAccount, "Xoá nick", true); };
+  const bulkClear = () => { if (window.confirm(`Xoá cookie của ${selNames.length} nick?\n${briefNames(selNames)}\nCác nick này sẽ phải đăng nhập lại.`)) each(selNames, clearCookies, "Xoá cookie", true); };
 
   const emptyMsg = loadErr === "auth" ? "Sai admin key — kiểm tra DOLA_ADMIN_KEY (Cài đặt → Server từ xa, hoặc .env.local) rồi mở lại app."
     : loadErr === "http" ? "Gateway trả lỗi — xem nút Log ở thanh trên."

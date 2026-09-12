@@ -55,7 +55,9 @@ export default function ProxyTab({ active = true }) {
   }
   async function testAll() { for (const g of groups) await test(g.proxy); }
   async function detach(g) {
-    if (!window.confirm(`Gỡ proxy riêng khỏi ${g.nicks.length} nick (${g.nicks.map((a) => a.name).join(", ")})?\nCác nick này sẽ dùng proxy chung.`)) return;
+    const names = g.nicks.map((a) => a.name);
+    const brief = names.length <= 10 ? names.join(", ") : `${names.slice(0, 10).join(", ")} …và ${names.length - 10} nick khác`;
+    if (!window.confirm(`Gỡ proxy riêng khỏi ${g.nicks.length} nick (${brief})?\nCác nick này sẽ dùng proxy chung.`)) return;
     let ok = 0;
     for (const a of g.nicks) { try { await api.setProxy?.(a.name, ""); ok++; } catch { /* báo ở cuối */ } }
     setMsg(`Đã gỡ proxy khỏi ${ok}/${g.nicks.length} nick.`); load();
