@@ -32,6 +32,12 @@ export default function SettingsTab({ active = true }) {
   const [srv, setSrv] = useState(null);     // cấu hình server đang chạy (/api/admin/config) hoặc null khi server tắt
   const [up, setUp] = useState(false);
   const [ver, setVer] = useState(null);
+  const [hstat, setHstat] = useState(null); // trạng thái sống của gateway đang dùng (/health) — cục bộ hay VPS
+  const refreshHealth = () => fetchHealth().then((h) => {
+    setUp(!!h);
+    setHstat(h ? { nicks: (h.accounts || []).length, ready: (h.accounts || []).filter((a) => a.available !== false && !a.busy).length,
+                   pending: h.pending_tasks || 0, avail: !!h.available } : null);
+  }).catch(() => { setUp(false); setHstat(null); });
   const load = () => {
     api.getVideoDir?.().then((r) => setVid(r?.abs || "downloads")).catch(() => {});
     api.getAccountsDir?.().then((r) => setAcc(r?.abs || r?.dir || "accounts")).catch(() => {});
@@ -39,12 +45,13 @@ export default function SettingsTab({ active = true }) {
     api.getRemote?.().then((r) => { setRb(r?.base || ""); setRk(r?.apiKey || ""); setRa(r?.adminKey || ""); }).catch(() => {});
     api.getAutoRetry?.().then((r) => setAutoRetry(r?.on !== false)).catch(() => {});
     api.getVersion?.().then(setVer).catch(() => {});
-    fetchHealth().then((h) => setUp(!!h));
+    refreshHealth();
     adminConfig().then(setSrv).catch(() => setSrv(null));
   };
   // Nạp lại mỗi lần mở tab: server thường bật SAU khi app mở (tự bật mất 3–4s, hoặc bấm "Bật server"),
   // đọc một lần lúc mount thì khối Vận hành báo "server tắt" mãi dù server đã chạy.
-  useEffect(() => { if (active) load(); }, [active]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Trạng thái máy chủ tự cập nhật mỗi 4s để thấy nick/job VPS thay đổi (ví dụ đang đồng bộ nick lên).
+  useEffect(() => { if (!active) return; load(); const t = setInterval(refreshHealth, 4000); return () => clearInterval(t); }, [active]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const remote = rb.trim() !== "";
   const toggleAutoRetry = async (e) => {
@@ -86,6 +93,20 @@ export default function SettingsTab({ active = true }) {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card icon={<Server className="h-4 w-4 text-primary" />} title="Máy chủ"
               right={<Badge variant={remote ? "info" : up ? "success" : "secondary"}>{remote ? "Máy chủ từ xa" : up ? "Đang chạy trên máy này" : "Server trên máy này đang tắt"}</Badge>}>
+          {/* Trạng thái sống của gateway đang dùng (cục bộ hay VPS) — tự cập nhật 4s */}
+          <div className={"flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg px-3 py-2 text-[12px] " + (up ? "bg-surface" : "bg-error-container/20")}>
+            <span className="flex items-center gap-1.5 font-medium">
+              <span className={"h-1.5 w-1.5 rounded-full " + (up ? "bg-tertiary animate-pulse" : "bg-error")} />
+              {up ? "Máy chủ đang chạy" : "Không nối được máy chủ"}
+            </span>
+            {hstat && <>
+              <span className="font-mono"><b className="tabular-nums">{hstat.nicks}</b> nick</span>
+              <span className="font-mono text-tertiary"><b className="tabular-nums">{hstat.ready}</b> sẵn sàng</span>
+              <span className="font-mono text-primary"><b className="tabular-nums">{hstat.pending}</b> job đang chạy/chờ</span>
+              <span className="font-mono text-muted-foreground">{gp.trim() ? "proxy chung ✓" : "nối thẳng"}</span>
+            </>}
+            {!up && <span className="text-error-on-container/90">{remote ? "Kiểm tra địa chỉ/khoá VPS bên dưới, hoặc VPS chưa mở cổng." : 'Bấm "Bật server" ở thanh trên.'}</span>}
+          </div>
           <label className="flex cursor-pointer items-start gap-2.5 text-[13px]">
             <input type="radio" className="mt-1" name="srv" checked={!remote} onChange={() => { if (remote) saveRemote(""); }} />
             <span><span className="font-medium">Chạy server trên máy này</span><span className="block text-[11px] text-muted-foreground">Cần proxy Nhật/Hàn ở khối Mạng khi máy ở Việt Nam.</span></span>
