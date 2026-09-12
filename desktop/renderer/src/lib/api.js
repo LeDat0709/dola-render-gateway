@@ -251,6 +251,23 @@ export async function adminConfig() {
     return r.ok ? await r.json() : null;
   } catch { return null; }
 }
+// ── Kho proxy tập trung (admin API; chạy cả khi nối server từ xa) ──
+async function poolFetch(path, method = "GET", body) {
+  await ensureConfig();
+  const opt = { method, headers: { ...adminHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) }, cache: "no-store" };
+  if (body) opt.body = JSON.stringify(body);
+  const r = await fetch(cfg.base + "/api/admin/proxies" + path, opt);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || (r.status === 401 ? "sai admin key" : "HTTP " + r.status));
+  return j;
+}
+export const proxyPoolList = () => poolFetch("");
+export const proxyPoolAdd = (text) => poolFetch("", "POST", { text });
+export const proxyPoolCheck = () => poolFetch("/check", "POST");
+export const proxyPoolPrune = () => poolFetch("/prune", "POST");
+export const proxyPoolAssign = (per_ip, scope) => poolFetch("/assign", "POST", { per_ip, scope });
+export const proxyPoolDelete = (id) => poolFetch("/" + encodeURIComponent(id), "DELETE");
+
 // ── Mang nick sang máy khác ───────────────────────────────────────
 export async function exportAccounts() {
   await ensureConfig();

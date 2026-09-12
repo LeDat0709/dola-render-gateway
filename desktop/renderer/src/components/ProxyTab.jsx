@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api, cfg, adminAccounts, adminConfig, accState, accChip, maskProxy, proxyHost } from "@/lib/api";
 import ProxyAssignDialog from "@/components/ProxyAssignDialog";
+import ProxyPoolPanel from "@/components/ProxyPoolPanel";
 
 const PER_IP = 5;
 
@@ -85,6 +86,8 @@ export default function ProxyTab({ active = true }) {
         <Button variant="outline" size="sm" onClick={testAll} disabled={!groups.length}><Activity className="h-3.5 w-3.5 text-tertiary" />Kiểm tra toàn bộ</Button>
         <Button variant="outline" size="sm" onClick={load}><RefreshCw className="h-3.5 w-3.5" />Làm mới</Button>
       </div>
+
+      <ProxyPoolPanel onAssigned={load} />
 
       {onGlobal > PER_IP && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-error/30 bg-error-container/20 px-4 py-3">
