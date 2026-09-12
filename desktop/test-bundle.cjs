@@ -27,13 +27,15 @@ const assert = require("node:assert/strict");
       { id: "b", name: "Nick 1", cookies: { sessionid: "NEW", i18next: "vi" }, enabled: true, proxy: "user:pw@1.2.3.4:8080", fb_uid: "61594113147344", dola_uid: "768270", created_at: 200 },
       { id: "c", name: "Nick_1", cookies: { sessionid: "S3" }, enabled: false, proxy: "", fb_uid: "615", dola_uid: "768999", created_at: 50 },
       { id: "d", name: "", cookies: { sessionid: "S4" }, enabled: true, proxy: "", fb_uid: "616", dola_uid: "768111", created_at: 60 },
+      { id: "e", name: "FB 700", cookies: { sessionid: "S5" }, enabled: true, proxy: "", fb_uid: "700", dola_uid: "768700", created_at: 70 },
     ],
   };
   const out = normalizeBundle(seed);
   assert.equal(out.kind, "dola-studio-accounts");
   assert.equal(out.source, "seedance");
   assert.equal(out.dupes, 1);
-  assert.deepEqual(out.accounts.map((a) => a.name), ["Nick_1", "Nick_1_2", "fb_616"]);
+  // "FB <uid>" và tên trống → "fb<uid>" như nick đăng nhập Facebook trong app; tên tự đặt giữ nguyên
+  assert.deepEqual(out.accounts.map((a) => a.name), ["Nick_1", "Nick_1_2", "fb616", "fb700"]);
   const [b, c, d] = out.accounts;
   assert.equal(b.cookies.sessionid, "NEW", "trùng dola_uid phải giữ bản created_at lớn hơn");
   assert.equal(b.proxy, "user:pw@1.2.3.4:8080");
@@ -41,7 +43,22 @@ const assert = require("node:assert/strict");
   assert.equal(b.scheduling, true);
   assert.equal(c.scheduling, false, "enabled:false → tắt lịch");
   assert.equal(d.cookies.sessionid, "S4");
-  assert.equal(seed.tai_khoan.length, 4, "không được sửa file gốc");
+  assert.equal(seed.tai_khoan.length, 5, "không được sửa file gốc");
+
+  // runPool: tối đa n việc cùng lúc, làm hết, done = số việc đã bắt đầu
+  const { runPool } = await import("./renderer/src/lib/bundle.js");
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let running = 0, peak = 0; const done = [];
+  const r1 = await runPool([1, 2, 3, 4, 5, 6, 7], 3, async (x) => { running++; peak = Math.max(peak, running); await sleep(5); done.push(x); running--; });
+  assert.equal(peak, 3, "phải chạy đúng 3 việc cùng lúc");
+  assert.deepEqual([...done].sort(), [1, 2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(r1, { done: 7, stopped: false });
+  // bấm Dừng: không nhận việc mới, việc đang chạy vẫn xong
+  let started = 0;
+  const r2 = await runPool([1, 2, 3, 4, 5, 6], 2, async () => { started++; await sleep(5); }, () => started >= 3);
+  assert.equal(r2.stopped, true);
+  assert.ok(started >= 3 && started <= 4, `dừng sau 3–4 việc, thực tế ${started}`);
+  assert.equal(r2.done, started);
 
   console.log("test-bundle: OK");
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -1,5 +1,5 @@
 // Cầu nối gateway HTTP + IPC (window.api). Giữ nguyên logic bản cũ.
-import { normalizeBundle } from "./bundle.js";
+import { normalizeBundle, runPool } from "./bundle.js";
 export const api = window.api || {};
 export let cfg = { base: "http://127.0.0.1:8000", apiKey: "" };
 export async function loadConfig() {
@@ -262,16 +262,18 @@ export async function exportAccounts() {
 // phiên, ghi proxy riêng trước khi mở Chrome) rồi ghi chú / lịch. Chạy được cả khi nối server từ xa.
 // onStep(text, progress) — progress = {i, total, name, ok, unverified, bad} để vẽ thanh tiến độ;
 // isStopped() trả true thì dừng SAU nick đang nhập (không bỏ dở một nick giữa chừng).
+// Mỗi nick server mở 1 Chrome headless (~3s) rồi kiểm tra phiên qua HTTP; 4 nick cùng lúc → 128 nick
+// ≈ 2–3 phút thay vì hơn 10 phút. Không đẩy cao hơn: mỗi Chrome ~0.4GB RAM.
+const IMPORT_PARALLEL = 4;
 export async function importAccounts(bundle, onStep, isStopped) {
   await ensureConfig();
   const list = normalizeBundle(bundle).accounts;   // nhận cả file seedance-accounts của tool khác
   if (!list.length) throw new Error("file không có nick nào (đúng file xuất từ Kho tài khoản?)");
-  let ok = 0, unverified = 0, why = "", stopped = false, i = 0; const bad = [];
-  for (; i < list.length; i++) {
-    if (isStopped?.()) { stopped = true; break; }
-    const a = list[i];
-    onStep?.(`Nhập ${i + 1}/${list.length}: ${a.name}… (mỗi nick 5–30s, server mở Chrome kiểm tra phiên)`,
-             { i: i + 1, total: list.length, name: a.name, ok, unverified, bad: bad.length });
+  const st = { ok: 0, unverified: 0, why: "", finished: 0, bad: [] };
+  const progress = (name) => onStep?.(`Nhập ${st.finished}/${list.length} · đang nạp ${name}… (${IMPORT_PARALLEL} nick cùng lúc, mỗi nick 3–10s)`,
+                                      { i: st.finished, total: list.length, name, ok: st.ok, unverified: st.unverified, bad: st.bad.length });
+  const one = async (a) => {
+    progress(a.name);
     try {
       const r = await fetch(cfg.base + "/api/admin/accounts/import-cookie", {
         method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() },
@@ -280,12 +282,14 @@ export async function importAccounts(bundle, onStep, isStopped) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.detail || "HTTP " + r.status);
       if (a.note || a.scheduling === false) await patchAccount(a.name, { note: a.note || "", scheduling: a.scheduling !== false }).catch(() => {});
-      ok++;
-      if (j.ok === false) bad.push(`${a.name}: cookie không còn đăng nhập`);
-      else if (j.ok == null) { unverified++; why = j.message || why; }   // server không tới được Dola (proxy) — cookie vẫn đã lưu
-    } catch (e) { bad.push(`${a.name}: ${String(e.message || e).slice(0, 80)}`); }
-  }
-  return { ok, total: list.length, done: i, bad, unverified, why, stopped };
+      st.ok++;
+      if (j.ok === false) st.bad.push(`${a.name}: cookie không còn đăng nhập`);
+      else if (j.ok == null) { st.unverified++; st.why = j.message || st.why; }   // server không tới được Dola (proxy) — cookie vẫn đã lưu
+    } catch (e) { st.bad.push(`${a.name}: ${String(e.message || e).slice(0, 80)}`); }
+    st.finished++;
+  };
+  const { stopped } = await runPool(list, IMPORT_PARALLEL, one, isStopped);
+  return { ok: st.ok, total: list.length, done: st.finished, bad: st.bad, unverified: st.unverified, why: st.why, stopped };
 }
 // Chip trạng thái theo bản Stitch: tách "hết credit" với "hết lượt hôm nay", ghi giờ hết nghỉ.
 export function accChip(a) {

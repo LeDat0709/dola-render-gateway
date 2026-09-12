@@ -20,6 +20,25 @@ function uniqueName(name, used) {
   return n;
 }
 
+// Tên mặc định của tool khác là "FB <uid>"; app này đặt nick đăng nhập Facebook là "fb<uid>". Đưa về
+// cùng một kiểu để một tài khoản không thành hai nick khi nhập lại; tên người dùng tự đặt thì giữ.
+const fbName = (t) => (t.fb_uid && (!t.name || /^FB\s+\d+$/i.test(String(t.name).trim())) ? `fb${t.fb_uid}` : null);
+
+// Chạy fn trên từng phần tử, tối đa n việc cùng lúc; isStopped() = true thì không nhận việc mới
+// (việc đang chạy vẫn chạy hết). done = số việc đã bắt đầu.
+export async function runPool(items, n, fn, isStopped = () => false) {
+  let next = 0, stopped = false;
+  async function worker() {
+    while (next < items.length) {
+      if (isStopped()) { stopped = true; return; }
+      const i = next++;
+      await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+  return { done: next, stopped };
+}
+
 function fromSeedance(b) {
   const byUid = new Map();   // cùng dola_uid = cùng một tài khoản Dola → giữ bản đăng nhập mới nhất
   for (const t of b.tai_khoan) {
@@ -30,7 +49,7 @@ function fromSeedance(b) {
   }
   const used = new Set();
   const accounts = [...byUid.values()].map((t, i) => ({
-    name: uniqueName(safeName(t.name, `fb_${t.fb_uid || i + 1}`), used),
+    name: uniqueName(fbName(t) || safeName(t.name, `fb_${i + 1}`), used),
     cookies: t.cookies || {},
     proxy: t.proxy || "",
     note: t.fb_uid ? `FB ${t.fb_uid}` : "",
