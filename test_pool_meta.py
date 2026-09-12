@@ -242,6 +242,7 @@ def test_network_error_does_not_kill_nick():
 
 def _reset_rate_limit():
     browser_pool._reset_rate_state()
+    browser_pool.config.NO_COOLDOWN = False   # kiểm hành vi nghỉ mặc định, không phụ thuộc .env.local
 
 
 def test_rate_limit_widens_submit_gap_then_decays():
