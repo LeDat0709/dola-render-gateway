@@ -17,6 +17,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      # Tên file .exe lấy số từ desktop/package.json; đẩy tag v1.0.4 thì ghi 1.0.4 vào đó trước khi
+      # đóng gói, khỏi ra "Setup 1.0.0.exe" cho mọi bản (chỉ sửa trên máy CI, không commit).
+      - name: Lấy số phiên bản từ tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: npm --prefix desktop version --no-git-tag-version --allow-same-version ($env:GITHUB_REF_NAME.TrimStart('v'))
       - name: Dựng runtime + đóng gói
         shell: pwsh
         run: powershell -ExecutionPolicy Bypass -File scripts\build-win.ps1
