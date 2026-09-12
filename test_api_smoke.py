@@ -112,6 +112,12 @@ def main():
         missing = [k for k in ("remaining", "used_today", "limit", "cooling", "cooldown_until", "busy", "login_ok",
                                "email", "note", "scheduling", "credit_balance", "rate_limited", "quota_blocked", "last_used_at") if k not in a1]
         check("nick có đủ trường giao diện đọc", not missing, f"thiếu {missing}")
+        st, d = call("GET", "/api/admin/accounts/export")
+        check("xuất kho: nick chưa có cookie bị bỏ qua", st == 200 and d.get("kind") == "dola-studio-accounts" and d.get("accounts") == [] and d.get("skipped") == ["n1"], repr(d)[:120])
+        (tmp / "accounts" / "n1" / "cookies.json").write_text('[{"name":"sessionid","value":"x","domain":".dola.com","path":"/"}]', encoding="utf-8")
+        st, d = call("GET", "/api/admin/accounts/export")
+        e1 = next((a for a in d.get("accounts", []) if a["name"] == "n1"), {})
+        check("xuất kho: nick có cookie mang cookie + proxy riêng", st == 200 and e1.get("cookies") and e1.get("proxy") == "http://u:p@1.2.3.4:8080" and "scheduling" in e1, repr(e1)[:120])
         st, _ = call("POST", "/api/admin/accounts/n1/proxy", {"proxy": "khong hop le"})
         check("proxy sai định dạng → 422", st == 422, f"nhận {st}")
         st, _ = call("GET", "/api/admin/accounts/khong-ton-tai/proxy")

@@ -250,6 +250,37 @@ export async function adminConfig() {
     return r.ok ? await r.json() : null;
   } catch { return null; }
 }
+// ── Mang nick sang máy khác ───────────────────────────────────────
+export async function exportAccounts() {
+  await ensureConfig();
+  const r = await fetch(cfg.base + "/api/admin/accounts/export", { headers: adminHeaders(), cache: "no-store" });
+  if (!r.ok) throw new Error(r.status === 401 ? "sai admin key" : "HTTP " + r.status);
+  return r.json();
+}
+// Nhập gói: từng nick đi qua đúng import-cookie (server nạp cookie vào profile Chrome + kiểm tra
+// phiên, ghi proxy riêng trước khi mở Chrome) rồi ghi chú / lịch. Chạy được cả khi nối server từ xa.
+export async function importAccounts(bundle, onStep) {
+  await ensureConfig();
+  const list = Array.isArray(bundle?.accounts) ? bundle.accounts : [];
+  if (!list.length) throw new Error("file không có nick nào (đúng file xuất từ Kho tài khoản?)");
+  let ok = 0; const bad = [];
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    onStep?.(`Nhập ${i + 1}/${list.length}: ${a.name}… (mỗi nick 5–30s, server mở Chrome kiểm tra phiên)`);
+    try {
+      const r = await fetch(cfg.base + "/api/admin/accounts/import-cookie", {
+        method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() },
+        body: JSON.stringify({ name: a.name, cookies: JSON.stringify(a.cookies || []), proxy: a.proxy || "", email: a.email || "" }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || "HTTP " + r.status);
+      if (a.note || a.scheduling === false) await patchAccount(a.name, { note: a.note || "", scheduling: a.scheduling !== false }).catch(() => {});
+      ok++;
+      if (j.ok === false) bad.push(`${a.name}: cookie không còn đăng nhập`);
+    } catch (e) { bad.push(`${a.name}: ${String(e.message || e).slice(0, 80)}`); }
+  }
+  return { ok, total: list.length, bad };
+}
 // Chip trạng thái theo bản Stitch: tách "hết credit" với "hết lượt hôm nay", ghi giờ hết nghỉ.
 export function accChip(a) {
   const st = accState(a);

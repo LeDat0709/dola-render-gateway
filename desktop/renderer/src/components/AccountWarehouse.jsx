@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RotateCw, Settings, Trash2, FolderOpen, Stethoscope, RefreshCw, Eraser, Search, Cookie, Network, Facebook, Copy } from "lucide-react";
+import { RotateCw, Settings, Trash2, FolderOpen, Stethoscope, RefreshCw, Eraser, Search, Cookie, Network, Facebook, Copy, Download, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -7,6 +7,7 @@ import { SelectNative } from "@/components/ui/select-native";
 import {
   api, cfg, adminAccounts, patchAccount, verifyAccount, openProfile,
   deleteAccount, clearCookies, timeAgo, accState, accChip, maskProxy, proxyHost,
+  exportAccounts, importAccounts,
 } from "@/lib/api";
 import ProxyAssignDialog from "@/components/ProxyAssignDialog";
 
@@ -45,6 +46,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [dlg, setDlg] = useState(false);
+  const fileRef = useRef(null);
   // Đếm chứ không dùng cờ: one() lồng trong each() từng tắt cờ mà each() đang giữ,
   // mở cửa cho người dùng bấm tiếp giữa chừng một vòng xoá hàng loạt.
   const busyRef = useRef(0);
@@ -143,6 +145,31 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
     if (v === null) return;
     one(n, (x) => api.setProxy?.(x, v), "đổi proxy");
   };
+  // Mang nick sang máy khác: xuất một file JSON (cookie + proxy + ghi chú), máy kia bấm Nhập kho.
+  const exportAll = async () => {
+    mark(1); setMsg("Đang gói nick…");
+    try {
+      const b = await exportAccounts();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(b, null, 1)], { type: "application/json" }));
+      a.download = `dola-nicks-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      setMsg(`✓ Đã xuất ${b.accounts.length} nick${b.skipped?.length ? ` (bỏ qua ${b.skipped.length} nick chưa có cookie)` : ""}. File chứa phiên đăng nhập — giữ như mật khẩu.`);
+    } catch (e) { setMsg("Lỗi xuất kho: " + msgOf(e)); }
+    finally { mark(-1); }
+  };
+  const importFile = async (file) => {
+    if (!file) return;
+    mark(1);
+    try {
+      const b = JSON.parse(await file.text());
+      if (b?.kind !== "dola-studio-accounts") throw new Error("không phải file xuất từ Kho tài khoản của Dola Studio");
+      if (!window.confirm(`Nhập ${b.accounts?.length || 0} nick từ file vào ${cfg.remote ? "server từ xa" : "máy này"}?\nNick trùng tên sẽ được nạp lại cookie mới.`)) return;
+      const r = await importAccounts(b, setMsg);
+      setMsg(`Nhập xong ${r.ok}/${r.total} nick.` + (r.bad.length ? ` Lỗi — ${r.bad.slice(0, 3).join(" · ")}${r.bad.length > 3 ? ` (+${r.bad.length - 3} nick nữa)` : ""}` : ""));
+    } catch (e) { setMsg("Lỗi nhập kho: " + msgOf(e)); }
+    finally { mark(-1); await done(); }
+  };
   const del = (n) => { if (window.confirm(`XOÁ HẲN nick ${n}?\nToàn bộ profile và phiên đăng nhập sẽ mất (không hoàn tác).`)) one(n, deleteAccount, "xoá"); };
   const bulkDel = () => { if (window.confirm(`XOÁ HẲN ${selNames.length} nick?\n${selNames.join(", ")}\nKhông hoàn tác.`)) each(selNames, deleteAccount, "Xoá nick", true); };
   const bulkClear = () => { if (window.confirm(`Xoá cookie của ${selNames.length} nick?\n${selNames.join(", ")}\nCác nick này sẽ phải đăng nhập lại.`)) each(selNames, clearCookies, "Xoá cookie", true); };
@@ -173,6 +200,9 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
           <Button variant="secondary" size="sm" onClick={() => onAdd?.("cookie")}><Cookie className="h-3.5 w-3.5 text-primary" />Nhập cookie</Button>
           <Button variant="secondary" size="sm" onClick={() => setDlg(true)} disabled={!all.length}><Network className="h-3.5 w-3.5 text-tertiary" />Chia proxy tự động</Button>
           <Button variant="secondary" size="sm" disabled={busy || !all.length} onClick={() => each(all.map((a) => a.name), verifyAccount, "Kiểm tra phiên")}><Stethoscope className="h-3.5 w-3.5 text-info" />Kiểm tra phiên</Button>
+          <Button variant="secondary" size="sm" onClick={exportAll} disabled={busy || !all.length} title="Xuất cookie + proxy + ghi chú của mọi nick ra một file để nhập ở máy khác"><Download className="h-3.5 w-3.5" />Xuất kho</Button>
+          <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()} disabled={busy} title="Nhập file đã xuất từ máy khác"><Upload className="h-3.5 w-3.5" />Nhập kho</Button>
+          <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = ""; }} />
           <Button size="sm" onClick={() => onAdd?.("fb")}><Facebook className="h-3.5 w-3.5" />Thêm bằng Facebook</Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={load} disabled={busy} title="Làm mới"><RefreshCw className={"h-3.5 w-3.5 " + (busy ? "animate-spin" : "")} /></Button>
         </div>
@@ -221,7 +251,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
             {list !== null && !rows.length && (
               <tr><td colSpan={10} className="px-3 py-8 text-center text-sm text-muted-foreground">
                 {all.length ? "Không có nick khớp bộ lọc." : <div className="space-y-2">
-                  <div>Chưa có nick trên {cfg.remote ? "server này" : "máy này"} — bấm <b className="text-foreground">Nhập cookie</b> hoặc <b className="text-foreground">Thêm bằng Facebook</b>{cfg.remote ? ", hoặc đẩy nick từ máy đang giữ nick:" : "."}</div>
+                  <div>Chưa có nick trên {cfg.remote ? "server này" : "máy này"} — bấm <b className="text-foreground">Nhập kho</b> (file xuất từ máy cũ), <b className="text-foreground">Nhập cookie</b> hoặc <b className="text-foreground">Thêm bằng Facebook</b>{cfg.remote ? ", hoặc đẩy nick từ máy đang giữ nick:" : "."}</div>
                   {cfg.remote && <div className="mx-auto flex w-fit items-center gap-2 rounded-lg bg-surface-lowest px-3 py-1.5 font-mono text-[11px] text-tertiary">{pushCmd}<button className="text-muted-foreground hover:text-foreground" onClick={() => navigator.clipboard?.writeText(pushCmd)} title="Sao chép"><Copy className="h-3.5 w-3.5" /></button></div>}
                 </div>}
               </td></tr>

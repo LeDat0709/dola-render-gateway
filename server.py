@@ -626,6 +626,32 @@ async def admin_config(x_admin_key: str | None = Header(default=None)):
             "video_timeout": config.VIDEO_TIMEOUT, "daily_limit": config.DAILY_LIMIT}
 
 
+@app.get("/api/admin/accounts/export")
+async def admin_accounts_export(x_admin_key: str | None = Header(default=None)):
+    """Gói mang nick sang máy khác: cookie đã lưu + proxy riêng + email/ghi chú/lịch.
+
+    Máy nhận đưa từng nick qua import-cookie (nạp vào profile Chrome + kiểm tra phiên), không cần
+    chép thư mục profile. File chứa phiên đăng nhập → giữ như mật khẩu.
+    """
+    _admin_auth(x_admin_key)
+    from browser import account_proxy_raw
+    out, skipped = [], []
+    for a in pool.list_accounts():
+        f = config.ACCOUNTS_DIR / a["name"] / "cookies.json"
+        try:
+            cookies = json.loads(f.read_text(encoding="utf-8")) if f.exists() else []
+        except (OSError, ValueError):
+            cookies = []
+        if not cookies:
+            skipped.append(a["name"])   # chưa đăng nhập lần nào → không có gì để mang đi
+            continue
+        out.append({"name": a["name"], "cookies": cookies, "proxy": account_proxy_raw(a["name"]),
+                    "email": a.get("email") or "", "note": a.get("note") or "",
+                    "scheduling": bool(a.get("scheduling", True))})
+    return {"kind": "dola-studio-accounts", "version": 1, "exported_at": time.time(),
+            "accounts": out, "skipped": skipped}
+
+
 @app.patch("/api/admin/accounts/{name}")
 async def admin_account_patch(name: str, body: AccountPatch,
                               x_admin_key: str | None = Header(default=None)):
