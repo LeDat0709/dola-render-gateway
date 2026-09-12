@@ -84,6 +84,11 @@ SUBMIT_JITTER_SEC = float(os.getenv("DOLA_SUBMIT_JITTER", "3"))
 # 1 lỗi hệ thống = mở Chrome trên cả chục nick, đốt sạch lượt.
 MAX_ROTATE = int(os.getenv("DOLA_MAX_ROTATE", "3"))
 
+# Tắt CHẾ ĐỘ NGHỈ: nick KHÔNG bị bench sau 710022002 / captcha và KHÔNG dừng gửi theo proxy → nick luôn
+# sẵn sàng, chạy tới khi Dola thật sự chặn (hết credit / cookie chết / chặn nội dung). Vẫn giữ giãn nhịp
+# SUBMIT_GAP giữa các lần gửi. CẢNH BÁO: dội liên tục vào 710022002/captcha có thể làm Dola soi nick mạnh hơn.
+NO_COOLDOWN = os.getenv("DOLA_NO_COOLDOWN", "0").strip().lower() in ("1", "true", "yes", "on")
+
 # Tự xóa watermark "Dola AI" ngay khi tải video xong (BẬT mặc định; DOLA_AUTO_REMOVE_WM=0 để tắt)
 AUTO_REMOVE_WM = os.getenv("DOLA_AUTO_REMOVE_WM", "1").strip().lower() not in ("0", "false", "no", "off", "")
 

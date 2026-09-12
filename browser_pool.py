@@ -770,21 +770,27 @@ class BrowserPool:
                             last_err = e2
                             continue
                     except RateLimitedError as e:
-                        pause = note_rate_limited(key=account_proxy_raw(account) or "")
-                        print(f"[pool] {account}: Dola báo gửi quá dày (710022002) — dừng gửi qua proxy này {pause:.0f}s, "
-                              f"nick nghỉ {RATE_LIMIT_NICK_SEC // 60} phút rồi xoay: {e}", flush=True)
-                        self._conn.execute(
-                            "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
-                            (time.time() + RATE_LIMIT_NICK_SEC, account))
-                        self._conn.commit()
+                        if config.NO_COOLDOWN:
+                            print(f"[pool] {account}: 710022002 — NO_COOLDOWN bật, không nghỉ/không dừng gửi, xoay ngay: {e}", flush=True)
+                        else:
+                            pause = note_rate_limited(key=account_proxy_raw(account) or "")
+                            print(f"[pool] {account}: Dola báo gửi quá dày (710022002) — dừng gửi qua proxy này {pause:.0f}s, "
+                                  f"nick nghỉ {RATE_LIMIT_NICK_SEC // 60} phút rồi xoay: {e}", flush=True)
+                            self._conn.execute(
+                                "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
+                                (time.time() + RATE_LIMIT_NICK_SEC, account))
+                            self._conn.commit()
                         last_err = e
                         continue
                     except RiskControlError as e:
-                        print(f"[pool] {account} risk control triggered (30m cooldown), rotating: {e}", flush=True)
-                        self._conn.execute(
-                            "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
-                            (time.time() + COOLDOWN_SEC, account))
-                        self._conn.commit()
+                        if config.NO_COOLDOWN:
+                            print(f"[pool] {account} captcha/risk — NO_COOLDOWN bật, không nghỉ 30 phút, xoay ngay: {e}", flush=True)
+                        else:
+                            print(f"[pool] {account} risk control triggered (30m cooldown), rotating: {e}", flush=True)
+                            self._conn.execute(
+                                "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
+                                (time.time() + COOLDOWN_SEC, account))
+                            self._conn.commit()
                         last_err = e
                         continue
                     except TimeoutError as e:
