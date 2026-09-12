@@ -241,8 +241,7 @@ def test_network_error_does_not_kill_nick():
 
 
 def _reset_rate_limit():
-    browser_pool._rate_limit_until = browser_pool._rate_limit_pause = 0.0
-    browser_pool._gap_boost = browser_pool._gap_boost_at = 0.0
+    browser_pool._reset_rate_state()
 
 
 def test_rate_limit_widens_submit_gap_then_decays():
@@ -306,13 +305,28 @@ def test_rate_limit_backoff_escalates_only_across_bursts():
         assert b.note_rate_limited(now=9000.0) == b.RATE_LIMIT_PAUSE_SEC             # yên quá 10 phút: về mức đầu
         p = 0.0
         for _ in range(6):
-            p = b.note_rate_limited(now=b._rate_limit_until + 1)
+            p = b.note_rate_limited(now=b._rs("")["until"] + 1)
         assert p == b.RATE_LIMIT_PAUSE_MAX, p
     finally:
         _reset_rate_limit()
 
 
+def test_rate_limit_is_per_proxy():
+    """710022002 tính theo IP thoát: proxy A dính quá tải KHÔNG được làm dừng/giãn nhịp nick trên proxy B."""
+    b = browser_pool
+    _reset_rate_limit()
+    try:
+        assert b.note_rate_limited(now=1000.0, key="proxyA") == b.RATE_LIMIT_PAUSE_SEC
+        assert b._rs("proxyA")["until"] == 1000.0 + b.RATE_LIMIT_PAUSE_SEC
+        assert b._rs("proxyB")["until"] == 0.0                       # proxy B không dính theo proxy A
+        assert b._effective_gap_boost(1000.0, "proxyB") == 0.0       # proxy B không bị giãn nhịp
+        assert b._effective_gap_boost(1000.0, "proxyA") == b.RATE_LIMIT_GAP_STEP
+    finally:
+        _reset_rate_limit()
+
+
 if __name__ == "__main__":
+    test_rate_limit_is_per_proxy()
     test_rate_limited_pauses_everyone_then_rotates()
     test_rate_limit_backoff_escalates_only_across_bursts()
     test_network_error_does_not_kill_nick()

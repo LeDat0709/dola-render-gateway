@@ -37,57 +37,67 @@ RATE_LIMIT_PAUSE_SEC = 90.0
 RATE_LIMIT_PAUSE_MAX = 900.0
 RATE_LIMIT_WINDOW = 600.0
 RATE_LIMIT_NICK_SEC = 300
-_rate_limit_until = 0.0     # monotonic: mốc mọi lần gửi phải chờ qua (cũng là lúc lần dừng trước kết thúc)
-_rate_limit_pause = 0.0     # độ dài lần dừng gần nhất (để gấp đôi)
+# State giãn/dừng gửi THEO PROXY (khoá = chuỗi proxy của nick, "" = đi thẳng/proxy chung). 710022002 tính
+# theo IP thoát, nên một IP dính quá tải KHÔNG được làm dừng nick trên IP khác. Mỗi khoá một bộ mốc riêng.
+_rate_state: dict[str, dict[str, float]] = {}
+
+
+def _rs(key: str) -> dict[str, float]:
+    return _rate_state.setdefault(key, {"until": 0.0, "pause": 0.0, "boost": 0.0, "boost_at": 0.0, "slot": 0.0})
+
+
+def _reset_rate_state() -> None:
+    _rate_state.clear()
 
 # Chỉ dừng-rồi-chạy-lại ở cùng nhịp thì hết dừng là dồn vào IP y như cũ → dính tiếp (vòng leo thang
 # 90→180→…→900s như log). Nên mỗi lần bị chặn còn GIÃN THÊM nhịp gửi, rồi tự giảm dần khi êm. Đây là
 # giảm nhẹ trên MỘT IP; muốn chạy 100+ nick thì phải chia proxy (mỗi IP vài nick).
 RATE_LIMIT_GAP_STEP = 5.0    # mỗi lần dính thêm, giãn nhịp gửi thêm ngần này (giây)
 RATE_LIMIT_GAP_MAX = 40.0
-_gap_boost = 0.0             # giây cộng thêm vào SUBMIT_GAP hiện thời
-_gap_boost_at = 0.0          # lần bump gần nhất (monotonic), để giảm dần
 
 
-def _effective_gap_boost(now: float) -> float:
-    """Giãn nhịp thêm còn lại: giảm RATE_LIMIT_GAP_STEP mỗi phút êm kể từ lần chặn gần nhất."""
-    global _gap_boost, _gap_boost_at
-    if _gap_boost <= 0:
+def _effective_gap_boost(now: float, key: str = "") -> float:
+    """Giãn nhịp thêm còn lại của proxy `key`: giảm RATE_LIMIT_GAP_STEP mỗi phút êm kể từ lần chặn gần nhất."""
+    s = _rs(key)
+    if s["boost"] <= 0:
         return 0.0
-    decay = ((now - _gap_boost_at) / 60.0) * RATE_LIMIT_GAP_STEP
-    _gap_boost = max(0.0, _gap_boost - max(0.0, decay))
-    _gap_boost_at = now
-    return _gap_boost
+    decay = ((now - s["boost_at"]) / 60.0) * RATE_LIMIT_GAP_STEP
+    s["boost"] = max(0.0, s["boost"] - max(0.0, decay))
+    s["boost_at"] = now
+    return s["boost"]
 
 
-def note_rate_limited(now: float | None = None) -> float:
-    """Ghi nhận Dola báo gửi quá dày; trả về số giây còn phải dừng. 10 job cùng dính một đợt = một lần dừng."""
-    global _rate_limit_until, _rate_limit_pause, _gap_boost, _gap_boost_at
+def note_rate_limited(now: float | None = None, key: str = "") -> float:
+    """Ghi nhận proxy `key` bị Dola báo gửi quá dày; trả số giây còn phải dừng. 10 job cùng dính một đợt = một lần dừng.
+    Chỉ dừng gửi qua ĐÚNG proxy đó — nick trên proxy khác vẫn chạy."""
+    s = _rs(key)
     now = time.monotonic() if now is None else now
-    if now < _rate_limit_until:
-        return _rate_limit_until - now
-    recent = now - _rate_limit_until < RATE_LIMIT_WINDOW     # dính lại sớm sau khi hết dừng → gấp đôi
-    _rate_limit_pause = min(RATE_LIMIT_PAUSE_MAX, _rate_limit_pause * 2 if recent else RATE_LIMIT_PAUSE_SEC)
-    _rate_limit_until = now + _rate_limit_pause
-    _gap_boost = min(RATE_LIMIT_GAP_MAX, _effective_gap_boost(now) + RATE_LIMIT_GAP_STEP)
-    _gap_boost_at = now
-    return _rate_limit_pause
+    if now < s["until"]:
+        return s["until"] - now
+    recent = now - s["until"] < RATE_LIMIT_WINDOW     # dính lại sớm sau khi hết dừng → gấp đôi
+    s["pause"] = min(RATE_LIMIT_PAUSE_MAX, s["pause"] * 2 if recent else RATE_LIMIT_PAUSE_SEC)
+    s["until"] = now + s["pause"]
+    s["boost"] = min(RATE_LIMIT_GAP_MAX, _effective_gap_boost(now, key) + RATE_LIMIT_GAP_STEP)
+    s["boost_at"] = now
+    return s["pause"]
 
 
 # Cổng giãn nhịp: mỗi lần gửi lệnh lấy một "khe" cách khe trước >= SUBMIT_GAP + ngẫu nhiên. Khoá chỉ giữ lúc
 # tính khe, ngủ ở ngoài → N job song song tự xếp so le thay vì bắn cùng một giây.
 _PACE_LOCK = asyncio.Lock()
-_next_slot = 0.0
 
 
-async def _pace() -> None:
-    global _next_slot
+async def _pace(key: str = "") -> None:
+    """Giãn nhịp gửi cho proxy `key`: mỗi khe cách khe trước >= SUBMIT_GAP (+giãn nếu vừa bị chặn), và chờ
+    qua lệnh tạm dừng của ĐÚNG proxy đó. Proxy khác có khe riêng nên không bị một IP quá tải kéo theo."""
+    global _rate_state
     async with _PACE_LOCK:
+        s = _rs(key)
         now = time.monotonic()
-        base = max(now, _next_slot, _rate_limit_until)      # chờ cả lệnh tạm dừng toàn cục
+        base = max(now, s["slot"], s["until"])
         wait = base - now
-        gap = config.SUBMIT_GAP_SEC + _effective_gap_boost(now)   # vừa bị chặn thì gửi thưa hơn
-        _next_slot = base + gap + random.uniform(0, config.SUBMIT_JITTER_SEC)
+        gap = config.SUBMIT_GAP_SEC + _effective_gap_boost(now, key)
+        s["slot"] = base + gap + random.uniform(0, config.SUBMIT_JITTER_SEC)
     if wait > 0:
         await asyncio.sleep(wait)
 
@@ -667,7 +677,7 @@ class BrowserPool:
                             seen["balance"] = True
                             self._set_credit_balance(account, balance, source)
 
-                        await _pace()
+                        await _pace(account_proxy_raw(account) or "")
                         await _hold_browser()
                         result = await generate_video(
                             account, prompt, ratio, duration, model=model,
@@ -733,7 +743,7 @@ class BrowserPool:
                         print(f"[pool] {account} Dola lỗi tạm thời, thử lại 1 lần: {e}", flush=True)
                         try:
                             await asyncio.sleep(3)
-                            await _pace()
+                            await _pace(account_proxy_raw(account) or "")
                             await _hold_browser()
                             result = await generate_video(
                                 account, prompt, ratio, duration, model=model,
@@ -760,8 +770,8 @@ class BrowserPool:
                             last_err = e2
                             continue
                     except RateLimitedError as e:
-                        pause = note_rate_limited()
-                        print(f"[pool] {account}: Dola báo gửi quá dày (710022002) — dừng gửi toàn bộ {pause:.0f}s, "
+                        pause = note_rate_limited(key=account_proxy_raw(account) or "")
+                        print(f"[pool] {account}: Dola báo gửi quá dày (710022002) — dừng gửi qua proxy này {pause:.0f}s, "
                               f"nick nghỉ {RATE_LIMIT_NICK_SEC // 60} phút rồi xoay: {e}", flush=True)
                         self._conn.execute(
                             "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
