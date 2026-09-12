@@ -32,7 +32,6 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const [gen, setGen] = useState("");
   const [clock, setClock] = useState(0);
   const inflight = useRef(new Set());
-  const riskAns = useRef(new Map());              // prompt -> đã đồng ý gửi thử chưa (hỏi 1 lần)
   const [conc, setConc] = useState({ send: "", login: "" });
   const stop = useRef(false);
   const vidDir = useRef("");
@@ -78,14 +77,10 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     const s = row(n);
     const prompt = (s.prompt || "").trim() || firstLine(bulk);
     if (!prompt) { setRow(n, { phase: "error", errorRaw: "Chưa nhập prompt", status: "warn" }); return false; }
+    // Chỉ cảnh báo, không chặn: bị Dola chặn thì không trừ lượt, còn hộp confirm trước đây bấm Huỷ một lần là
+    // prompt đó bị nhớ "chưa gửi" mãi (không thuộc "Chạy lại lỗi") → auto tạo đứng im.
     const risky = riskyPrompt(prompt);
-    if (risky) {
-      if (!riskAns.current.has(prompt)) riskAns.current.set(prompt, window.confirm(
-        `Prompt này Dola nhiều khả năng CHẶN (${risky}).\n\n`
-        + "Bị chặn thì không trừ lượt, nhưng cũng không ra video — phải đổi NỘI DUNG cảnh quay. "
-        + "Viết lại cho nhẹ chữ không giúp: Dola duyệt nội dung, không duyệt từ khoá.\n\nVẫn gửi thử?"));
-      if (!riskAns.current.get(prompt)) { setRow(n, { phase: "idle", status: "chưa gửi (prompt dễ bị chặn)" }); return false; }
-    }
+    if (risky) setRow(n, { status: `gửi thử — có từ dễ bị chặn: ${risky}` });
     // Server tự co các mốc thời gian trong prompt về đúng thời lượng (fit_prompt_to_duration) — chỉ báo, không chặn.
     const over = durationMismatch(prompt, s.dur);
     if (over) setRow(n, { status: `prompt ~${over}s → tự co về ${s.dur}s` });
