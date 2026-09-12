@@ -6,6 +6,7 @@ Mục đích: tìm repo có thể cóp ý/cóp mã cho dola-render-gateway. Đã
 
 ### 1. Linkmail16/DolaAI-API — gửi lệnh Dola KHÔNG CẦN CHROME (2★, Python, 09/2026)
 > **KIỂM CHỨNG 12/09**: `test_android_submit.py` gửi thử 1 nick (chat chữ) → **HTTP 200, SSE thật**: chữ ký X-Gorgon + cookie web được chấp nhận, không cần Chrome/a_bogus/X-Tt-Token. Lần thử rơi vào 710022002 (giới hạn tần suất IP), không phải lỗi ký. Còn: thử video (ability 17) + sinh device_id riêng mỗi nick.
+> **CHỐT 12/09**: aid=495671 (đúng aid nick web) → 710022004 verify/slide (CAPTCHA shark_admin). X-Gorgon không thay được a_bogus mà shark tin; fingerprint lệch còn bị bắt slide. Đường Android KHÔNG bỏ được Chrome cho nick web → giữ đường fetch qua Chrome. Chi tiết: memory dola-request-signing.
 
 - Bắt từ **app Android**: endpoint `https://api16-normal-i18n-myb.dola.com/chat/completion`, `aid=489823`,
   `device_platform=android`, cookie `sessionid` (+ `X-Tt-Token` từ app; README nói cookie web cũng dùng được).
