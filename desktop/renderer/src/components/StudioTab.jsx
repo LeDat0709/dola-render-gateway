@@ -240,6 +240,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     onSel: (v) => setSel((p) => ({ ...p, [a.account]: v })), onChange: (patch) => setRow(a.account, patch),
     onRun: () => { stop.current = false; runOne(a.account); }, onRelogin: () => relogin(a.account), onProxy: () => setProxy(a.account), onDelete: () => del(a.account),
     onPlay, onOpen: () => api.openDownloads?.(), onCopy: copyPath, onRemoveWm: removeWm,
+    onNew: () => setRow(a.account, { phase: "idle", videoUrl: "", stage: undefined, status: "", errorRaw: "" }),
   });
 
   return (
@@ -354,7 +355,7 @@ function Timeline({ s, compact = false }) {
 }
 
 // Dạng bảng: một dòng một nick, cùng dữ liệu và thao tác với thẻ nhưng nhìn được 15–20 nick không cần cuộn.
-function NickRow({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm }) {
+function NickRow({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
   const n = a.account;
   const chip = stateChip(a, s);
   const tint = s.phase === "done" ? " bg-tertiary/5" : s.phase === "error" ? " bg-error/5" : "";
@@ -369,7 +370,7 @@ function NickRow({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, o
       </td>
       <td className={td + " min-w-[260px]"}>
         {s.phase === "done"
-          ? <DoneRow s={s} onPlay={onPlay} onOpen={onOpen} onCopy={onCopy} onRemoveWm={onRemoveWm} />
+          ? <DoneRow s={s} onPlay={onPlay} onOpen={onOpen} onCopy={onCopy} onRemoveWm={onRemoveWm} onNew={onNew} />
           : <Input className="h-8 text-[12.5px]" value={s.prompt} placeholder={`prompt cho ${n}…`} onChange={(e) => onChange({ prompt: e.target.value })} />}
       </td>
       <td className={td}><SelectNative className="h-8 w-[122px] text-xs" value={s.model} onChange={(e) => onChange({ model: e.target.value })}>{MODELS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
@@ -389,7 +390,7 @@ function NickRow({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, o
   );
 }
 
-function NickCard({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm }) {
+function NickCard({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
   const n = a.account;
   const cardChip = stateChip(a, s);
   const border = s.phase === "done" ? " ring-1 ring-tertiary/25" : s.phase === "error" ? " ring-1 ring-error/30" : "";
@@ -403,7 +404,7 @@ function NickCard({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, 
         <span className="ml-auto font-mono text-[11px] text-muted-foreground">{a.used_today}/{a.limit} hôm nay{a.remaining != null ? ` · còn ${a.remaining}` : ""}</span>
       </div>
       {s.phase === "done" ? (
-        <DoneRow s={s} onPlay={onPlay} onOpen={onOpen} onCopy={onCopy} onRemoveWm={onRemoveWm} />
+        <DoneRow s={s} onPlay={onPlay} onOpen={onOpen} onCopy={onCopy} onRemoveWm={onRemoveWm} onNew={onNew} />
       ) : (
         <Input className="h-9 text-[13px]" value={s.prompt} placeholder={`prompt cho ${n}…`} onChange={(e) => onChange({ prompt: e.target.value })} />
       )}
@@ -444,7 +445,7 @@ function Footer({ s, a, elapsed, onRun }) {
   return <span className="font-mono text-[11px] text-muted-foreground">{s.status || "Chưa chạy"}</span>;
 }
 
-function DoneRow({ s, onPlay, onOpen, onCopy, onRemoveWm }) {
+function DoneRow({ s, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
   const stt = sttFromUrl(s.videoUrl);
   return (
     <div className="flex items-center gap-2 rounded-md bg-surface-lowest p-2">
@@ -457,6 +458,7 @@ function DoneRow({ s, onPlay, onOpen, onCopy, onRemoveWm }) {
       <Button variant="ghost" size="icon" className="h-7 w-7" title="Mở thư mục" onClick={onOpen}><FolderOpen className="h-3.5 w-3.5" /></Button>
       <Button variant="ghost" size="icon" className="h-7 w-7" title="Copy đường dẫn" onClick={() => onCopy(s.videoUrl)}><Copy className="h-3.5 w-3.5" /></Button>
       <Button variant="ghost" size="icon" className="h-7 w-7" title="Xoá logo Dola" onClick={() => onRemoveWm(s.videoUrl)}><Eraser className="h-3.5 w-3.5" /></Button>
+      <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" title="Tạo video mới trên nick này (nhập prompt khác)" onClick={onNew}><Repeat className="h-3.5 w-3.5" /></Button>
     </div>
   );
 }
