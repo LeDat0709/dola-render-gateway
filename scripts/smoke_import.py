@@ -1,7 +1,9 @@
 """Nạp thử toàn bộ app bằng runtime sắp đóng gói. Build gọi file này; lỗi ở đây = build đỏ.
 
-Chạy như một script (không phải python -c) vì bản Python embeddable KHÔNG đưa thư mục làm việc
-vào sys.path và bỏ qua PYTHONPATH khi có file ._pth — chỉ thư mục của script mới được thêm.
+Bản Python embeddable có file ._pth chạy isolated: sys.path CHỈ gồm các dòng trong ._pth — không có
+thư mục làm việc, không có cả thư mục của script, và bỏ qua PYTHONPATH. Vì thế phải tự chèn gốc repo
+vào sys.path ở đây (lúc build chưa có resources\\app-python nên dòng ..\\app-python trong ._pth chưa
+trỏ tới đâu; bước kiểm tra sau đóng gói trong build-win.ps1 mới chứng minh dòng đó đúng).
 """
 import pathlib
 import sys
