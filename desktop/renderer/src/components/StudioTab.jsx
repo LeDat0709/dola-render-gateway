@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { SelectNative } from "@/components/ui/select-native";
+import { ViewToggle, useView } from "@/components/ui/view-toggle";
 import { api, submitJob, pollJob, fmtError, creditCost, firstLine, fnameFromUrl, sttFromUrl, accState, accChip, canRunAccount, deleteAccount, STAGE_TEXT, riskyPrompt, durationMismatch, deadNicks, setConcurrency, patchAccount, wakeAccount, inflightTasks, accState as accStateOf } from "@/lib/api";
 
 const MODELS = ["seedance-2.0", "seedance-2.5"];
@@ -16,9 +17,14 @@ const DURS = [["10", "10s"], ["15", "15s"], ["30", "30s → Dola hạ 15s"]];
 const STEPS = ["Hàng đợi", "Gửi", "Dựng", "Tải về", "Xong"];
 const STEP_OF = { checking: 0, queued: 0, opening: 1, submitting: 1, rendering: 2, processing: 2, downloading: 3 };
 const H2 = "font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground";
+const TH = "h-9 whitespace-nowrap px-2 text-left font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground";
+// Chip trạng thái trên thẻ/dòng: job đang chạy/xong/lỗi đè lên trạng thái nick; nick không chạy được thì mờ đi.
+const stateChip = (a, s) => s.phase === "running" ? { variant: "default", text: "Đang chạy" } : s.phase === "done" ? { variant: "success", text: "Xong" } : s.phase === "error" ? { variant: "danger", text: "Lỗi" } : accChip(a);
+const isDim = (a, s) => s.phase === "idle" && accState(a) !== "ready" && accState(a) !== "busy";
 
 export default function StudioTab({ health, onRefresh, onPlay }) {
   const accounts = health?.accounts || [];
+  const [view, setView] = useView("dolaStudioView");
   const [def, setDef] = useState({ model: "seedance-2.5", dur: "15", ratio: "9:16" });
   const [bulk, setBulk] = useState("");
   const [rows, setRows] = useState({});           // nick -> {prompt,model,ratio,dur,phase,stage,status,startedAt,videoUrl,errorRaw}
@@ -226,6 +232,13 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   };
   const ordered = [...accounts].sort((x, y) => rank(x) - rank(y) || String(x.account).localeCompare(String(y.account)));
   const usable = accounts.filter((a) => rank(a) <= 1).length;
+  // Thẻ (lưới) và dòng (bảng) nhận đúng cùng một bộ props — đổi kiểu hiển thị không đổi hành vi.
+  const nickProps = (a) => ({
+    a, s: row(a.account), selected: !!sel[a.account], clock, elapsed,
+    onSel: (v) => setSel((p) => ({ ...p, [a.account]: v })), onChange: (patch) => setRow(a.account, patch),
+    onRun: () => { stop.current = false; runOne(a.account); }, onRelogin: () => relogin(a.account), onProxy: () => setProxy(a.account), onDelete: () => del(a.account),
+    onPlay, onOpen: () => api.openDownloads?.(), onCopy: copyPath, onRemoveWm: removeWm,
+  });
 
   return (
     <div className="space-y-4">
@@ -277,6 +290,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <Button size="sm" onClick={runSelected} disabled={!selected.length}><Play className="h-3.5 w-3.5" />Chạy đã chọn{selected.length ? ` (${selected.length})` : ""}</Button>
       </div>
       <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-muted-foreground">
+        <ViewToggle value={view} onChange={setView} />
         <span><b className="text-foreground">{usable}</b> nick chạy được (xếp lên đầu) · <b className="text-foreground">{runningNow}</b> đang chạy · tối đa {health?.max_concurrency || "—"} song song
           {health?.pending_tasks ? ` · ${health.pending_tasks} job đang chạy/chờ trên server` : ""}
           {accounts.filter((a) => a.scheduling === false).length ? ` · ${accounts.filter((a) => a.scheduling === false).length} nick tắt lịch` : ""}
@@ -293,43 +307,93 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
       {/* Thẻ theo nick */}
       {!health && <div className="rounded-lg bg-surface p-6 text-center text-sm text-muted-foreground">Server chưa chạy — bấm "Bật server" ở thanh trên.</div>}
       {health && accounts.length === 0 && <div className="rounded-lg bg-surface p-6 text-center text-sm text-muted-foreground">Chưa có nick — sang Kho tài khoản, bấm "Thêm bằng Facebook" hoặc "Nhập kho".</div>}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {ordered.map((a) => (
-          <NickCard key={a.account} a={a} s={row(a.account)} selected={!!sel[a.account]} clock={clock} elapsed={elapsed}
-            onSel={(v) => setSel((p) => ({ ...p, [a.account]: v }))} onChange={(patch) => setRow(a.account, patch)}
-            onRun={() => { stop.current = false; runOne(a.account); }} onRelogin={() => relogin(a.account)} onProxy={() => setProxy(a.account)} onDelete={() => del(a.account)}
-            onPlay={onPlay} onOpen={() => api.openDownloads?.()} onCopy={copyPath} onRemoveWm={removeWm} />
-        ))}
-      </div>
+      {view === "grid" ? (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {ordered.map((a) => <NickCard key={a.account} {...nickProps(a)} />)}
+        </div>
+      ) : accounts.length > 0 && (
+        <div className="overflow-x-auto rounded-lg bg-surface">
+          <table className="w-full min-w-[1040px] border-collapse text-[12.5px]">
+            <thead className="border-b border-surface-high">
+              <tr>
+                <th className={TH + " w-8"}><input type="checkbox" checked={allSel} title={allSel ? "Bỏ chọn" : "Chọn tất cả"} onChange={() => selectWhere(() => !allSel, allSel ? "" : "tất cả")} /></th>
+                <th className={TH}>Nick</th>
+                <th className={TH}>Prompt</th>
+                <th className={TH}>Model</th>
+                <th className={TH}>Tỷ lệ</th>
+                <th className={TH}>Dài</th>
+                <th className={TH}>Tiến trình</th>
+                <th className={TH + " text-right"}>Thao tác</th>
+              </tr>
+            </thead>
+            <tbody>{ordered.map((a) => <NickRow key={a.account} {...nickProps(a)} />)}</tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
 
-function Timeline({ s }) {
+// Thanh 5 bước; compact = chỉ vạch màu (dòng trong bảng), tên bước hiện khi rê chuột.
+function Timeline({ s, compact = false }) {
   const at = s.phase === "done" ? STEPS.length : s.phase === "idle" ? -1 : (STEP_OF[s.stage] ?? 2);
   const tone = (i) => s.phase === "error" && i === at ? "bg-error" : i < at ? "bg-tertiary" : i === at ? "bg-primary" : "bg-surface-highest";
   const text = (i) => s.phase === "error" && i === at ? "text-error" : i === at && s.phase === "running" ? "text-primary" : s.phase === "done" && i === STEPS.length - 1 ? "text-tertiary" : "text-muted-foreground";
   return (
     <div className="flex gap-1">
       {STEPS.map((label, i) => (
-        <div key={label} className="flex flex-1 flex-col gap-1">
+        <div key={label} className="flex flex-1 flex-col gap-1" title={compact ? label : undefined}>
           <div className={"h-[3px] rounded-sm " + tone(i)} />
-          <span className={"whitespace-nowrap font-mono text-[10px] " + text(i)}>{label}</span>
+          {!compact && <span className={"whitespace-nowrap font-mono text-[10px] " + text(i)}>{label}</span>}
         </div>
       ))}
     </div>
   );
 }
 
+// Dạng bảng: một dòng một nick, cùng dữ liệu và thao tác với thẻ nhưng nhìn được 15–20 nick không cần cuộn.
+function NickRow({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm }) {
+  const n = a.account;
+  const chip = stateChip(a, s);
+  const tint = s.phase === "done" ? " bg-tertiary/5" : s.phase === "error" ? " bg-error/5" : "";
+  const icon = "h-7 w-7 text-muted-foreground hover:text-foreground";
+  const td = "px-2 py-1.5 align-middle";
+  return (
+    <tr className={"border-b border-surface-high/60 last:border-0" + tint + (isDim(a, s) ? " opacity-60" : "")}>
+      <td className={td}><input type="checkbox" checked={selected} onChange={(e) => onSel(e.target.checked)} /></td>
+      <td className={td + " whitespace-nowrap"}>
+        <div className="flex items-center gap-2"><span className="font-mono text-[12px] font-semibold">{n}</span><Badge variant={chip.variant}>{chip.text}</Badge></div>
+        <div className="font-mono text-[10.5px] text-muted-foreground">{a.used_today}/{a.limit} hôm nay{a.remaining != null ? ` · còn ${a.remaining}` : ""}</div>
+      </td>
+      <td className={td + " min-w-[260px]"}>
+        {s.phase === "done"
+          ? <DoneRow s={s} onPlay={onPlay} onOpen={onOpen} onCopy={onCopy} onRemoveWm={onRemoveWm} />
+          : <Input className="h-8 text-[12.5px]" value={s.prompt} placeholder={`prompt cho ${n}…`} onChange={(e) => onChange({ prompt: e.target.value })} />}
+      </td>
+      <td className={td}><SelectNative className="h-8 w-[122px] text-xs" value={s.model} onChange={(e) => onChange({ model: e.target.value })}>{MODELS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
+      <td className={td}><SelectNative className="h-8 w-[68px] text-xs" value={s.ratio} onChange={(e) => onChange({ ratio: e.target.value })}>{RATIOS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
+      <td className={td}><SelectNative className="h-8 w-[74px] text-xs" value={s.dur} onChange={(e) => onChange({ dur: e.target.value })}>{DURS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}</SelectNative></td>
+      <td className={td + " w-[240px] max-w-[280px]"}>
+        <Timeline s={s} compact />
+        <div className="mt-1 flex min-h-5 items-center"><Footer s={s} a={a} elapsed={elapsed} onRun={onRun} /></div>
+      </td>
+      <td className={td + " whitespace-nowrap text-right"}>
+        {s.phase !== "running" && <Button variant="ghost" size="icon" className={icon + " text-primary"} title="Chạy nick này" onClick={onRun}><Play className="h-3.5 w-3.5" /></Button>}
+        <Button variant="ghost" size="icon" className={icon} title="Đăng nhập lại" onClick={onRelogin}><RotateCw className="h-3.5 w-3.5" /></Button>
+        <Button variant="ghost" size="icon" className={icon} title="Proxy riêng" onClick={onProxy}><Settings className="h-3.5 w-3.5" /></Button>
+        <Button variant="ghost" size="icon" className={icon} title="Xoá nick" onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>
+      </td>
+    </tr>
+  );
+}
+
 function NickCard({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm }) {
   const n = a.account;
-  const chip = accChip(a);
-  const cardChip = s.phase === "running" ? { variant: "default", text: "Đang chạy" } : s.phase === "done" ? { variant: "success", text: "Xong" } : s.phase === "error" ? { variant: "danger", text: "Lỗi" } : chip;
-  const dim = s.phase === "idle" && accState(a) !== "ready" && accState(a) !== "busy";
+  const cardChip = stateChip(a, s);
   const border = s.phase === "done" ? " ring-1 ring-tertiary/25" : s.phase === "error" ? " ring-1 ring-error/30" : "";
   const icon = "h-7 w-7 text-muted-foreground hover:text-foreground";
   return (
-    <div className={"flex flex-col gap-2.5 rounded-lg bg-surface p-3" + border + (dim ? " opacity-60" : "")}>
+    <div className={"flex flex-col gap-2.5 rounded-lg bg-surface p-3" + border + (isDim(a, s) ? " opacity-60" : "")}>
       <div className="flex items-center gap-2">
         <input type="checkbox" checked={selected} onChange={(e) => onSel(e.target.checked)} />
         <span className="font-mono text-[12.5px] font-semibold">{n}</span>

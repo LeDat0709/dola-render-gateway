@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SelectNative } from "@/components/ui/select-native";
+import { ViewToggle, useView } from "@/components/ui/view-toggle";
 import { api, recentTasks, fnameFromUrl, sttFromUrl, fmtSec, timeAgo } from "@/lib/api";
 
 // Kho video: mọi job đã ra video (tasks.db qua /api/admin/tasks), mỗi dòng ghi rõ nick nào, prompt nào.
@@ -19,8 +20,7 @@ export default function VideoLibrary({ active = true, onPlay }) {
   const [range, setRange] = useState("7");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState(() => { try { return localStorage.getItem("dolaVideoView") || "grid"; } catch { return "grid"; } });
-  const pickView = (v) => { setView(v); try { localStorage.setItem("dolaVideoView", v); } catch {} };
+  const [view, pickView] = useView("dolaVideoView");
   const load = useCallback(async () => {
     setBusy(true);
     const all = await recentTasks(2000);   // server cũ cắt còn 200 — vẫn chạy, chỉ thấy ít video hơn
@@ -81,11 +81,7 @@ export default function VideoLibrary({ active = true, onPlay }) {
             {nicks.map((n) => <option key={n} value={n}>{n}</option>)}
           </SelectNative>
           <SelectNative className="h-8 w-auto text-xs" value={range} onChange={(e) => setRange(e.target.value)}>{RANGES.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</SelectNative>
-          <div className="flex rounded-md bg-surface-lowest p-0.5">
-            {[["grid", "Lưới"], ["table", "Bảng"]].map(([v, t]) => (
-              <button key={v} type="button" onClick={() => pickView(v)} className={"rounded px-2.5 py-1 text-xs font-medium " + (view === v ? "bg-surface text-primary" : "text-muted-foreground hover:text-foreground")}>{t}</button>
-            ))}
-          </div>
+          <ViewToggle value={view} onChange={pickView} />
         </div>
       </div>
 
