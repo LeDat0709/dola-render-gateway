@@ -905,7 +905,7 @@ async def admin_jobs(x_admin_key: str | None = Header(default=None)):
 @app.get("/api/admin/tasks")
 async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"tasks": store.recent_tasks(min(max(limit, 1), 200))}
+    return {"tasks": store.recent_tasks(min(max(limit, 1), 2000))}   # kho video cần xem xa hơn 200 job
 
 
 @app.get("/api/admin/stats")

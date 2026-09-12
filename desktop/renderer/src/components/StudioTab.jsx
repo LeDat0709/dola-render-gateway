@@ -215,6 +215,17 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const needCredit = selected.reduce((s, n) => s + creditCost(row(n).dur), 0);
   const runningNow = Object.values(rows).filter((r) => r.phase === "running").length;
   const allSel = accounts.length > 0 && accounts.every((a) => sel[a.account]);
+  // Nick chạy được lên đầu: đang chạy → sẵn sàng → vừa xong / lỗi (chạy lại được) → nghỉ → hết credit/lượt
+  // → tắt lịch → chưa đăng nhập. Người dùng nhìn hàng đầu là biết còn bao nhiêu nick dùng được.
+  const rank = (a) => {
+    const ph = rows[a.account]?.phase, st = accState(a);
+    if (ph === "running" || st === "busy") return 0;
+    if (st === "ready") return 1;
+    if (ph === "done" || ph === "error") return 2;
+    return { cooling: 3, quota: 4, off: 5 }[st] ?? 6;
+  };
+  const ordered = [...accounts].sort((x, y) => rank(x) - rank(y) || String(x.account).localeCompare(String(y.account)));
+  const usable = accounts.filter((a) => rank(a) <= 1).length;
 
   return (
     <div className="space-y-4">
@@ -266,7 +277,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <Button size="sm" onClick={runSelected} disabled={!selected.length}><Play className="h-3.5 w-3.5" />Chạy đã chọn{selected.length ? ` (${selected.length})` : ""}</Button>
       </div>
       <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-muted-foreground">
-        <span>Luồng: <b className="text-foreground">{runningNow}</b> đang chạy · tối đa {health?.max_concurrency || "—"} song song
+        <span><b className="text-foreground">{usable}</b> nick chạy được (xếp lên đầu) · <b className="text-foreground">{runningNow}</b> đang chạy · tối đa {health?.max_concurrency || "—"} song song
           {health?.pending_tasks ? ` · ${health.pending_tasks} job đang chạy/chờ trên server` : ""}
           {accounts.filter((a) => a.scheduling === false).length ? ` · ${accounts.filter((a) => a.scheduling === false).length} nick tắt lịch` : ""}
           {accounts.filter((a) => a.cooling).length ? ` · ${accounts.filter((a) => a.cooling).length} nick đang nghỉ` : ""}</span>
@@ -283,7 +294,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
       {!health && <div className="rounded-lg bg-surface p-6 text-center text-sm text-muted-foreground">Server chưa chạy — bấm "Bật server" ở thanh trên.</div>}
       {health && accounts.length === 0 && <div className="rounded-lg bg-surface p-6 text-center text-sm text-muted-foreground">Chưa có nick — sang Kho tài khoản, bấm "Thêm bằng Facebook" hoặc "Nhập kho".</div>}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {accounts.map((a) => (
+        {ordered.map((a) => (
           <NickCard key={a.account} a={a} s={row(a.account)} selected={!!sel[a.account]} clock={clock} elapsed={elapsed}
             onSel={(v) => setSel((p) => ({ ...p, [a.account]: v }))} onChange={(patch) => setRow(a.account, patch)}
             onRun={() => { stop.current = false; runOne(a.account); }} onRelogin={() => relogin(a.account)} onProxy={() => setProxy(a.account)} onDelete={() => del(a.account)}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Clapperboard, Users, Settings2, LayoutDashboard, Network } from "lucide-react";
+import { Clapperboard, Users, Settings2, LayoutDashboard, Network, Film } from "lucide-react";
+import VideoLibrary from "@/components/VideoLibrary";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import Header from "@/components/Header";
@@ -44,6 +45,7 @@ export default function App() {
         <TabsList>
           <TabsTrigger value="overview"><LayoutDashboard className="h-4 w-4" />Tổng quan</TabsTrigger>
           <TabsTrigger value="make"><Clapperboard className="h-4 w-4" />Studio</TabsTrigger>
+          <TabsTrigger value="video"><Film className="h-4 w-4" />Video</TabsTrigger>
           <TabsTrigger value="acct"><Users className="h-4 w-4" />Kho tài khoản</TabsTrigger>
           <TabsTrigger value="proxy"><Network className="h-4 w-4" />Proxy</TabsTrigger>
           <TabsTrigger value="settings"><Settings2 className="h-4 w-4" />Cài đặt</TabsTrigger>
@@ -57,6 +59,7 @@ export default function App() {
             <StudioTab health={health} onRefresh={refresh} onPlay={(u) => setVideo(u)} />
           </div>
         </TabsContent>
+        <TabsContent value="video" forceMount><VideoLibrary active={tab === "video"} onPlay={(u) => setVideo(u)} /></TabsContent>
         <TabsContent value="acct" forceMount><AccountsTab onRefresh={refresh} active={tab === "acct"} /></TabsContent>
         <TabsContent value="proxy" forceMount><ProxyTab active={tab === "proxy"} /></TabsContent>
         <TabsContent value="settings" forceMount><SettingsTab active={tab === "settings"} /></TabsContent>
