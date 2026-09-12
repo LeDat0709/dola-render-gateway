@@ -18,6 +18,7 @@ const { fetchGenerate } = require("./fetch-generate.cjs");
 const { applyProxy, attachLoadErrorHandler, preflightDola, readEnvLocal: _readEnvLocal,
         parseProxy, globalProxy, testProxy, PROXY_FORMATS } = require("./proxy.cjs");
 const { gatewayBase, normalizeRemoteBase, testRemote, getAccountProxy, setAccountProxy, getRemoteConfig } = require("./remote.cjs");
+const { createGateway } = require("./gateway.cjs");
 const _IS_WIN = process.platform === "win32";
 const _VENV_BIN = _IS_WIN ? "Scripts" : "bin";   // Windows: .venv\\Scripts, macOS/Linux: .venv/bin
 const VENV_PY = PACKAGED
@@ -45,7 +46,21 @@ function spawnPy(args, opts = {}) {
   return spawn(VENV_PY, a, { cwd: DATA_DIR, env: pyEnv(), ...opts });
 }
 
-let gatewayProc = null;
+// Vòng đời uvicorn ở một chỗ (gateway.cjs): đăng nhập / nạp cookie tạm dừng gateway rồi TỰ BẬT LẠI.
+const gateway = createGateway({
+  isRemote: () => isRemote(),
+  log: (m) => process.stdout.write(`[${logTs()}] ${m}\n`),
+  spawnProc: () => {
+    if (!fs.existsSync(VENV_PY)) return { error: `Không thấy Python tại ${VENV_PY} — chạy setup trước (bản dev) hoặc cài lại app.` };
+    const port = config().base.split(":").pop();
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const p = spawnPy(["-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", port, "--app-dir", APP_DIR]);
+    openLog(); pipeLog(p.stdout, ""); pipeLog(p.stderr, " ⚠");
+    return { proc: p };
+  },
+});
+// Handler cần Chrome profile của nick rảnh: gọi gateway.pause() trong thân, xong tự bật lại.
+const pausedHandle = (channel, fn) => ipcMain.handle(channel, gateway.withPaused(fn));
 
 // --- Log capture: pipe everything the gateway prints to logs/gateway.log (timestamped). ---
 // Without this the subprocess stdout/stderr is discarded (and a full 64KB pipe can stall the gateway).
@@ -125,30 +140,10 @@ ipcMain.handle("video:fetchGenerate", async (_e, { name, prompt, model, duration
   }
 });
 
-ipcMain.handle("gateway:start", async () => {
-  if (isRemote()) return { ok: true, remote: true };   // server chạy trên VPS, máy này không spawn Python
-  if (gatewayProc) return { ok: true, already: true };
-  if (!fs.existsSync(VENV_PY)) {
-    return { ok: false, error: `Không thấy Python tại ${VENV_PY} — chạy setup trước (bản dev) hoặc cài lại app.` };
-  }
-  const port = config().base.split(":").pop();
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  gatewayProc = spawnPy(
-    ["-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", port, "--app-dir", APP_DIR]);
-  openLog();
-  pipeLog(gatewayProc.stdout, "");
-  pipeLog(gatewayProc.stderr, " \u26a0");
-  gatewayProc.on("exit", (code) => {
-    process.stdout.write(`[${logTs()}] ===== gateway exit ${code} =====\n`);
-    gatewayProc = null;
-  });
-  return { ok: true };
-});
-
-ipcMain.handle("gateway:stop", () => {
-  if (gatewayProc) { gatewayProc.kill(); gatewayProc = null; }
-  return { ok: true, remote: isRemote() };
-});
+ipcMain.handle("gateway:start", () => gateway.start());
+ipcMain.handle("gateway:stop", async () => { await gateway.stop(); return { ok: true, remote: isRemote() }; });
+// Khởi động lại: chờ tiến trình cũ nhả cổng rồi mới spawn (bật ngay là "address already in use").
+ipcMain.handle("gateway:restart", async () => { await gateway.stop(); return gateway.start(); });
 
 const NAME_RE = /^[A-Za-z0-9_-]{1,32}$/;
 
@@ -560,7 +555,7 @@ function parseFacebookLine(line) {
 // Facebook OAuth inside the app's own Electron window: cookies go into the nick's partition,
 // the user watches (and can fix a Facebook re-login / checkpoint by hand), and the Dola
 // session is harvested into accounts/<name> the moment sessionid appears.
-ipcMain.handle("account:importFacebookElectron", async (_e, { name, line, lang }) => {
+pausedHandle("account:importFacebookElectron", async (_e, { name, line, lang }) => {
   if (!NAME_RE.test(name || "")) return { ok: false, error: "Tên nick chỉ gồm chữ, số, _ hoặc - (1-32 ký tự)" };
   const pairs = parseFacebookLine(line || "");
   const cred = parseFacebookCred(line || "");   // uid|pass[|2fa] để tự đăng nhập lại khi cookie chết
@@ -568,7 +563,7 @@ ipcMain.handle("account:importFacebookElectron", async (_e, { name, line, lang }
   if (!names.has("c_user") || !names.has("xs")) {
     return { ok: false, error: "Cookie Facebook thiếu c_user / xs — dán đầy đủ cookie hoặc dòng uid|pass|2fa|cookie|ua" };
   }
-  if (gatewayProc) { gatewayProc.kill(); gatewayProc = null; } // free the render profile
+  gateway.pause();   // profile của nick phải rảnh; pausedHandle bật lại gateway khi xong
 
   const partition = `persist:dola-${name}`;
   const ses = session.fromPartition(partition);
@@ -694,9 +689,9 @@ const LOGIN_URL = "https://www.dola.com/chat";
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 const LOGIN_POLL_MS = 3000;
 
-ipcMain.handle("account:loginElectron", async (_e, { name, lang }) => {
+pausedHandle("account:loginElectron", async (_e, { name, lang }) => {
   if (!NAME_RE.test(name || "")) return { ok: false, error: "Tên nick chỉ gồm chữ, số, _ hoặc - (1-32 ký tự)" };
-  if (gatewayProc) { gatewayProc.kill(); gatewayProc = null; } // free the render profile
+  gateway.pause();   // profile của nick phải rảnh; pausedHandle bật lại gateway khi xong
 
   const partition = `persist:dola-${name}`;
   const ses = session.fromPartition(partition);
@@ -735,12 +730,12 @@ ipcMain.handle("account:loginElectron", async (_e, { name, lang }) => {
 
 // Manual login: open accounts/<name> in a headed browser; you log in by hand,
 // login_profile.py auto-captures the cookies. Gateway must release the profile first.
-ipcMain.handle("account:login", async (_e, { name, lang }) => {
+pausedHandle("account:login", async (_e, { name, lang }) => {
   if (isRemote()) return REMOTE_ONLY;
   if (!name || !/^[A-Za-z0-9_-]{1,32}$/.test(name)) {
     return { ok: false, error: "Tên nick chỉ gồm chữ, số, _ hoặc - (1-32 ký tự)" };
   }
-  if (gatewayProc) { gatewayProc.kill(); gatewayProc = null; } // free the profile lock
+  gateway.pause();   // profile của nick phải rảnh; pausedHandle bật lại gateway khi xong
   const args = ["login_profile.py", name, lang || "ja"];
   return await new Promise((resolve) => {
     const proc = spawnPy(args);
@@ -924,7 +919,7 @@ ipcMain.handle("remote:set", (_e, { base, apiKey, adminKey }) => {
     if (String(apiKey || "").trim()) upsertEnvLocal("DOLA_API_KEYS", String(apiKey).trim());
     if (String(adminKey || "").trim()) upsertEnvLocal("DOLA_ADMIN_KEY", String(adminKey).trim());
   } catch (e) { return { ok: false, error: String(e) }; }
-  if (b && gatewayProc) { gatewayProc.kill(); gatewayProc = null; }   // server cục bộ không còn được dùng
+  if (b) gateway.stop();   // chuyển sang máy chủ từ xa: server cục bộ không còn được dùng
   return { ok: true, base: b || "(máy này)" };
 });
 ipcMain.handle("remote:test", async (_e, { base, apiKey, adminKey }) => {
@@ -1052,7 +1047,7 @@ app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 app.on("window-all-closed", () => {
-  if (gatewayProc) gatewayProc.kill();
+  gateway.stop();
   if (process.platform !== "darwin") app.quit();
 });
-app.on("before-quit", () => { if (gatewayProc) gatewayProc.kill(); });
+app.on("before-quit", () => { gateway.stop(); });

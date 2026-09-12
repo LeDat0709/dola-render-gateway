@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("api", {
   getConfig: () => ipcRenderer.invoke("config:get"),
   startGateway: () => ipcRenderer.invoke("gateway:start"),
   stopGateway: () => ipcRenderer.invoke("gateway:stop"),
+  restartGateway: () => ipcRenderer.invoke("gateway:restart"),
   importAccount: (name, lang) => ipcRenderer.invoke("account:import", { name, lang }),
   importAccountText: (name, cookies, lang) => ipcRenderer.invoke("account:importText", { name, cookies, lang }),
   importFacebook: (name, line) => ipcRenderer.invoke("account:importFacebook", { name, line }),

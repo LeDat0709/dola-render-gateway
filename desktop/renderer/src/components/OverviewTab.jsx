@@ -113,7 +113,7 @@ export default function OverviewTab({ health, onPlay, onGo }) {
         <span className="flex items-center gap-1.5 rounded bg-tertiary/10 px-2 py-1 font-mono text-[11px] text-tertiary"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-tertiary" />Tự cập nhật mỗi 5s</span>
         <span className="ml-auto" />
         <Button variant="outline" size="sm" onClick={load} disabled={busy}><RefreshCw className={"h-3.5 w-3.5 " + (busy ? "animate-spin" : "")} />Làm mới ngay</Button>
-        {!cfg.remote && <Button variant="secondary" size="sm" className="text-primary" onClick={async () => { await api.stopGateway?.(); await api.startGateway?.(); }}>Khởi động lại Gateway</Button>}
+        {!cfg.remote && <Button variant="secondary" size="sm" className="text-primary" onClick={() => api.restartGateway?.()}>Khởi động lại Gateway</Button>}
       </div>
 
       <div className="grid gap-3 lg:grid-cols-12">
