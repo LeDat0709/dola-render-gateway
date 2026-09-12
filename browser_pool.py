@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from dola_client import CreditError
+from browser import RegionBlockedError, account_proxy_raw
 from video_worker_ui import (
     AccountLimitedError,
     ContentPolicyViolationError,
@@ -385,7 +386,7 @@ class BrowserPool:
         if lock.locked():
             raise RuntimeError("Account is generating video, please verify later")
         from browser import check_login_state
-        ok = await check_login_state(name)
+        ok = await check_login_state(name)   # RegionBlockedError nổi lên nguyên: không ghi "cookie chết" oan
         self._conn.execute(
             "UPDATE accounts_meta SET login_ok=?, login_checked_at=? WHERE name=?",
             (1 if ok else 0, time.time(), name),
@@ -683,6 +684,15 @@ class BrowserPool:
                     except LoggedOutError as e:
                         print(f"[pool] {account} logged out (session invalid), disabling until re-login: {e}", flush=True)
                         self.set_login_status(account, False)
+                        last_err = e
+                        continue
+                    except RegionBlockedError as e:
+                        # Màn "Dola không khả dụng ở khu vực này" = lỗi đường ra mạng, không phải nick.
+                        # Nick có proxy riêng → proxy đó chết/đổi vùng, nick khác (proxy khác) có thể qua → xoay.
+                        # Không có proxy riêng → mọi nick cùng đi một đường → xoay chỉ tốn ~1 phút/nick → dừng ngay.
+                        print(f"[pool] {account} bị Dola chặn vùng: {e}", flush=True)
+                        if not account_proxy_raw(account):
+                            raise
                         last_err = e
                         continue
                     except CreditInsufficientError as e:

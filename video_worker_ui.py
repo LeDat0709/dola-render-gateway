@@ -17,7 +17,8 @@ from patchright.async_api import async_playwright
 from gap import find_gap_x
 
 import config
-from browser import cookie_value, launch_account_context, pin_session_cookies
+from browser import (RegionBlockedError, cookie_value, launch_account_context, page_region_blocked,
+                     pin_session_cookies, region_blocked_message)
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
 from video_worker import (POLL_JS, SUBMIT_JS, DownloadError, RateLimitedError, RiskControlError, SubmitDelivered,
                           SubmitRejected, _check_submit, _download, extract_unwatermarked_url)
@@ -297,12 +298,20 @@ _NET_ERRORS = ("ERR_INTERNET_DISCONNECTED", "ERR_NETWORK_CHANGED", "ERR_TIMED_OU
                "ERR_EMPTY_RESPONSE", "ERR_SOCKET_NOT_CONNECTED")
 
 
-async def _goto_dola(page, url: str, attempts: int = 3):
-    """page.goto có thử lại khi lỗi mạng chớp nhoáng (mất mạng/proxy blip) → job không chết vì 1 nhịp rớt."""
+async def _goto_dola(page, url: str, attempts: int = 3, account: str = ""):
+    """page.goto có thử lại khi lỗi mạng chớp nhoáng (mất mạng/proxy blip) → job không chết vì 1 nhịp rớt.
+
+    Mở xong thì soi ngay màn "Dola không khả dụng ở khu vực này" (proxy thoát sai nước / không proxy):
+    trang đó không có khung chat nên nếu để chạy tiếp sẽ ra lỗi lạc đề "không thấy nút Tạo video".
+    """
     for i in range(1, attempts + 1):
         try:
             await page.goto(url, timeout=60000, wait_until="domcontentloaded")
+            if await page_region_blocked(page):
+                raise RegionBlockedError(region_blocked_message(account))
             return
+        except RegionBlockedError:
+            raise
         except Exception as e:
             msg = str(e)
             if any(n in msg for n in _NET_ERRORS):
@@ -1055,7 +1064,7 @@ async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, dura
         try:
             page = context.pages[0] if context.pages else await context.new_page()
             captured = _query_capture(page)
-            await _goto_dola(page, "https://www.dola.com/chat")
+            await _goto_dola(page, "https://www.dola.com/chat", account=account)
             # Chờ trang tự gọi API để bắt device_id/web_id (nền ký fetch). Trang/proxy chậm có thể
             # cần hơn 5s → chờ tới ~20s thay vì cứng 5s (giảm _FetchSubmitFailed "device_id missing").
             for _ in range(20):
@@ -1444,7 +1453,7 @@ async def resume_video(account: str, conversation_id: str, timeout: int,
         closed = False
         try:
             page = context.pages[0] if context.pages else await context.new_page()
-            await _goto_dola(page, f"https://www.dola.com/chat/{conversation_id}")
+            await _goto_dola(page, f"https://www.dola.com/chat/{conversation_id}", account=account)
             await page.wait_for_timeout(5000)
             handoff = config.HTTP_POLL_AFTER_SEC if config.HTTP_POLL else None
             early = await poll_conversation(account, page, context, conversation_id, timeout, on_poll,
@@ -1636,7 +1645,7 @@ async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duratio
             p, account, headless=ui_headless, use_extension=use_extension)
         try:
             page = context.pages[0] if context.pages else await context.new_page()
-            await _goto_dola(page, "https://www.dola.com/chat")
+            await _goto_dola(page, "https://www.dola.com/chat", account=account)
             await page.wait_for_timeout(5000)
             if await _is_logged_out(page, context):
                 raise LoggedOutError(_LOGOUT_MSG)

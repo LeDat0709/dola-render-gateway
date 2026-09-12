@@ -64,6 +64,7 @@ export function fmtError(raw) {
   if (/không hiểu prompt|意味不明|内容が不明|内容が不足|not a valid prompt/i.test(r)) return T("✍️", "Dola không hiểu prompt", "Viết mô tả cảnh quay cụ thể (không mất lượt).");
   if (/chặn nội dung|content policy|bản quyền|ポリシー|著作/i.test(r)) return A("🚫", "Bị chặn nội dung", "Đổi prompt nhẹ hơn (không mất lượt).");
   if (/chân dung|portrait|顔/i.test(r)) return A("🧑", "Chặn bảo vệ chân dung", "Dùng ảnh mặt của chính bạn.");
+  if (/chặn vùng|không khả dụng ở quốc gia|地域ではDolaは利用できません/i.test(r)) return A("🌏", "Dola chặn vùng (proxy)", "Nick đang ra mạng từ nước bị chặn — gán/đổi proxy cho nick ở tab Proxy.");
   if (/đăng xuất|logged out|cookie.{0,10}chết|mất phiên|đăng nhập lại|log ?in/i.test(r)) return A("🔑", "Cookie hết hạn", "Bấm đăng nhập lại nick.");
   if (/lỗi tạm thời|エラーが発生|try again|システムエラー|問題が発生/i.test(r)) return T("⏳", "Dola lỗi tạm thời", "Đã tự thử lại; chạy lại nếu vẫn lỗi.");
   if (/thời lượng 30|chip 30|video 30s/i.test(r)) return T("🎞", "30s gửi chưa được", "Kiểm tra mạng/proxy rồi thử lại.");

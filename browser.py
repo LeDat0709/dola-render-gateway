@@ -488,6 +488,58 @@ async def page_logged_in(page) -> bool:
     return bool(await page.evaluate(_LOGGED_IN_JS))
 
 
+class RegionBlockedError(RuntimeError):
+    """Dola trả trang "この国または地域ではDolaは利用できません" (không khả dụng ở quốc gia/khu vực này).
+
+    Lỗi của ĐƯỜNG RA MẠNG (proxy riêng chết/đổi vùng, hoặc không proxy nên đi thẳng từ VN), không
+    phải của nick hay prompt. Trang này không có khung chat → mọi bước sau (tìm nút tạo video,
+    bdms/msToken, kiểm tra đăng nhập) đều trượt với thông báo đánh lạc hướng ("không thấy nút
+    Tạo video", "cookie chết"). Bắt ở chỗ mở trang để nói đúng bệnh.
+    """
+
+
+_REGION_BLOCKED_JS = """() => {
+    if (document.querySelector('textarea') || document.querySelector('[contenteditable="true"]')) return 'ready';
+    const body = document.body ? document.body.innerText : '';
+    const marks = ['地域ではDolaは利用できません', 'not available in your country', 'not available in your region',
+                   'không khả dụng ở quốc gia', 'không khả dụng tại quốc gia', '国家或地区', '國家或地區'];
+    if (marks.some(m => body.includes(m))) return 'blocked';
+    if (body.includes('ログインしてください')) return 'login';
+    const btns = [...document.querySelectorAll('button, [role="button"]')];
+    if (btns.some(b => /Googleで続ける|^ログイン$/.test((b.textContent||'').trim()))) return 'login';
+    return '';
+}"""
+
+
+async def page_region_blocked(page, wait_s: float = 6.0) -> bool:
+    """True khi trang hiện là màn chặn vùng của Dola. Đợi tối đa wait_s cho SPA vẽ xong: dừng sớm
+    ngay khi thấy khung chat (bình thường) hoặc màn đăng nhập (để _is_logged_out lo)."""
+    deadline = time.time() + wait_s
+    while True:
+        try:
+            state = await page.evaluate(_REGION_BLOCKED_JS)
+        except Exception:
+            state = ""
+        if state == "blocked":
+            return True
+        if state in ("ready", "login") or time.time() >= deadline:
+            return False
+        await asyncio.sleep(0.5)
+
+
+def region_blocked_message(account: str = "") -> str:
+    """Câu báo lỗi nói rõ nick đang ra mạng bằng đường nào và phải sửa ở đâu."""
+    own = account_proxy_raw(account) if account else ""
+    if own:
+        via = f"proxy riêng của nick ({mask_proxy(own)}) đang thoát ở nước bị chặn hoặc đã chết → đổi proxy khác cho nick (tab Proxy)"
+    elif config.PROXY:
+        via = f"nick không có proxy riêng, đi proxy chung ({mask_proxy(config.PROXY)}) đang thoát ở nước bị chặn → đổi proxy chung hoặc gán proxy riêng (tab Proxy)"
+    else:
+        via = "nick không có proxy riêng và server đang nối thẳng (không proxy) → gán proxy Nhật/Mỹ cho nick ở tab Proxy"
+    return ("Dola chặn vùng — trang báo 'Dola không khả dụng ở quốc gia/khu vực này'. "
+            f"{via}. Không mất lượt.")
+
+
 async def check_login_state(account: str) -> bool:
     """Opens Dola in headless mode and checks whether session is active."""
     from patchright.async_api import async_playwright
@@ -497,6 +549,8 @@ async def check_login_state(account: str) -> bool:
             page = context.pages[0] if context.pages else await context.new_page()
             await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
             await page.wait_for_timeout(5000)
+            if await page_region_blocked(page, wait_s=0):
+                raise RegionBlockedError(region_blocked_message(account))   # không phải cookie chết
             cookies = await context.cookies("https://www.dola.com")
             if not cookie_value(cookies, "sessionid"):
                 return False
