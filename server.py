@@ -432,7 +432,13 @@ async def lifespan(app: FastAPI):
             row["id"], row["model"], row["prompt"], ratio, row["duration"],
             _task_reference_images(row.get("reference_images")), _task_client(row),
         ))
-    print(f"[gateway] proxy chung: {config.PROXY or '(không — nối thẳng)'}", flush=True)
+    from browser import mask_proxy as _mask, probe_proxy
+    print(f"[gateway] proxy chung: {_mask(config.PROXY) or '(không — nối thẳng)'}", flush=True)
+    if config.PROXY:
+        bad = await probe_proxy(config.PROXY)
+        if bad:
+            print(f"[gateway] ⚠ proxy chung {_mask(config.PROXY)} KHÔNG nối được ({bad}) — mọi nick không có "
+                  "proxy riêng sẽ lỗi. Sửa hoặc xoá trống ở Cài đặt → Proxy chung rồi Tắt/Bật server.", flush=True)
     yield
 
 
@@ -754,8 +760,11 @@ async def admin_account_verify(name: str, x_admin_key: str | None = Header(defau
     except Exception as e:
         message = str(e)
         if "ERR_PROXY_CONNECTION_FAILED" in message or "ERR_TUNNEL_CONNECTION_FAILED" in message:
-            raise HTTPException(502, f"Cannot reach dola.com: proxy {config.PROXY} refused the "
-                                     f"connection. Start the proxy or fix DOLA_PROXY.") from e
+            from browser import account_proxy_raw, mask_proxy as _mask
+            via = _mask(account_proxy_raw(name) or config.PROXY)
+            raise HTTPException(502, f"Không vào được dola.com: proxy {via} không nối được (tắt, sai cổng "
+                                     "hoặc sai mật khẩu). Sửa hoặc xoá trống ở Cài đặt → Proxy chung "
+                                     "(hoặc nút ⚙ của nick), rồi Tắt/Bật server.") from e
         raise HTTPException(502, f"Browser check failed: {message[:300]}") from e
     return {"ok": ok}
 

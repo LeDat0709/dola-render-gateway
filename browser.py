@@ -168,6 +168,25 @@ def mask_proxy(raw: str) -> str:
     return f"{p[0]}:{p[1]}:{p[2]}:•••" if len(p) >= 4 else s
 
 
+async def probe_proxy(raw: str, timeout: float = 3.0) -> str:
+    """Mở thử TCP tới host:port của proxy. Trả "" nếu nối được, ngược lại là lý do ngắn.
+
+    Chỉ kiểm tra cổng có mở không (không kiểm tra mật khẩu / exit node) — đủ để báo "proxy tắt,
+    sai cổng" NGAY lúc khởi động, thay vì để từng nick chết ERR_PROXY_CONNECTION_FAILED.
+    """
+    import asyncio
+    p = parse_proxy(raw)
+    if not p:
+        return "sai định dạng"
+    host, port = p["server"].split("://", 1)[1].rsplit(":", 1)
+    try:
+        _, w = await asyncio.wait_for(asyncio.open_connection(host, int(port)), timeout)
+        w.close()
+        return ""
+    except Exception as exc:
+        return str(exc)[:60] or type(exc).__name__
+
+
 def set_account_proxy(account: str, raw: str) -> None:
     """Writes/clears accounts/<account>/proxy.txt (empty raw removes it → back to global)."""
     d = config.ACCOUNTS_DIR / account

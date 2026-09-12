@@ -66,7 +66,7 @@ patchright install chromium
 
 ### 3. Configure
 ```bash
-# Set your proxy configuration
+# Proxy (optional; unset/empty = direct). Only when your network cannot reach dola.com, e.g. a JP/KR exit node
 export DOLA_PROXY="http://127.0.0.1:7890"
 
 # Set API key for client authentication (optional, empty = dev mode)

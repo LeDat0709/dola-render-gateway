@@ -51,9 +51,10 @@ function parseProxy(raw) {
   return { scheme, host, port, user, pass, rules: `${scheme}://${host}:${port}` };
 }
 
-// Khớp config.py: thiếu khoá DOLA_PROXY → 127.0.0.1:7890 (Clash); có khoá mà trống → nối thẳng.
-// Trước đây Electron nối thẳng còn Python đi 7890 → hai bên báo lỗi khác nhau, người dùng rối.
-const DEFAULT_PROXY = "http://127.0.0.1:7890";
+// Khớp config.py: thiếu khoá DOLA_PROXY hoặc trống → nối thẳng. Trước đây thiếu khoá là rơi về
+// 127.0.0.1:7890 (Clash của máy dev) → máy khách không chạy Clash lỗi ERR_PROXY_CONNECTION_FAILED
+// ở mọi cửa sổ. Muốn Clash thì ghi DOLA_PROXY=http://127.0.0.1:7890 vào .env.local.
+const DEFAULT_PROXY = "";
 function globalProxy(repoRoot) {
   const env = readEnvLocal(repoRoot);
   return ("DOLA_PROXY" in env) ? env.DOLA_PROXY.trim() : DEFAULT_PROXY;
@@ -144,7 +145,7 @@ function showLoadError(win, url, code, desc, send, proxyInfo) {
   if (send) send(`✗ ${hint}`);
   if (!win || win.isDestroyed()) return;
   const pline = proxyInfo
-    ? `Đang dùng proxy <b>${escapeHtml(proxyInfo.scheme + "://" + proxyInfo.host + ":" + proxyInfo.port)}</b> — kiểm tra proxy còn sống không.`
+    ? `Đang dùng proxy <b>${escapeHtml(proxyInfo.scheme + "://" + proxyInfo.host + ":" + proxyInfo.port)}</b> — proxy tắt, sai cổng hoặc sai mật khẩu. Sửa hoặc xoá trống ở <b>Cài đặt → Proxy chung</b> (hoặc nút ⚙ của nick), rồi Tắt/Bật server.`
     : `Đang nối thẳng, không qua proxy. Vào tab <b>Cài đặt → Proxy chung</b> (exit node Nhật hoặc Hàn), hoặc đặt proxy riêng cho nick (nút ⚙), rồi thử lại.`;
   const html = `<meta charset="utf-8"><body style="margin:0;font:14px/1.65 -apple-system,system-ui,'Segoe UI',sans-serif;background:#0c0c0e;color:#fafafa;padding:28px">
 <h2 style="margin:0 0 6px;font-size:16px">Không mở được trang</h2>
@@ -194,7 +195,7 @@ async function preflightDola(ses, repoRoot, name, url = "https://www.dola.com/")
   if (r.ok) return { ok: true };
   const p = parseProxy(accountProxy(repoRoot, name));
   const where = p
-    ? `Proxy đang dùng: ${p.scheme}://${p.host}:${p.port} — kiểm tra proxy còn chạy không.`
+    ? `Proxy đang dùng: ${p.scheme}://${p.host}:${p.port} — proxy tắt, sai cổng hoặc sai mật khẩu. Sửa hoặc xoá trống ở Cài đặt → Proxy chung (hoặc nút ⚙ của nick), rồi Tắt/Bật server.`
     : `Đang nối thẳng — mạng của bạn đang chặn dola.com. Vào Cài đặt → Proxy chung (exit node Nhật/Hàn) rồi thử lại.`;
   return { ok: false, error: `Không vào được dola.com (${r.error}). ${where}` };
 }

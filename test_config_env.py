@@ -34,7 +34,17 @@ def test_real_env_still_wins():
         assert got == "socks5://real:1080", f"config.PROXY={got!r} — biến môi trường thật phải thắng"
 
 
+def test_missing_key_means_direct():
+    """Không .env.local, không biến môi trường → nối thẳng, KHÔNG rơi về 127.0.0.1:7890 (lỗi máy khách)."""
+    import shutil
+    with tempfile.TemporaryDirectory() as d:
+        shutil.copy(REPO / "config.py", d)   # config.py cạnh .env.local của repo → chép ra chỗ trống
+        got = _proxy_seen_from(d, {"PYTHONPATH": d})
+        assert got == "", f"config.PROXY={got!r} — thiếu DOLA_PROXY phải nối thẳng"
+
+
 if __name__ == "__main__":
     test_env_local_in_cwd_reaches_config()
     test_real_env_still_wins()
+    test_missing_key_means_direct()
     print("OK")

@@ -70,8 +70,11 @@ DB_PATH = os.getenv("DOLA_DB_PATH", "tasks.db")
 # Video download storage directory (served statically by FastAPI)
 DOWNLOAD_DIR = os.getenv("DOLA_DOWNLOAD_DIR", "downloads")
 
-# Explicit browser proxy (must point to JP/KR egress; empty = system proxy)
-PROXY = os.getenv("DOLA_PROXY", "http://127.0.0.1:7890")
+# Proxy chung cho trình duyệt + HTTP (exit node Nhật/Hàn). Trống = nối thẳng.
+# Mặc định TRỐNG: trước đây thiếu khoá là rơi về 127.0.0.1:7890 (Clash của máy dev) → máy khách
+# không chạy Clash lỗi ERR_PROXY_CONNECTION_FAILED trên MỌI nick. Dev muốn Clash thì ghi
+# DOLA_PROXY=http://127.0.0.1:7890 vào .env.local. Phải khớp DEFAULT_PROXY trong desktop/proxy.cjs.
+PROXY = os.getenv("DOLA_PROXY", "").strip()
 
 # Run browser in headless mode (login always runs with head)
 HEADLESS = os.getenv("DOLA_HEADLESS", "1") == "1"

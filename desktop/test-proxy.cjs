@@ -36,8 +36,10 @@ assert.ok(/proxy/i.test(describeNetError(-130, "")), "thiếu gợi ý cho -130"
 assert.ok(/tên miền/i.test(describeNetError(-105, "")), "thiếu gợi ý cho -105");
 assert.ok(/mã -999/.test(describeNetError(-999, "")), "mã lạ phải hiện nguyên mã");
 
-// Không có proxy.txt và không có .env.local -> mặc định giống config.py (Clash 7890), không ném lỗi.
-assert.strictEqual(accountProxy("/khong/ton/tai", "acc1"), DEFAULT_PROXY, "thiếu DOLA_PROXY phải rơi về 7890 như Python");
+// Không có proxy.txt và không có .env.local -> nối thẳng như config.py, không ném lỗi.
+// KHÔNG được rơi về 127.0.0.1:7890 nữa: máy khách không chạy Clash từng chết mọi cửa sổ vì mặc định đó.
+assert.strictEqual(DEFAULT_PROXY, "", "mặc định phải là nối thẳng");
+assert.strictEqual(accountProxy("/khong/ton/tai", "acc1"), "", "thiếu DOLA_PROXY phải nối thẳng như Python");
 
 // .env.local quyết định: DOLA_PROXY= (trống) là nối thẳng; có giá trị thì nick không có proxy riêng dùng nó.
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "dola-proxy-"));
@@ -49,4 +51,4 @@ fs.mkdirSync(path.join(tmp, "accounts", "acc1"), { recursive: true });
 fs.writeFileSync(path.join(tmp, "accounts", "acc1", "proxy.txt"), "9.9.9.9:8080\n");
 assert.strictEqual(accountProxy(tmp, "acc1"), "9.9.9.9:8080", "proxy riêng của nick phải thắng proxy chung");
 
-console.log("ALL PASS (" + (cases.length + 11) + " assertions)");
+console.log("ALL PASS (" + (cases.length + 12) + " assertions)");
