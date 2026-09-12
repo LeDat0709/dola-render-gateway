@@ -17,6 +17,29 @@ def _load_local_env():
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+def env_local_path() -> Path:
+    """File .env.local đang dùng (ưu tiên cwd — nơi systemd/app chạy)."""
+    for p in (Path.cwd() / ".env.local", Path(__file__).with_name(".env.local")):
+        if p.exists():
+            return p
+    return Path.cwd() / ".env.local"
+
+
+def upsert_env_local(key: str, value: str) -> None:
+    """Ghi/đổi một dòng KEY=VALUE trong .env.local để cấu hình đổi lúc chạy còn giữ sau khi khởi động lại."""
+    f = env_local_path()
+    lines = f.read_text(encoding="utf-8-sig").splitlines() if f.exists() else []
+    out, done = [], False
+    for raw in lines:
+        if raw.strip().startswith(f"{key}=") and not raw.strip().startswith("#"):
+            out.append(f"{key}={value}"); done = True
+        else:
+            out.append(raw)
+    if not done:
+        out.append(f"{key}={value}")
+    f.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
 _load_local_env()
 HOST = os.getenv("DOLA_HOST", "127.0.0.1")   # app desktop: mặc định localhost (không đòi admin key)
 PORT = int(os.getenv("DOLA_PORT", "8000"))

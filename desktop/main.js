@@ -905,10 +905,20 @@ ipcMain.handle("config:setAutoRetry", async (_e, { on }) => {
     return { ok: true, on: !!on, remote: c.remote };
   } catch (e) { return { ok: false, error: "Server chưa chạy? " + String(e).slice(0, 80) }; }
 });
-ipcMain.handle("proxy:setGlobal", (_e, { proxy }) => {
-  if (isRemote()) return { ok: false, error: "Đang dùng máy chủ từ xa: đặt DOLA_PROXY trong .env.local trên máy chủ rồi khởi động lại dịch vụ dola-gateway." };
+ipcMain.handle("proxy:setGlobal", async (_e, { proxy }) => {
   const v = (proxy || "").trim();
   if (v && !parseProxy(v)) return { ok: false, error: `Proxy sai định dạng. Chấp nhận: ${PROXY_FORMATS}` };
+  if (isRemote()) {   // đặt proxy chung của VPS ngay lúc chạy qua admin API (không phải file máy này)
+    const c = config();
+    const headers = { "Content-Type": "application/json" };
+    if (c.adminKey) headers["x-admin-key"] = c.adminKey;
+    try {
+      const r = await fetch(c.base + "/api/admin/global-proxy", { method: "POST", headers, body: JSON.stringify({ proxy: v }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
+      return { ok: true, proxy: j.proxy || v, remote: true };
+    } catch (e) { return { ok: false, error: "Không nối được máy chủ: " + String(e).slice(0, 80) }; }
+  }
   try { upsertEnvLocal("DOLA_PROXY", v); } catch (e) { return { ok: false, error: String(e) }; }
   return { ok: true, proxy: v || "(nối thẳng)" };
 });

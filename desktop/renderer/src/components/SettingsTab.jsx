@@ -61,7 +61,8 @@ export default function SettingsTab({ active = true }) {
   };
   const saveProxy = async () => {
     const r = await api.setGlobalProxy?.(gp);
-    setGpMsg(r?.ok ? `✓ Đã lưu proxy chung: ${r.proxy} → bấm "Tắt" rồi "Bật server" để áp dụng.` : "✗ " + (r?.error || "?"));
+    setGpMsg(r?.ok ? (r.remote ? `✓ Đã đổi proxy chung của máy chủ: ${r.proxy} — áp dụng ngay cho job mới.`
+                               : `✓ Đã lưu proxy chung: ${r.proxy} → bấm "Tắt" rồi "Bật server" để áp dụng.`) : "✗ " + (r?.error || "?"));
   };
   const testRemote = async () => {
     setRMsg("⏳ đang nối máy chủ…");

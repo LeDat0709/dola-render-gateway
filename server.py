@@ -885,6 +885,27 @@ async def admin_retry(body: AutoRetryUpdate, x_admin_key: str | None = Header(de
     return {"ok": True, "auto_retry": config.AUTO_RETRY}
 
 
+class GlobalProxyUpdate(BaseModel):
+    proxy: str = ""
+
+
+@app.post("/api/admin/global-proxy")
+async def admin_set_global_proxy(body: GlobalProxyUpdate, x_admin_key: str | None = Header(default=None)):
+    """Đặt proxy chung của server NGAY lúc chạy (không cần khởi động lại) và ghi vào .env.local.
+
+    config.PROXY được browser/poll/tải video đọc lại mỗi lần chạy nên áp dụng cho job mới liền. Nhờ vậy
+    app ở chế độ máy chủ từ xa đặt được proxy chung cho VPS thẳng từ giao diện."""
+    _admin_auth(x_admin_key)
+    from browser import parse_proxy
+    v = (body.proxy or "").strip()
+    if v and not parse_proxy(v):
+        raise HTTPException(422, "proxy không hợp lệ (host:port, user:pass@host:port, hoặc host:port:user:pass)")
+    config.PROXY = v
+    config.upsert_env_local("DOLA_PROXY", v)
+    print(f"[gateway] proxy chung đổi thành: {v or '(nối thẳng)'}", flush=True)
+    return {"ok": True, "proxy": v or "(nối thẳng)"}
+
+
 class ConcurrencyUpdate(BaseModel):
     max_concurrency: int | None = Field(None, ge=1, le=MAX_BROWSER_SLOTS)
     login_concurrency: int | None = Field(None, ge=1, le=MAX_LOGIN_SLOTS)
