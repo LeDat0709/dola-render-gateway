@@ -112,7 +112,7 @@ async ({prompt, ratio, duration, model, query, ackIdleMs}) => {
   const _orient = {"9:16":"縦","3:4":"縦","16:9":"横","4:3":"横","1:1":"正方形"}[ratio] || "";
   const _spec = (Number(duration) ? Number(duration)+"秒" : "") + (ratio ? "・アスペクト比"+ratio+(_orient?"（"+_orient+"）":"") : "");
   const _directive = (_spec && !khanMode) ? ("【この仕様で直接生成してください（"+_spec+"）。長さ・比率は変更せず、追加の確認は不要です】\n") : "";
-  const _khanText = prompt + (ratio ? "、" + ratio : "");
+  const _khanText = replyFormat.replace("%s", prompt + (ratio ? "、" + ratio : ""));
 
   const body = {
     client_meta: {
@@ -144,17 +144,20 @@ async ({prompt, ratio, duration, model, query, ackIdleMs}) => {
       regen_query_id: [], edit_query_id: [], regen_instruction: "", no_replace_for_regen: false,
       message_from: 0, shared_app_name: "", shared_app_id: "",
       sse_recv_event_options: {support_chunk_delta: true}, is_ai_playground: false, is_old_user: false,
-      recovery_option: {is_recovery: true, req_create_time_sec: nowSec, append_sse_event_scene: 0},
+      // Khan/UI thật gửi is_recovery:false; true có thể bị server coi là gửi lại tin chat cũ. Giữ true ngoài khanMode.
+      recovery_option: {is_recovery: !khanMode, req_create_time_sec: nowSec, append_sse_event_scene: 0},
       message_storage_type: 0, related_deleted_message_ids: {}, connector_info_list: [],
       model_config: {model_item_key: "", model_extra_params: {}},
       aggregate_params: {conversation_mode: "", mode_id: "", model_item_key: "", agent_mode: "",
                          reasoning_effort: "", provider_id: ""},
     },
-    chat_ability: {ability_type: 17, ability_param: JSON.stringify(abilityParam)},
+    // Khan rải extras cả lên chat_ability (anh em của ability_type) — server đọc credit/queue ở đây.
+    chat_ability: Object.assign({ability_type: 17, ability_param: JSON.stringify(abilityParam)}, khanExtra),
     user_context: [],
     ext: {answer_with_suggest: "0", sub_conv_firstmet_type: "1", collection_id: "", is_finish: "1",
           conversation_init_option: JSON.stringify(initOpt), commerce_credit_config_enable: "0"},
   };
+  Object.assign(body, khanExtra);   // Khan cũng đặt extras ở root body (diff toàn thân 13/09: 13 khoá)
 
   const params = new URLSearchParams(query);
   params.set("web_tab_id", uuid());
