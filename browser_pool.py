@@ -229,12 +229,16 @@ class BrowserPool:
         self._conn.commit()
 
     @staticmethod
-    def _default_cost(duration) -> int:
-        """Giá khi chưa học được từ Dola — khớp UI creditCost (api.js): >=30s = 2 credit, còn lại 1."""
+    def _default_cost(model, duration) -> int:
+        """Giá khi chưa học được từ Dola (đo 13/09): Seedance 2.5 → 30s = 2 credit (payload Khan),
+        10s/15s = 4 credit (Dola: 「4動画クレジットが使用されます」); Seedance 2.0 = 1 credit."""
         try:
-            return 2 if int(duration or 0) >= 30 else 1
+            d = int(duration or 0)
         except (TypeError, ValueError):
-            return 1
+            d = 0
+        if "2.5" in str(model or ""):
+            return 2 if d >= 30 else 4
+        return 1
 
     def _next_limit_reset(self) -> float:
         """Calculates next daily quota reset timestamp."""
@@ -456,7 +460,7 @@ class BrowserPool:
         used = result.get("credits_used") if isinstance(result, dict) else None
         if used and duration and model:
             self._remember_cost(model, duration, used)
-        cost = used or self._cost_for(model, duration) or self._default_cost(duration)
+        cost = used or self._cost_for(model, duration) or self._default_cost(model, duration)
         self._claim(account, cost)
         m = self._meta(account)
         cb = m["credit_balance"] if m else None
@@ -651,7 +655,7 @@ class BrowserPool:
             last_err = None
             pinned = account is not None
             tried: set[str] = set()
-            need = self._cost_for(model, duration) or self._default_cost(duration)
+            need = self._cost_for(model, duration) or self._default_cost(model, duration)
             if account is not None:
                 match = next((a for a in self.list_accounts() if a["name"] == account), None)
                 if match is None:

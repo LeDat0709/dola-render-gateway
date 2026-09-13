@@ -33,16 +33,17 @@ def test_30s_costs_two_credits_and_is_blocked_before_chrome():
         assert pool.used_today("n1") == 2, f"30s phải tính 2 credit, đang {pool.used_today('n1')}"
         a = next(x for x in pool.list_accounts() if x["name"] == "n1")
         assert a["remaining"] == 2
-        # 2/4 đã dùng: 30s thứ 2 (2+2=4) và 10s (2+1=3) đều CÒN được phép
-        assert pool._credit_short(a, pool._default_cost(30), 30, "seedance-2.5") is None, "30s thứ 2 vẫn vừa 4 credit"
-        assert pool._credit_short(a, pool._default_cost(10), 10, "seedance-2.5") is None, "10s vẫn phải chạy được"
+        # 2/4 đã dùng: 30s thứ 2 (2+2=4) còn được; 10s Seedance 2.5 (4 credit) thì KHÔNG; 10s 2.0 (1) thì được
+        assert pool._credit_short(a, pool._default_cost("seedance-2.5", 30), 30, "seedance-2.5") is None, "30s thứ 2 vẫn vừa 4 credit"
+        assert pool._credit_short(a, pool._default_cost("seedance-2.5", 10), 10, "seedance-2.5"), "10s 2.5 = 4 credit, 2+4>4 phải chặn"
+        assert pool._credit_short(a, pool._default_cost("seedance-2.0", 10), 10, "seedance-2.0") is None, "10s 2.0 = 1 credit vẫn chạy được"
         # 30s thứ 2 xong (Dola báo 2クレジット) → 4/4: đây là tình huống 13/09 pool đếm 2 video nên vẫn mở Chrome
         pool._settle("n1", {"video_url": "u", "credits_used": 2}, "seedance-2.5", 30, False)
         assert pool.used_today("n1") == 4, f"phải là 4 credit, đang {pool.used_today('n1')}"
         a = next(x for x in pool.list_accounts() if x["name"] == "n1")
         assert a["remaining"] == 0
-        assert pool._credit_short(a, pool._default_cost(30), 30, "seedance-2.5"), "30s thứ 3 phải bị chặn TRƯỚC khi mở Chrome"
-        assert pool._credit_short(a, pool._default_cost(10), 10, "seedance-2.5"), "hết credit thì 10s cũng chặn"
+        assert pool._credit_short(a, pool._default_cost("seedance-2.5", 30), 30, "seedance-2.5"), "30s thứ 3 phải bị chặn TRƯỚC khi mở Chrome"
+        assert pool._credit_short(a, pool._default_cost("seedance-2.0", 10), 10, "seedance-2.0"), "hết credit thì 10s cũng chặn"
         assert not pool._schedulable(a), "4/4 credit → không schedulable"
         assert pool._cost_for("seedance-2.5", 30) == 2, "phải học được giá 30s = 2 từ câu của Dola"
 
