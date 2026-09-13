@@ -19,10 +19,24 @@ export default function ProxyPoolPanel({ onAssigned }) {
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
 
+  const [loadFailed, setLoadFailed] = useState(false);
   const load = useCallback(async () => {
-    try { setData(await proxyPoolList()); } catch (e) { setMsg("Lỗi đọc kho: " + (e?.message || e)); }
+    try {
+      setData(await proxyPoolList());
+      setLoadFailed(false);
+      setMsg((m) => (m.startsWith("Lỗi đọc kho") ? "" : m));
+    } catch (e) {
+      setLoadFailed(true);
+      setMsg("Lỗi đọc kho: " + (e?.message || e) + " — gateway đang khởi động? Tự thử lại mỗi 5 giây, hoặc bấm ↻.");
+    }
   }, []);
   useEffect(() => { load(); }, [load]);
+  // Mở tab đúng lúc gateway đang restart → lần tải đầu hỏng; trước đây kẹt "Failed to fetch" mãi dù header đã online.
+  useEffect(() => {
+    if (!loadFailed) return undefined;
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [loadFailed, load]);
 
   const run = async (key, fn, done) => {
     setBusy(key); setMsg("");
@@ -51,7 +65,7 @@ export default function ProxyPoolPanel({ onAssigned }) {
       </div>
 
       <Textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} className="bg-background font-mono text-xs"
-        placeholder={"Mỗi dòng một proxy:\n103.1.2.3:8080:user:pass\nhttp://user:pass@1.2.3.4:8080\nsocks5://1.2.3.4:1080"} />
+        placeholder={"Mỗi dòng một proxy:\n103.1.2.3:8080:user:pass\nhttp://user:pass@1.2.3.4:8080\nsocks5://1.2.3.4:1080\ntmproxy://API_KEY   (TMProxy: tool tự lấy IP và tự đổi IP)"} />
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={add} disabled={!!busy || !text.trim()}><Plus className="h-4 w-4" />Thêm vào kho</Button>
         <span className="mx-1 h-4 w-px bg-surface-high" />
