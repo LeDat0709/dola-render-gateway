@@ -106,6 +106,12 @@ async def run(args):
     if args.only:
         wanted = {n.strip() for n in args.only.split(",") if n.strip()}
         accounts = [a for a in accounts if a["name"] in wanted]
+    if args.skip_existing:
+        # Nạp nốt sau khi bị đứt giữa chừng (gateway tắt): bỏ nick đã có thư mục profile trên máy chủ này.
+        acc_dir = Path(args.accounts_dir)
+        before = len(accounts)
+        accounts = [a for a in accounts if not (acc_dir / a["name"]).is_dir()]
+        print(f"bỏ qua {before - len(accounts)} nick đã có trong {acc_dir}/")
     accounts = accounts[args.offset: args.offset + args.limit if args.limit else None]
     print(f"gói: {len(bundle.get('tai_khoan') or bundle.get('accounts') or [])} mục → nạp {len(accounts)} nick "
           f"(offset {args.offset}, {args.parallel} nick cùng lúc)")
@@ -155,6 +161,8 @@ def main():
     ap.add_argument("--only", default="", help="chỉ nạp các tên này, cách nhau bằng dấu phẩy")
     ap.add_argument("--timeout", type=int, default=120, help="giây tối đa mỗi nick")
     ap.add_argument("--dry-run", action="store_true", help="chỉ in kế hoạch, không gọi server")
+    ap.add_argument("--skip-existing", action="store_true", help="bỏ nick đã có thư mục profile (nạp nốt sau khi đứt)")
+    ap.add_argument("--accounts-dir", default="accounts", help="thư mục profile trên máy này (để --skip-existing dò)")
     sys.exit(asyncio.run(run(ap.parse_args())))
 
 
