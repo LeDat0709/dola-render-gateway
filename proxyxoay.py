@@ -28,6 +28,9 @@ _NET_FIELDS = ("Nha Mang", "nha_mang", "nhamang", "network", "isp", "carrier")
 _LOC_FIELDS = ("Vi Tri", "vi_tri", "location", "tinhthanh", "region", "city")
 _EXP_FIELDS = ("Token expiration date", "expired_at", "expiration", "expire", "expiredAt")
 _WAIT_FIELDS = ("nextRequest", "next_request", "nextrequest", "timeout", "ttl")
+# Sàn hạn cache current(): phải LỚN hơn thời lượng render 1 video để IP không đổi giữa chừng (submit/poll/tải
+# cùng IP), nhưng đủ ngắn để bản cache chết được làm mới thay vì phục vụ mãi. 10 phút > video 30s (~2–3 phút).
+_CACHE_TTL_FLOOR = 600
 
 
 class ProxyXoayError(RuntimeError):
@@ -103,17 +106,24 @@ def _fetch(link: str, now: float) -> dict:
     if not proxy:
         raise ProxyXoayError(message or "phản hồi không có proxy")
     ip = proxy["server"].split("://", 1)[1]
+    wait = _wait_seconds(src, message)
     ent = {**proxy, "ip": ip, "network": _find(src, _NET_FIELDS), "location": _find(src, _LOC_FIELDS),
            "expiration": _find(src, _EXP_FIELDS), "message": message,
-           "next_ok": now + _wait_seconds(src, message)}
+           "next_ok": now + wait, "fetched_at": now, "ttl": max(wait, _CACHE_TTL_FLOOR)}
     _cache[link] = ent
     return ent
 
 
 def current(link: str) -> dict:
-    """IP hiện hành: giữ nguyên bản đã cache suốt phiên (không đổi giữa lúc nick chạy); chưa có thì gọi link."""
+    """IP hiện hành: giữ IP đã cache ỔN ĐỊNH trong 1 video (submit/poll/tải cùng IP), nhưng lấy LẠI khi bản
+    cache đã quá hạn (ttl = max(khoảng chờ nhà bán, sàn) tính từ lúc lấy) để không phục vụ IP đã chết mãi.
+    Sàn ttl đặt > thời lượng 1 video nên không đổi IP giữa chừng; chưa có cache → gọi link."""
+    now = time.time()
     with _lock:
-        return _cache.get(link) or _fetch(link, time.time())
+        ent = _cache.get(link)
+        if ent and now - ent["fetched_at"] < ent["ttl"]:
+            return ent
+        return _fetch(link, now)
 
 
 def rotate(link: str) -> dict:

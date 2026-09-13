@@ -263,11 +263,12 @@ def account_proxy(account: str) -> dict | None:
             got = parse_proxy(_sub_session(raw, account))
             if got:
                 return got
-            if raw.strip().lower().startswith("tmproxy://"):
-                # Không được lặng lẽ rơi về proxy chung/IP máy: nick sẽ lộ IP thật và bị Dola gom chung.
+            if is_rotating_proxy(raw):
+                # Proxy XOAY riêng (tmproxy://KEY, key trần, hoặc link get.php) không lấy được IP: KHÔNG lặng lẽ
+                # rơi về proxy chung/IP máy — nick sẽ lộ IP thật và bị Dola gom chung. Báo lỗi rõ để sửa.
                 raise RuntimeError(
-                    f"TMProxy của nick {account} không lấy được IP ({mask_proxy(raw)}) — kiểm tra API key, "
-                    "hạn dùng và whitelist IP trên tmproxy.com.")
+                    f"Proxy xoay riêng của nick {account} không lấy được IP ({mask_proxy(raw)}) — kiểm tra "
+                    "key/link, hạn dùng và whitelist IP trên trang nhà bán.")
     except OSError:
         pass
     return parse_proxy(config.PROXY)
