@@ -215,7 +215,7 @@ class BrowserPool:
     def used_today(self, account: str) -> int:
         row = self._conn.execute(
             "SELECT used FROM usage WHERE account=? AND day=?",
-            (account, date.today().isoformat()),
+            (account, self._usage_day()),
         ).fetchone()
         return row[0] if row else 0
 
@@ -224,7 +224,7 @@ class BrowserPool:
         self._conn.execute(
             "INSERT INTO usage(account, day, used) VALUES (?,?,?) "
             "ON CONFLICT(account, day) DO UPDATE SET used=used+excluded.used",
-            (account, date.today().isoformat(), max(1, int(cost or 1))),
+            (account, self._usage_day(), max(1, int(cost or 1))),
         )
         self._conn.commit()
 
@@ -240,14 +240,28 @@ class BrowserPool:
             return 2 if d >= 30 else 4
         return 1
 
-    def _next_limit_reset(self) -> float:
-        """Calculates next daily quota reset timestamp."""
+    @staticmethod
+    def _reset_tz():
+        """Múi giờ Dola reset lượt (config.LIMIT_RESET_TZ, mặc định Asia/Tokyo)."""
         try:
-            tz = ZoneInfo(config.LIMIT_RESET_TZ)
+            return ZoneInfo(config.LIMIT_RESET_TZ)
         except Exception:
             # Fallback to fixed offset if tzdata is not installed.
             offsets = {"Asia/Tokyo": 9, "Asia/Hong_Kong": 8, "UTC": 0}
-            tz = timezone(timedelta(hours=offsets.get(config.LIMIT_RESET_TZ, 9)))
+            return timezone(timedelta(hours=offsets.get(config.LIMIT_RESET_TZ, 9)))
+
+    @classmethod
+    def _usage_day(cls, ts: float | None = None) -> str:
+        """Khoá ngày của bảng usage theo múi giờ reset của Dola, KHÔNG theo ngày máy.
+
+        Dola reset 0h JST = 22h VN: video làm 22h–24h VN mà ghi theo ngày máy thì sáng hôm sau nick
+        hiện 'còn 4' oan (13/09: 2 nick bị Dola báo hết lượt dù pool ghi 0/4).
+        """
+        return datetime.fromtimestamp(time.time() if ts is None else ts, cls._reset_tz()).date().isoformat()
+
+    def _next_limit_reset(self) -> float:
+        """Calculates next daily quota reset timestamp."""
+        tz = self._reset_tz()
         now = datetime.now(tz)
         next_day = now.date() + timedelta(days=1)
         return datetime.combine(next_day, dt_time.min, tzinfo=tz).timestamp()
@@ -274,7 +288,7 @@ class BrowserPool:
         self._conn.execute(
             "INSERT INTO usage(account, day, used) VALUES (?,?,?) "
             "ON CONFLICT(account, day) DO UPDATE SET used=MAX(used, excluded.used)",
-            (account, date.today().isoformat(), DAILY_LIMIT),
+            (account, self._usage_day(), DAILY_LIMIT),
         )
         self._conn.execute(
             "UPDATE accounts_meta SET last_used_at=?, rate_limited_until=?, limit_reason=? WHERE name=?",

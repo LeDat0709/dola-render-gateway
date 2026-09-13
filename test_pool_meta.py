@@ -23,6 +23,15 @@ def _pool(tmp: str, conc: int = 1) -> BrowserPool:
                        max_concurrency=conc)
 
 
+def test_usage_day_follows_dola_reset_timezone():
+    """Dola reset lượt lúc 0h JST (= 22h VN). Video 22:30 VN ngày 12 phải tính vào ngày 13 (JST); ghi theo
+    ngày máy thì sáng hôm sau nick 'còn 4' oan (13/09: 2 nick bị Dola báo hết lượt dù pool ghi 0/4)."""
+    from datetime import datetime, timezone, timedelta
+    vn = timezone(timedelta(hours=7))
+    assert BrowserPool._usage_day(datetime(2026, 9, 12, 22, 30, tzinfo=vn).timestamp()) == "2026-09-13", "22:30 VN = 00:30 JST hôm sau"
+    assert BrowserPool._usage_day(datetime(2026, 9, 12, 21, 30, tzinfo=vn).timestamp()) == "2026-09-12", "21:30 VN = 23:30 JST cùng ngày"
+
+
 def test_30s_costs_two_credits_and_is_blocked_before_chrome():
     """13/09: 30s Seedance 2.5 = 2 credit. Xong 1 video 30s → used=2 (không phải 1); nick đã tiêu 2/4 credit
     không được nhận thêm 30s (2+2>4) NGAY TRƯỚC khi mở Chrome, nhưng 10s (1 credit) vẫn được."""
@@ -360,6 +369,7 @@ if __name__ == "__main__":
     test_no_double_deduction_when_dola_reports_balance()
     test_yesterdays_credit_reading_is_forgotten()
     test_credit_cost_learned_and_enforced()
+    test_usage_day_follows_dola_reset_timezone()
     test_30s_costs_two_credits_and_is_blocked_before_chrome()
     test_status_for_unknown_nick_is_kept()
     test_new_profile_dir_shows_up_without_restart()
