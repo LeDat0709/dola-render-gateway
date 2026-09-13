@@ -92,6 +92,12 @@ MAX_ROTATE = int(os.getenv("DOLA_MAX_ROTATE", "3"))
 # rồi đổi session sau mỗi N video → IP mới. 0 = tắt (không đổi). "2 video đổi 1 phát" → đặt =2.
 PROXY_ROTATE_EVERY = int(os.getenv("DOLA_PROXY_ROTATE_EVERY", "0"))
 
+# TMProxy (tmproxy.com): dán `tmproxy://API_KEY` làm proxy của nick / vào Kho proxy → tool tự gọi API lấy IP
+# hiện hành, tự đổi IP sau mỗi PROXY_ROTATE_EVERY video và ngay khi Dola báo 710022002. id_location/id_isp
+# theo tài liệu TMProxy (0 = tự chọn). Xem tmproxy.py và docs/TMPROXY.md.
+TMPROXY_ID_LOCATION = int(os.getenv("DOLA_TMPROXY_LOCATION", "0"))
+TMPROXY_ID_ISP = int(os.getenv("DOLA_TMPROXY_ISP", "0"))
+
 # Tắt CHẾ ĐỘ NGHỈ: nick KHÔNG bị bench sau 710022002 / captcha và KHÔNG dừng gửi theo proxy → nick luôn
 # sẵn sàng, chạy tới khi Dola thật sự chặn (hết credit / cookie chết / chặn nội dung). Vẫn giữ giãn nhịp
 # SUBMIT_GAP giữa các lần gửi. CẢNH BÁO: dội liên tục vào 710022002/captcha có thể làm Dola soi nick mạnh hơn.

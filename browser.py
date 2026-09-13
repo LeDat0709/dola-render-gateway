@@ -106,6 +106,9 @@ def parse_proxy(raw: str) -> dict | None:
     raw = (raw or "").strip()
     if not raw:
         return None
+    if raw.lower().startswith("tmproxy://"):
+        import tmproxy   # proxy xoay theo API key: tool tự lấy IP hiện hành (cache), xem tmproxy.py
+        return tmproxy.resolve_dict(raw)
     scheme = "http"
     if "://" in raw:
         scheme, raw = raw.split("://", 1)
@@ -155,7 +158,22 @@ def rotate_proxy_session(account: str, every: int) -> str:
         if st["count"] >= every:
             st["id"] = _secrets.token_hex(4)
             st["count"] = 0
+            rotate_tmproxy_now(account)   # nick dùng tmproxy://KEY → xin IP mới thật sự
     return st["id"]
+
+
+def rotate_tmproxy_now(account: str) -> None:
+    """Nick dùng `tmproxy://KEY` → gọi get-new-proxy (bỏ qua nếu chưa tới next_request; lỗi mạng thì giữ IP cũ).
+    Gọi lúc tới lượt xoay (rotate_proxy_session) và ngay khi Dola báo 710022002 (chặn theo IP)."""
+    raw = account_proxy_raw(account)
+    if not raw.lower().startswith("tmproxy://"):
+        return
+    import tmproxy
+    try:
+        ent = tmproxy.rotate(tmproxy.key_of(raw))
+        print(f"[tmproxy] {account}: IP hiện hành {ent['https']}", flush=True)
+    except Exception as exc:
+        print(f"[tmproxy] {account}: đổi IP thất bại, giữ IP cũ: {str(exc)[:100]}", flush=True)
 
 
 def _sub_session(raw: str, account: str) -> str:
@@ -172,9 +190,15 @@ def account_proxy(account: str) -> dict | None:
     try:
         f = config.ACCOUNTS_DIR / account / "proxy.txt"
         if f.exists():
-            got = parse_proxy(_sub_session(f.read_text(encoding="utf-8"), account))
+            raw = f.read_text(encoding="utf-8")
+            got = parse_proxy(_sub_session(raw, account))
             if got:
                 return got
+            if raw.strip().lower().startswith("tmproxy://"):
+                # Không được lặng lẽ rơi về proxy chung/IP máy: nick sẽ lộ IP thật và bị Dola gom chung.
+                raise RuntimeError(
+                    f"TMProxy của nick {account} không lấy được IP ({mask_proxy(raw)}) — kiểm tra API key, "
+                    "hạn dùng và whitelist IP trên tmproxy.com.")
     except OSError:
         pass
     return parse_proxy(config.PROXY)
@@ -211,6 +235,9 @@ def mask_proxy(raw: str) -> str:
     """Che mật khẩu để trả ra giao diện: scheme://user:•••@host:port hoặc host:port:user:•••."""
     import re
     s = (raw or "").strip()
+    if s.lower().startswith("tmproxy://"):
+        import tmproxy
+        return tmproxy.mask(s)
     m = re.match(r"^(\w+://)?([^:@/]+):([^@/]+)@(.+)$", s)
     if m:
         return f"{m.group(1) or ''}{m.group(2)}:•••@{m.group(4)}"

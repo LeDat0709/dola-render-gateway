@@ -43,6 +43,9 @@ def _proxy_id(raw: str) -> str:
 def mask_proxy(raw: str) -> str:
     """Che mật khẩu: host:port:user:pass -> host:port:user:***; scheme://user:pass@host -> scheme://user:***@host."""
     from browser import parse_proxy
+    if (raw or "").strip().lower().startswith("tmproxy://"):
+        import tmproxy
+        return tmproxy.mask(raw)
     p = parse_proxy(raw)
     if not p:
         return "(sai định dạng)"
@@ -56,6 +59,8 @@ def mask_proxy(raw: str) -> str:
 
 def _scheme(raw: str) -> str:
     from browser import parse_proxy
+    if (raw or "").strip().lower().startswith("tmproxy://"):
+        return "tmproxy"
     p = parse_proxy(raw)
     return (p["server"].split("://", 1)[0] if p else "?")
 
