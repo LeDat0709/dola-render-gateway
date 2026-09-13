@@ -121,7 +121,10 @@ EXTENSION_DIR = os.getenv("DOLA_EXTENSION_DIR", "") or str(_PKG_DIR / "extension
 EXTENSION_ENABLED = os.getenv("DOLA_EXTENSION_ENABLED", "1") == "1"
 # Extension nạp vào MỌI profile nick (mặc định extensions/khan). Đặt DOLA_EXTRA_EXTENSION_DIR="" để tắt.
 # LƯU Ý: nạp extension buộc Chrome chạy CÓ CỬA SỔ (MV3 không chạy headless) → mỗi nick một Chrome hiện hình.
-EXTRA_EXTENSION_DIR = os.getenv("DOLA_EXTRA_EXTENSION_DIR", str(_PKG_DIR / "extensions" / "khan"))
+# MẶC ĐỊNH TẮT ("") vì đã kiểm 13/09: patchright KHÔNG nạp extension chưa đóng gói (fetch không bị bọc,
+# content-script không chạy) — bật lên chỉ tổ buộc Chrome headed (tốn RAM, dễ timeout) mà extension vẫn im.
+# Đặt DOLA_EXTRA_EXTENSION_DIR=/đường/dẫn nếu sau này dùng trình duyệt nạp được extension.
+EXTRA_EXTENSION_DIR = os.getenv("DOLA_EXTRA_EXTENSION_DIR", "")
 
 # Unlock 30s by hijacking fetch in-page (Playwright init-script) instead of the chrome.debugger
 # extension. This runs HEADLESS and shows no "debugging this browser" bar. Set to "0" to fall
