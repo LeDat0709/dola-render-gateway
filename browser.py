@@ -1,5 +1,6 @@
 """Patchright persistent context launcher: Explicit proxy and anti-detection parameters."""
 import asyncio
+import hashlib
 import os
 import shutil
 import subprocess
@@ -95,6 +96,59 @@ LAUNCH_ARGS = [
     "--no-first-run",
     "--no-default-browser-check",
 ]
+
+# ── Antidetect init-scripts ──────────────────────────────────────
+# #1 WebRTC: kể cả có cờ launch, chặn thêm ở JS — bỏ iceServers để không dò STUN/TURN lộ IP thật.
+_WEBRTC_JS = r"""
+(() => { try {
+  const O = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+  if (!O) return;
+  const W = function (cfg, ...rest) { if (cfg && cfg.iceServers) cfg = Object.assign({}, cfg, { iceServers: [] }); return new O(cfg, ...rest); };
+  W.prototype = O.prototype;
+  window.RTCPeerConnection = W; window.webkitRTCPeerConnection = W;
+} catch (e) {} })();
+"""
+
+# #3 Fingerprint per-nick: GPU (WebGL vendor/renderer) + CPU + RAM cố định theo nick, KHÔNG động canvas
+# (spoof canvas nửa vời còn dễ lộ hơn). Giá trị chọn từ danh sách THỰC TẾ theo seed = hash tên nick.
+_WEBGL_FP = [
+    ("Google Inc. (Intel)", "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
+    ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
+    ("Google Inc. (AMD)", "ANGLE (AMD, AMD Radeon(TM) Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)"),
+    ("Google Inc. (Intel)", "ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)"),
+    ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
+]
+_FP_CORES = [4, 6, 8, 8, 12, 16]
+_FP_MEM = [4, 8, 8, 16]
+_FP_TEMPLATE = r"""
+(() => {
+  try {
+    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => %CORES% });
+    Object.defineProperty(navigator, 'deviceMemory', { get: () => %MEM% });
+  } catch (e) {}
+  try {
+    const V = "%VENDOR%", R = "%RENDERER%";
+    const patch = (proto) => { if (!proto || !proto.getParameter) return; const gp = proto.getParameter;
+      proto.getParameter = function (p) { if (p === 37445) return V; if (p === 37446) return R; return gp.call(this, p); }; };
+    patch(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+    patch(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  } catch (e) {}
+})();
+"""
+
+
+def _fp_seed(account: str) -> int:
+    return int(hashlib.sha1(("dola-fp:" + str(account)).encode()).hexdigest()[:8], 16)
+
+
+def _fingerprint_js(account: str) -> str:
+    """JS gán fingerprint ổn định cho nick (cùng nick → luôn giống; khác nick → khác)."""
+    s = _fp_seed(account)
+    vendor, renderer = _WEBGL_FP[s % len(_WEBGL_FP)]
+    return (_FP_TEMPLATE
+            .replace("%CORES%", str(_FP_CORES[(s >> 3) % len(_FP_CORES)]))
+            .replace("%MEM%", str(_FP_MEM[(s >> 6) % len(_FP_MEM)]))
+            .replace("%VENDOR%", vendor).replace("%RENDERER%", renderer))
 
 
 def _is_bare_tmproxy_key(raw: str) -> bool:
@@ -451,6 +505,8 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     await asyncio.to_thread(assert_profile_free, profile_dir)
     launch_headless = config.HEADLESS if headless is None else headless
     args = list(LAUNCH_ARGS)
+    if config.BLOCK_WEBRTC:   # #1: ép WebRTC đi qua proxy → không lộ IP thật của máy
+        args.append("--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
     ext_dirs = []
     hijack_30s = use_extension and config.SKILLPACK_HIJACK
     if use_extension and not hijack_30s:
@@ -475,8 +531,8 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     kwargs = {
         "headless": launch_headless,
         "args": args,
-        "locale": "ja-JP",
-        "timezone_id": "Asia/Tokyo",
+        "locale": config.BROWSER_LOCALE,        # #2: khớp vùng IP proxy (env DOLA_LOCALE)
+        "timezone_id": config.BROWSER_TIMEZONE,  # #2: khớp vùng IP proxy (env DOLA_TIMEZONE)
     }
     # Real Chrome fingerprints far better than bundled Chromium. Empty channel =
     # fall back to bundled Chromium (hosts without Chrome installed).
@@ -490,6 +546,10 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     if proxy_cfg:
         kwargs["proxy"] = proxy_cfg
     context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+    if config.BLOCK_WEBRTC:                       # #1: chặn WebRTC lộ IP thật (song song cờ launch)
+        await context.add_init_script(_WEBRTC_JS)
+    if config.FINGERPRINT_PER_NICK:               # #3: fingerprint GPU/CPU/RAM cố định theo từng nick
+        await context.add_init_script(_fingerprint_js(account))
     # Every flow (worker, verify, cookie import) must see the same Dola UI language.
     await force_ui_language(context)
     if hijack_30s:

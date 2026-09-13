@@ -187,6 +187,18 @@ BROWSER_CHANNEL = os.getenv("DOLA_BROWSER_CHANNEL", "chrome").strip()
 # the launcher probes the real UA once and strips that token; set to pin an exact UA instead.
 BROWSER_UA = os.getenv("DOLA_BROWSER_UA", "").strip()
 
+# ── Antidetect (chống phát hiện) ─────────────────────────────────
+# Ngôn ngữ + múi giờ trình duyệt cho MỌI nick. PHẢI khớp vùng của IP proxy (IP Nhật thì để Tokyo/ja-JP;
+# IP Việt thì Asia/Ho_Chi_Minh + vi-VN) — IP một nơi mà giờ/ngôn ngữ nơi khác là dấu hiệu dễ bị soi.
+# Dola khoá vùng Nhật nên mặc định Tokyo/ja-JP; dùng proxy Nhật/Hàn để nhất quán.
+BROWSER_TIMEZONE = os.getenv("DOLA_TIMEZONE", "Asia/Tokyo").strip()
+BROWSER_LOCALE = os.getenv("DOLA_LOCALE", "ja-JP").strip()
+# Chặn WebRTC lộ IP THẬT của máy (proxy vô nghĩa nếu WebRTC rò IP thật). Mặc định BẬT.
+BLOCK_WEBRTC = os.getenv("DOLA_BLOCK_WEBRTC", "1").strip().lower() in ("1", "true", "yes", "on")
+# Gán fingerprint (WebGL/CPU/RAM…) ỔN ĐỊNH theo TỪNG nick, khác nhau giữa các nick trên cùng máy.
+# Giá trị thực tế + cố định per nick (không random mỗi lần — spoof ẩu còn dễ lộ hơn). Mặc định BẬT.
+FINGERPRINT_PER_NICK = os.getenv("DOLA_FINGERPRINT", "1").strip().lower() in ("1", "true", "yes", "on")
+
 # Daily quota reset timezone (Japan midnight by default)
 LIMIT_RESET_TZ = os.getenv("DOLA_LIMIT_RESET_TZ", "Asia/Tokyo")
 

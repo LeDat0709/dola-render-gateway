@@ -23,6 +23,15 @@ def test_static() -> None:
     print("[static] OK: no AutomationControlled flag, BROWSER_CHANNEL knob present")
     print(f"[static] BROWSER_CHANNEL={config.BROWSER_CHANNEL!r}  LAUNCH_ARGS={browser.LAUNCH_ARGS}")
 
+    # #3 fingerprint per-nick: cố định theo nick, khác nhau giữa nick, có đủ override (không random mỗi lần)
+    a1, a2 = browser._fingerprint_js("nickA"), browser._fingerprint_js("nickA")
+    b1 = browser._fingerprint_js("nickB")
+    assert a1 == a2, "fingerprint phải ỔN ĐỊNH cho cùng một nick"
+    assert a1 != b1, "fingerprint phải KHÁC nhau giữa các nick"
+    assert all(k in a1 for k in ("hardwareConcurrency", "deviceMemory", "37445", "37446")), "thiếu override"
+    assert "iceServers" in browser._WEBRTC_JS, "#1 WebRTC guard phải bỏ iceServers"
+    print("[static] OK: fingerprint per-nick ổn định & khác nhau; WebRTC guard có mặt")
+
 
 async def probe(account: str) -> None:
     from patchright.async_api import async_playwright
