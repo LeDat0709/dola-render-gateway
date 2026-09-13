@@ -109,6 +109,9 @@ def parse_proxy(raw: str) -> dict | None:
     if raw.lower().startswith("tmproxy://"):
         import tmproxy   # proxy xoay theo API key: tool tự lấy IP hiện hành (cache), xem tmproxy.py
         return tmproxy.resolve_dict(raw)
+    import proxyxoay   # proxy xoay theo LINK get.php?key=… (proxyxoay.shop và tương tự), xem proxyxoay.py
+    if proxyxoay.is_key_link(raw):
+        return proxyxoay.resolve_dict(raw)
     scheme = "http"
     if "://" in raw:
         scheme, raw = raw.split("://", 1)
@@ -166,14 +169,19 @@ def rotate_tmproxy_now(account: str) -> None:
     """Nick dùng `tmproxy://KEY` → gọi get-new-proxy (bỏ qua nếu chưa tới next_request; lỗi mạng thì giữ IP cũ).
     Gọi lúc tới lượt xoay (rotate_proxy_session) và ngay khi Dola báo 710022002 (chặn theo IP)."""
     raw = account_proxy_raw(account)
-    if not raw.lower().startswith("tmproxy://"):
-        return
-    import tmproxy
+    low = raw.lower()
     try:
-        ent = tmproxy.rotate(tmproxy.key_of(raw))
-        print(f"[tmproxy] {account}: IP hiện hành {ent['https']}", flush=True)
+        if low.startswith("tmproxy://"):
+            import tmproxy
+            ip = tmproxy.rotate(tmproxy.key_of(raw))["https"]
+        else:
+            import proxyxoay
+            if not proxyxoay.is_key_link(raw):
+                return
+            ip = proxyxoay.rotate(raw)["ip"]
+        print(f"[proxy] {account}: IP hiện hành {ip}", flush=True)
     except Exception as exc:
-        print(f"[tmproxy] {account}: đổi IP thất bại, giữ IP cũ: {str(exc)[:100]}", flush=True)
+        print(f"[proxy] {account}: đổi IP thất bại, giữ IP cũ: {str(exc)[:100]}", flush=True)
 
 
 def _sub_session(raw: str, account: str) -> str:
@@ -238,6 +246,9 @@ def mask_proxy(raw: str) -> str:
     if s.lower().startswith("tmproxy://"):
         import tmproxy
         return tmproxy.mask(s)
+    import proxyxoay
+    if proxyxoay.is_key_link(s):
+        return proxyxoay.mask(s)
     m = re.match(r"^(\w+://)?([^:@/]+):([^@/]+)@(.+)$", s)
     if m:
         return f"{m.group(1) or ''}{m.group(2)}:•••@{m.group(4)}"

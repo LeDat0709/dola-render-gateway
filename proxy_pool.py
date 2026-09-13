@@ -46,6 +46,9 @@ def mask_proxy(raw: str) -> str:
     if (raw or "").strip().lower().startswith("tmproxy://"):
         import tmproxy
         return tmproxy.mask(raw)
+    import proxyxoay
+    if proxyxoay.is_key_link(raw):
+        return proxyxoay.mask(raw)
     p = parse_proxy(raw)
     if not p:
         return "(sai định dạng)"
@@ -59,8 +62,12 @@ def mask_proxy(raw: str) -> str:
 
 def _scheme(raw: str) -> str:
     from browser import parse_proxy
-    if (raw or "").strip().lower().startswith("tmproxy://"):
+    low = (raw or "").strip().lower()
+    if low.startswith("tmproxy://"):
         return "tmproxy"
+    import proxyxoay
+    if proxyxoay.is_key_link(raw):
+        return "proxyxoay"
     p = parse_proxy(raw)
     return (p["server"].split("://", 1)[0] if p else "?")
 
