@@ -69,9 +69,9 @@ MAX_PENDING_TASKS = int(os.getenv("DOLA_MAX_PENDING_TASKS", "100"))
 # Video generation timeout in seconds. Đo thực tế 11/9 (19 video seedance 2.5, 10s): 147–743s, trung vị 281s;
 # 300s trừ ~60s Dola hỏi lại chỉ còn ~230s → quá nửa video "quá giờ" dù Dola vẫn dựng xong (cháy credit).
 VIDEO_TIMEOUT = int(os.getenv("DOLA_VIDEO_TIMEOUT", "900"))
-# 30s (Seedance 2.5) dựng LÂU HƠN — Dola báo "hoàn tất trong ~15 phút", nên 900s cắt đúng lúc sắp xong
+# 30s (Seedance 2.5) dựng LÂU HƠN — Dola báo "hoàn tất trong ~15 phút", Dola dựng 30s 9–35 phút (thất thường), nên 900s/1500s cắt oan
 # → job 30s hay "hết giờ" oan (đã kiểm 13/09: extension tạo được 30,04s thật; tool trượt vì chờ chưa đủ).
-VIDEO_TIMEOUT_30S = int(os.getenv("DOLA_VIDEO_TIMEOUT_30S", "1500"))
+VIDEO_TIMEOUT_30S = int(os.getenv("DOLA_VIDEO_TIMEOUT_30S", "2400"))
 
 # Tự thử lại 1 lần khi Dola lỗi tạm thời (tạo thêm 1 cuộc trò chuyện) và xoay sang nick khác cho job
 # không ghim nick. Tắt (DOLA_AUTO_RETRY=0) = lỗi là dừng ngay. Đổi được lúc chạy qua POST /api/admin/retry.
