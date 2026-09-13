@@ -3,6 +3,7 @@ import { Clapperboard, Users, Settings2, LayoutDashboard, Network, Film } from "
 import VideoLibrary from "@/components/VideoLibrary";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Toaster } from "@/components/ui/toast";
 import TitleBar from "@/components/TitleBar";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
@@ -78,6 +79,7 @@ export default function App() {
           {video && <video key={video} src={video} controls autoPlay playsInline className="max-h-[80vh] w-full rounded-md bg-black" />}
         </DialogContent>
       </Dialog>
+      <Toaster />
     </Tabs>
   );
 }

@@ -269,7 +269,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
       <div className="overflow-x-auto rounded-lg border bg-card">
         <table className="w-full border-collapse text-[12.5px]">
           <thead>
-            <tr className="border-b bg-muted/40">
+            <tr className="sticky top-0 z-10 border-b bg-card">
               <th className={th + " w-8 text-center"}><input type="checkbox" checked={allSel} disabled={busy} onChange={(e) => setSel(e.target.checked ? Object.fromEntries(rows.map((a) => [a.name, true])) : {})} /></th>
               <th className={th}>Tên nick & email</th>
               <th className={th + " w-[150px]"}>Trạng thái</th>

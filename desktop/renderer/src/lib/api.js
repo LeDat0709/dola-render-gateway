@@ -222,17 +222,27 @@ export const deleteAccount = (n) => adminFetch(n, "", "DELETE");
 export const clearCookies = (n) => adminFetch(n, "/clear-cookies");
 
 // ── Proxy & job (Tổng quan / Kho / tab Proxy) ─────────────────────
-// Che mật khẩu proxy khi hiện lên màn hình: scheme://user:•••@host:port hoặc host:port:user:•••
+const _isTmKey = (s) => /^tmproxy:\/\//i.test(s) || /^[a-f0-9]{32}$/i.test(s);
+const _isKeyLink = (s) => /^https?:\/\//i.test(s) && (/get\.php/i.test(s) || /key=/i.test(s));
+const _maskKey = (k) => (k.length <= 8 ? "••••" : k.slice(0, 4) + "…" + k.slice(-3));   // d3e4…f4a
+// Che KEY/mật khẩu proxy khi hiện lên màn hình (không lộ key khi share màn): tmproxy://d3e4…f4a,
+// link get.php?key=••••, scheme://user:•••@host:port, host:port:user:•••
 export const maskProxy = (raw) => {
   const s = String(raw || "").trim(); if (!s) return "";
+  if (_isTmKey(s)) return "tmproxy://" + _maskKey(s.replace(/^tmproxy:\/\//i, ""));
+  if (_isKeyLink(s)) return s.replace(/(key=)[^&\s]+/i, "$1••••");
   const m = s.match(/^(\w+:\/\/)?([^:@/]+):([^@/]+)@(.+)$/);
   if (m) return `${m[1] || ""}${m[2]}:•••@${m[4]}`;
   const p = s.replace(/^\w+:\/\//, "").split(":");
   if (p.length >= 4) return `${p[0]}:${p[1]}:${p[2]}:•••`;
   return s;
 };
+// Nhãn ngắn cho cột PROXY (không lộ key): proxy xoay → "tmproxy ••f4a" / "xoay · <domain>"; proxy tĩnh → host:port
 export const proxyHost = (raw) => {
-  const s = String(raw || "").replace(/^\w+:\/\//, ""); const at = s.lastIndexOf("@");
+  const s0 = String(raw || "").trim();
+  if (_isTmKey(s0)) return "tmproxy ••" + s0.replace(/^tmproxy:\/\//i, "").slice(-3);
+  if (_isKeyLink(s0)) { try { return "xoay · " + new URL(s0).host; } catch { return "proxy xoay"; } }
+  const s = s0.replace(/^\w+:\/\//, ""); const at = s.lastIndexOf("@");
   return at >= 0 ? s.slice(at + 1) : s.split(":").slice(0, 2).join(":");
 };
 export async function recentTasks(limit = 200) {

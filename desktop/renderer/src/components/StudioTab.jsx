@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "@/components/ui/toast";
 import { SelectNative } from "@/components/ui/select-native";
 import { ViewToggle, useView } from "@/components/ui/view-toggle";
 import { api, submitJob, pollJob, fmtError, creditCost, firstLine, fnameFromUrl, sttFromUrl, accState, accChip, canRunAccount, deleteAccount, STAGE_TEXT, riskyPrompt, durationMismatch, deadNicks, setConcurrency, patchAccount, wakeAccount, inflightTasks, accState as accStateOf } from "@/lib/api";
@@ -29,7 +30,13 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const [bulk, setBulk] = useState("");
   const [rows, setRows] = useState({});           // nick -> {prompt,model,ratio,dur,phase,stage,status,startedAt,videoUrl,errorRaw}
   const [sel, setSel] = useState({});             // nick -> bool
-  const [gen, setGen] = useState("");
+  const [gen, _setGen] = useState("");
+  // Ngoài dòng chữ nhỏ cũ, bắn TOAST cho thông báo KẾT THÚC (✓/Xong/Đã…/Lỗi); bỏ qua thông báo "Đang…" tiến trình.
+  const setGen = (msg) => {
+    _setGen(msg);
+    if (!msg || /^Đang |^Kiểm tra phiên/.test(msg)) return;
+    toast(msg, /lỗi|✗/i.test(msg) ? "error" : /^✓|Xong|^Đã /.test(msg) ? "success" : "info");
+  };
   const [clock, setClock] = useState(0);
   const inflight = useRef(new Set());
   const [conc, setConc] = useState({ send: "", login: "" });
@@ -318,7 +325,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <div className="overflow-x-auto rounded-lg bg-surface">
           <table className="w-full min-w-[1040px] border-collapse text-[12.5px]">
             <thead className="border-b border-surface-high">
-              <tr>
+              <tr className="sticky top-0 z-10 bg-surface">
                 <th className={TH + " w-8"}><input type="checkbox" checked={allSel} title={allSel ? "Bỏ chọn" : "Chọn tất cả"} onChange={() => selectWhere(() => !allSel, allSel ? "" : "tất cả")} /></th>
                 <th className={TH}>Nick</th>
                 <th className={TH}>Prompt</th>
@@ -442,6 +449,7 @@ function Footer({ s, a, elapsed, onRun }) {
     );
   }
   if (a.cooling && a.cooldown_until > 0) return <span className="font-mono text-[11px] text-info">nghỉ còn {Math.max(1, Math.ceil((a.cooldown_until - Date.now() / 1000) / 60))} phút</span>;
+  if (a.busy) return <span className="font-mono text-[11px] text-primary">Đang chạy trên server…</span>;   // #2: khớp badge, khỏi mâu thuẫn "Chưa chạy"
   return <span className="font-mono text-[11px] text-muted-foreground">{s.status || "Chưa chạy"}</span>;
 }
 
