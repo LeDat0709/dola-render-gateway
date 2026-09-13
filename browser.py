@@ -98,18 +98,9 @@ LAUNCH_ARGS = [
 ]
 
 # ── Antidetect init-scripts ──────────────────────────────────────
-# #1 WebRTC: kể cả có cờ launch, chặn thêm ở JS — bỏ iceServers để không dò STUN/TURN lộ IP thật.
-_WEBRTC_JS = r"""
-(() => { try {
-  const O = window.RTCPeerConnection || window.webkitRTCPeerConnection;
-  if (!O) return;
-  const W = function (cfg, ...rest) { if (cfg && cfg.iceServers) cfg = Object.assign({}, cfg, { iceServers: [] }); return new O(cfg, ...rest); };
-  W.prototype = O.prototype;
-  window.RTCPeerConnection = W; window.webkitRTCPeerConnection = W;
-} catch (e) {} })();
-"""
-
-# #3 Fingerprint per-nick: GPU (WebGL vendor/renderer) + CPU + RAM cố định theo nick, KHÔNG động canvas
+# #1 WebRTC dùng CỜ LAUNCH native (--force-webrtc-ip-handling-policy), KHÔNG chèn JS override (JS tamper dễ lộ).
+#
+# #3 Fingerprint per-nick (MẶC ĐỊNH TẮT): GPU (WebGL vendor/renderer) + CPU + RAM cố định theo nick, KHÔNG động canvas
 # (spoof canvas nửa vời còn dễ lộ hơn). Giá trị chọn từ danh sách THỰC TẾ theo seed = hash tên nick.
 _WEBGL_FP = [
     ("Google Inc. (Intel)", "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
@@ -397,7 +388,7 @@ def set_account_proxy(account: str, raw: str) -> None:
     d.mkdir(parents=True, exist_ok=True)
     f = d / "proxy.txt"
     if (raw or "").strip():
-        f.write_text(raw.strip(), encoding="utf-8")
+        config.atomic_write_text(f, raw.strip())
     elif f.exists():
         f.unlink()
 
@@ -546,9 +537,9 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     if proxy_cfg:
         kwargs["proxy"] = proxy_cfg
     context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
-    if config.BLOCK_WEBRTC:                       # #1: chặn WebRTC lộ IP thật (song song cờ launch)
-        await context.add_init_script(_WEBRTC_JS)
-    if config.FINGERPRINT_PER_NICK:               # #3: fingerprint GPU/CPU/RAM cố định theo từng nick
+    # #1 WebRTC: chỉ dùng CỜ LAUNCH native (ở trên) — KHÔNG chèn JS override iceServers, vì mọi JS tampering
+    # đều dễ bị bắt hơn là để native (bài học antidetect: không có nhân vá thì đừng động vào JS).
+    if config.FINGERPRINT_PER_NICK:               # #3: JS fingerprint per-nick (MẶC ĐỊNH TẮT — xem config)
         await context.add_init_script(_fingerprint_js(account))
     # Every flow (worker, verify, cookie import) must see the same Dola UI language.
     await force_ui_language(context)
@@ -612,7 +603,7 @@ def persist_dola_cookies(account: str, cookies: list) -> Path:
     profile_dir.mkdir(parents=True, exist_ok=True)
     out_file = profile_dir / "cookies.json"
     import json
-    out_file.write_text(json.dumps(cookies, ensure_ascii=False, indent=2), encoding="utf-8")
+    config.atomic_write_text(out_file, json.dumps(cookies, ensure_ascii=False, indent=2))
     return out_file
 
 

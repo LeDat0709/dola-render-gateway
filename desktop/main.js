@@ -1032,7 +1032,10 @@ function upsertEnvLocal(key, value) {
   const idx = lines.findIndex((l) => l.trim().startsWith(key + "="));
   const entry = `${key}=${value}`;
   if (idx >= 0) lines[idx] = entry; else lines.push(entry);
-  fs.writeFileSync(file, lines.join("\n").replace(/\n+$/, "") + "\n");
+  // Ghi nguyên tử: tmp + rename → app tắt giữa chừng KHÔNG làm cụt .env.local (mất admin key/secret).
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, lines.join("\n").replace(/\n+$/, "") + "\n");
+  fs.renameSync(tmp, file);
 }
 
 ipcMain.handle("account:getAccountsDir", () => {

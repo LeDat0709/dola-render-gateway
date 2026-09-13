@@ -29,8 +29,8 @@ def test_static() -> None:
     assert a1 == a2, "fingerprint phải ỔN ĐỊNH cho cùng một nick"
     assert a1 != b1, "fingerprint phải KHÁC nhau giữa các nick"
     assert all(k in a1 for k in ("hardwareConcurrency", "deviceMemory", "37445", "37446")), "thiếu override"
-    assert "iceServers" in browser._WEBRTC_JS, "#1 WebRTC guard phải bỏ iceServers"
-    print("[static] OK: fingerprint per-nick ổn định & khác nhau; WebRTC guard có mặt")
+    assert config.FINGERPRINT_PER_NICK is False, "JS fingerprint phải MẶC ĐỊNH TẮT (JS tamper dễ bị bắt)"
+    print("[static] OK: fingerprint per-nick ổn định/khác nhau nhưng mặc định TẮT; #1 WebRTC dùng cờ native")
 
 
 async def probe(account: str) -> None:

@@ -25,6 +25,14 @@ def env_local_path() -> Path:
     return Path.cwd() / ".env.local"
 
 
+def atomic_write_text(path, text: str, encoding: str = "utf-8") -> None:
+    """Ghi file kiểu tmp + rename: app/tiến trình tắt giữa chừng KHÔNG để lại file cụt (JSON/proxy/env dở dang)."""
+    path = Path(path)
+    tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    tmp.write_text(text, encoding=encoding)
+    os.replace(tmp, path)
+
+
 def upsert_env_local(key: str, value: str) -> None:
     """Ghi/đổi một dòng KEY=VALUE trong .env.local để cấu hình đổi lúc chạy còn giữ sau khi khởi động lại."""
     f = env_local_path()
@@ -37,7 +45,7 @@ def upsert_env_local(key: str, value: str) -> None:
             out.append(raw)
     if not done:
         out.append(f"{key}={value}")
-    f.write_text("\n".join(out) + "\n", encoding="utf-8")
+    atomic_write_text(f, "\n".join(out) + "\n")
 
 
 _load_local_env()
@@ -195,9 +203,11 @@ BROWSER_TIMEZONE = os.getenv("DOLA_TIMEZONE", "Asia/Tokyo").strip()
 BROWSER_LOCALE = os.getenv("DOLA_LOCALE", "ja-JP").strip()
 # Chặn WebRTC lộ IP THẬT của máy (proxy vô nghĩa nếu WebRTC rò IP thật). Mặc định BẬT.
 BLOCK_WEBRTC = os.getenv("DOLA_BLOCK_WEBRTC", "1").strip().lower() in ("1", "true", "yes", "on")
-# Gán fingerprint (WebGL/CPU/RAM…) ỔN ĐỊNH theo TỪNG nick, khác nhau giữa các nick trên cùng máy.
-# Giá trị thực tế + cố định per nick (không random mỗi lần — spoof ẩu còn dễ lộ hơn). Mặc định BẬT.
-FINGERPRINT_PER_NICK = os.getenv("DOLA_FINGERPRINT", "1").strip().lower() in ("1", "true", "yes", "on")
+# Gán fingerprint (WebGL/CPU/RAM…) theo TỪNG nick bằng JS override. MẶC ĐỊNH TẮT: tool KHÔNG có nhân
+# Chromium vá, nên JS tampering (defineProperty/getParameter) DỄ BỊ PHÁT HIỆN hơn là để native — hại
+# nhiều hơn lợi. Fingerprint per-nick thật sự chỉ nên đạt bằng MÁY/VM khác nhau hoặc antidetect browser vá
+# nhân. Chỉ bật (DOLA_FINGERPRINT=1) khi bạn hiểu rủi ro và Dola không dò tampering sâu.
+FINGERPRINT_PER_NICK = os.getenv("DOLA_FINGERPRINT", "0").strip().lower() in ("1", "true", "yes", "on")
 
 # Daily quota reset timezone (Japan midnight by default)
 LIMIT_RESET_TZ = os.getenv("DOLA_LIMIT_RESET_TZ", "Asia/Tokyo")

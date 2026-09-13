@@ -12,6 +12,31 @@ import config
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
 _HTTPONLY_PREFIX = "#HttpOnly_"
 
+# Cookie dán từ tool/extension khác đủ kiểu tên trường + kiểu dữ liệu. Chuẩn hoá đúng, KHÔNG dùng bool()
+# thô: bool("0")=True nên "secure":"0" bị lật thành True (bug kinh điển). Chỉ các giá trị thật mới = True.
+_SAME_SITE = {"strict": "Strict", "lax": "Lax", "none": "None", "no_restriction": "None"}
+
+
+def _truthy(v, default=False):
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return default
+    if isinstance(v, (int, float)):
+        return v != 0
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _first(item, *keys):
+    for k in keys:
+        if k in item and item[k] not in (None, ""):
+            return item[k]
+    return None
+
+
+def _same_site(v):
+    return _SAME_SITE.get(str(v or "").strip().lower())
+
 
 def parse_cookie_input(raw: str, default_domain: str = ".dola.com") -> List[Dict[str, Any]]:
     """Flexibly parses cookies from JSON, Netscape, Pipe-delimited, or key=value strings."""
@@ -32,14 +57,26 @@ def parse_cookie_input(raw: str, default_domain: str = ".dola.com") -> List[Dict
             cookies = []
             for item in data:
                 if isinstance(item, dict) and "name" in item and "value" in item:
-                    cookies.append({
+                    ck = {
                         "name": str(item["name"]),
-                        "value": str(item["value"]),
-                        "domain": item.get("domain", default_domain),
-                        "path": item.get("path", "/"),
-                        "httpOnly": bool(item.get("httpOnly", False)),
-                        "secure": bool(item.get("secure", True)),
-                    })
+                        "value": str(item.get("value", "")),
+                        "domain": _first(item, "domain", "Domain") or default_domain,
+                        "path": _first(item, "path", "Path") or "/",
+                        "httpOnly": _truthy(_first(item, "httpOnly", "http_only", "HttpOnly")),
+                        "secure": _truthy(_first(item, "secure", "Secure"), default=True),
+                    }
+                    ss = _same_site(_first(item, "sameSite", "same_site", "samesite"))
+                    if ss:
+                        ck["sameSite"] = ss
+                        if ss == "None":
+                            ck["secure"] = True   # trình duyệt bắt buộc SameSite=None phải Secure
+                    exp = _first(item, "expirationDate", "expires", "expiration_time", "expiration_date", "expiry")
+                    try:
+                        if exp is not None and float(exp) > 0:
+                            ck["expires"] = int(float(exp))
+                    except (TypeError, ValueError):
+                        pass
+                    cookies.append(ck)
             if cookies:
                 return cookies
         except json.JSONDecodeError:
