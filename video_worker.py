@@ -98,10 +98,21 @@ async ({prompt, ratio, duration, model, query, ackIdleMs}) => {
   const abilityParam = {model, duration: Number(duration),
     input_box_content: {user_input_content: prompt, reply_message_format: replyFormat}};
   if (ratio) abilityParam.ratio = ratio;
+  // Khan 30s (đo thực 13/09 từ extension "Dola 30 Sec By KHAN"): với model 2.5, khai cost/queue giống
+  // extension → Dola tính 30s là 2 credit thay vì 4 và nhận lệnh cho nick free. Đồng thời KHÔNG nhét
+  // "30秒" vào text tin nhắn (extension gửi prompt thuần + tỷ lệ), nếu không trợ lý Dola đọc thấy "30秒"
+  // rồi từ chối/hỏi lại — đây là lý do đường cũ hay kẹt vòng hỏi-đáp.
+  const khanMode = /2\.5/.test(String(model));
+  const khanExtra = khanMode ? {allow_free_queue: true, accept_queue: true, credits: 1, cost: 1,
+    audio: false, generate_audio: false, with_audio: false, has_audio: false, bgm: false, sound: false,
+    no_watermark: true, remove_logo: true, quality: "max"} : {};
+  Object.assign(abilityParam, khanExtra);
+  const initOpt = Object.assign({need_ack_conversation: true}, khanExtra);
   // Ép chế độ trò chuyện của Dola tôn trọng specs: nhét chỉ thị vào TEXT tin nhắn (không vào prompt video).
   const _orient = {"9:16":"縦","3:4":"縦","16:9":"横","4:3":"横","1:1":"正方形"}[ratio] || "";
   const _spec = (Number(duration) ? Number(duration)+"秒" : "") + (ratio ? "・アスペクト比"+ratio+(_orient?"（"+_orient+"）":"") : "");
-  const _directive = _spec ? ("【この仕様で直接生成してください（"+_spec+"）。長さ・比率は変更せず、追加の確認は不要です】\n") : "";
+  const _directive = (_spec && !khanMode) ? ("【この仕様で直接生成してください（"+_spec+"）。長さ・比率は変更せず、追加の確認は不要です】\n") : "";
+  const _khanText = prompt + (ratio ? "、" + ratio : "");
 
   const body = {
     client_meta: {
@@ -117,7 +128,7 @@ async ({prompt, ratio, duration, model, query, ackIdleMs}) => {
       local_message_id: uuid(),
       content_block: [{
         block_type: 10000,
-        content: {text_block: {text: _directive + prompt, icon_url: "", icon_url_dark: "", summary: ""},
+        content: {text_block: {text: khanMode ? _khanText : (_directive + prompt), icon_url: "", icon_url_dark: "", summary: ""},
                   pc_event_block: ""},
         block_id: uuid(), parent_id: "", meta_info: [], append_fields: [],
       }],
@@ -129,7 +140,7 @@ async ({prompt, ratio, duration, model, query, ackIdleMs}) => {
       from_suggest: false, is_regen: false, is_replace: false, is_from_click_option: false,
       is_from_click_softlink: false, disable_sse_cache: false, select_text_action: "",
       is_select_text: false, resend_for_regen: false, scene_type: 0, unique_key: uuid(), start_seq: 0,
-      need_create_conversation: true, conversation_init_option: {need_ack_conversation: true},
+      need_create_conversation: true, conversation_init_option: initOpt,
       regen_query_id: [], edit_query_id: [], regen_instruction: "", no_replace_for_regen: false,
       message_from: 0, shared_app_name: "", shared_app_id: "",
       sse_recv_event_options: {support_chunk_delta: true}, is_ai_playground: false, is_old_user: false,
@@ -142,7 +153,7 @@ async ({prompt, ratio, duration, model, query, ackIdleMs}) => {
     chat_ability: {ability_type: 17, ability_param: JSON.stringify(abilityParam)},
     user_context: [],
     ext: {answer_with_suggest: "0", sub_conv_firstmet_type: "1", collection_id: "", is_finish: "1",
-          conversation_init_option: '{"need_ack_conversation":true}', commerce_credit_config_enable: "0"},
+          conversation_init_option: JSON.stringify(initOpt), commerce_credit_config_enable: "0"},
   };
 
   const params = new URLSearchParams(query);
