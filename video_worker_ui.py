@@ -1514,7 +1514,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
         raise ValueError("Dola supports durations of 10s, 15s, and 30s via extension")
     # 30s videos cần chờ lâu hơn, nhưng 30 phút là quá dài (nick treo lâu) → chốt 15 phút.
     if duration == 30:
-        timeout = max(timeout, 900)
+        timeout = max(timeout, config.VIDEO_TIMEOUT_30S)   # 30s dựng ~15 phút, chờ đủ kẻo cắt lúc sắp xong
     if reference_image_paths:
         timeout = max(timeout, config.REFERENCE_VIDEO_TIMEOUT)
 

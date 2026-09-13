@@ -324,7 +324,7 @@ def _public_video_url(result: dict) -> str:
 async def _resume_task(row: dict):
     task_id = row["id"]
     deadline = row.get("deadline_at") or (
-        time.time() + (900 if row.get("duration") == 30 else config.VIDEO_TIMEOUT)
+        time.time() + (config.VIDEO_TIMEOUT_30S if row.get("duration") == 30 else config.VIDEO_TIMEOUT)
     )
     remaining = max(1, int(deadline - time.time()))
     api_key_hash = row.get("api_key_hash")
@@ -379,7 +379,7 @@ def _task_reference_images(raw) -> list[str]:
 
 MAX_AUTO_REQUEUE = 2          # số lần tự chạy lại một job bị restart cắt ngang
 STALE_REQUEUE_SEC = 6 * 3600  # job cũ hơn mức này thì không tự chạy lại nữa (prompt đã lỗi thời)
-STALE_RESUME_SEC = 20 * 60  # job "processing" cũ hơn mức này khi khởi động = treo → bỏ, KHÔNG resume (kẻo khoá nick mãi); phải > VIDEO_TIMEOUT (900s) + thời gian hỏi lại
+STALE_RESUME_SEC = 30 * 60  # job "processing" cũ hơn mức này khi khởi động = treo → bỏ; phải > VIDEO_TIMEOUT_30S (1500s) kẻo bỏ oan job 30s đang dựng
 
 
 def _restart_action(row: dict, now: float) -> tuple[str, str | None]:
