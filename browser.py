@@ -319,6 +319,7 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     await asyncio.to_thread(assert_profile_free, profile_dir)
     launch_headless = config.HEADLESS if headless is None else headless
     args = list(LAUNCH_ARGS)
+    ext_dirs = []
     hijack_30s = use_extension and config.SKILLPACK_HIJACK
     if use_extension and not hijack_30s:
         # Legacy path: chrome.debugger extension (needs a headed window, shows the debug bar).
@@ -327,11 +328,18 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
         extension_dir = Path(config.EXTENSION_DIR).resolve()
         if not extension_dir.exists():
             raise FileNotFoundError(f"Dola extension directory does not exist: {extension_dir}")
+        ext_dirs.append(str(extension_dir))
+    # Extension nạp vào MỌI profile nick (config.EXTRA_EXTENSION_DIR). MV3 không chạy headless → buộc có cửa sổ.
+    if config.EXTRA_EXTENSION_DIR:
+        extra = Path(config.EXTRA_EXTENSION_DIR).resolve()
+        if extra.exists():
+            ext_dirs.append(str(extra))
+        else:
+            print(f"[browser] DOLA_EXTRA_EXTENSION_DIR không tồn tại, bỏ qua: {extra}", flush=True)
+    if ext_dirs:
         launch_headless = False
-        args.extend([
-            f"--disable-extensions-except={extension_dir}",
-            f"--load-extension={extension_dir}",
-        ])
+        args.append(f"--disable-extensions-except={','.join(ext_dirs)}")
+        args.extend(f"--load-extension={d}" for d in ext_dirs)
     kwargs = {
         "headless": launch_headless,
         "args": args,

@@ -1,0 +1,106 @@
+{
+  "manifest_version": 3,
+  "name": "Dola 30 Sec By KHAN",
+  "version": "1.1",
+  "description": "Ultra-Fast 30s Dola AI Video Generator & Auto Downloader by Khan (Raw 1080P Watermark-Free)",
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "cookies",
+    "downloads",
+    "tabs",
+    "webNavigation",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "scripting",
+    "notifications"
+  ],
+  "host_permissions": [
+    "*://*.dola.com/*",
+    "*://*.seaart.ai/*",
+    "*://*.byteintl.com/*",
+    "*://*.ibytedtos.com/*",
+    "https://dola.com/*",
+    "https://www.dola.com/*",
+    "*://*.doubao.com/*",
+    "https://doubao.com/*",
+    "https://www.doubao.com/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.doubao.com/chat/*",
+        "https://*.doubao.com/chat/*",
+        "https://dola.com/chat/*",
+        "https://www.dola.com/chat/*",
+        "https://*.dola.com/chat/*",
+        "*://*.dola.com/*",
+        "*://*.seaart.ai/*",
+        "https://dola.com/*",
+        "https://www.dola.com/*"
+      ],
+      "js": [
+        "extractor.js",
+        "inject.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.doubao.com/*",
+        "https://*.doubao.com/*",
+        "https://dola.com/*",
+        "https://www.dola.com/*",
+        "https://*.dola.com/*",
+        "*://*.dola.com/*",
+        "*://*.seaart.ai/*",
+        "https://dola.com/*",
+        "https://www.dola.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Dola 30 Sec By KHAN",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "extractor.js",
+        "inject.js",
+        "icon16.png",
+        "icon48.png",
+        "icon128.png"
+      ],
+      "matches": [
+        "https://www.doubao.com/*",
+        "https://*.doubao.com/*",
+        "https://dola.com/*",
+        "https://www.dola.com/*",
+        "https://*.dola.com/*",
+        "*://*.dola.com/*",
+        "*://*.seaart.ai/*",
+        "https://dola.com/*",
+        "https://www.dola.com/*"
+      ]
+    }
+  ]
+}
