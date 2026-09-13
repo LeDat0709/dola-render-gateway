@@ -57,9 +57,10 @@ def _install_fakes(rotated, peak, fail_first=None):
     browser.rotate_effective_proxy = lambda account: rotated["ips"].append(account)
 
 
-async def _run(tmp, one_nick, proxy, fail_first=None):
+async def _run(tmp, one_nick, proxy, fail_first=None, nicks_per_ip=1):
     config.ONE_NICK = one_nick
     config.PROXY = proxy
+    config.NICKS_PER_IP = nicks_per_ip
     pool = _pool(tmp)
     rotated = {"ips": [], "failed": set()}
     peak = []
@@ -74,14 +75,21 @@ async def _run(tmp, one_nick, proxy, fail_first=None):
 
 def main():
     orig = (browser_pool.generate_video, browser_pool._pace, browser.rotate_effective_proxy,
-            config.ONE_NICK, config.PROXY)
+            config.ONE_NICK, config.PROXY, config.NICKS_PER_IP)
     try:
+        # N=1: mỗi nick 1 IP → 2 nick đổi IP 2 lần, tuần tự
         with tempfile.TemporaryDirectory() as tmp:
-            r = asyncio.run(_run(tmp, True, ROT))
+            r = asyncio.run(_run(tmp, True, ROT, nicks_per_ip=1))
         assert r["peak"] == 1, f"phải 1 nick/lần, gặp {r['peak']}"
-        assert len(r["rotated"]) == 2, f"phải đổi IP 2 lần, gặp {r['rotated']}"
+        assert len(r["rotated"]) == 2, f"N=1 phải đổi IP 2 lần, gặp {r['rotated']}"
         assert r["one_nick_val"] == 1, f"semaphore rò rỉ (value={r['one_nick_val']})"
         assert all(not isinstance(x, Exception) for x in r["results"]), r["results"]
+
+        # N=2: 2 nick dùng CHUNG 1 IP → chỉ đổi IP 1 lần (tái dùng cho nick thứ 2), vẫn tuần tự
+        with tempfile.TemporaryDirectory() as tmp:
+            r = asyncio.run(_run(tmp, True, ROT, nicks_per_ip=2))
+        assert r["peak"] == 1, f"N=2 vẫn tuần tự, gặp {r['peak']}"
+        assert len(r["rotated"]) == 1, f"N=2 chỉ đổi IP 1 lần cho 2 nick, gặp {r['rotated']}"
 
         with tempfile.TemporaryDirectory() as tmp:
             r = asyncio.run(_run(tmp, True, ""))
@@ -100,7 +108,7 @@ def main():
         print("test_one_nick: OK")
     finally:
         (browser_pool.generate_video, browser_pool._pace, browser.rotate_effective_proxy,
-         config.ONE_NICK, config.PROXY) = orig
+         config.ONE_NICK, config.PROXY, config.NICKS_PER_IP) = orig
 
 
 if __name__ == "__main__":

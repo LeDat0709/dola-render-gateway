@@ -140,6 +140,7 @@ class BrowserPool:
         self.max_concurrency = max(1, max_concurrency)
         self.semaphore = asyncio.Semaphore(self.max_concurrency)
         self._one_nick = asyncio.Semaphore(1)   # MỖI LẦN MỘT NICK: 1 nick chạy trọn job tại một thời điểm
+        self._ip_used = 0                        # số nick đã dùng IP proxy xoay hiện tại (đổi IP sau mỗi N nick)
         self._locks: dict[str, asyncio.Lock] = {}
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -715,13 +716,19 @@ class BrowserPool:
                     if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
                         continue  # State changed while waiting
                     tried.add(account)
-                    # MỖI LẦN MỘT NICK: cổng đã giữ ở ĐẦU hàm; ở đây chỉ xin IP mới cho nick sắp chạy (an toàn
-                    # đổi cả proxy chung vì chỉ 1 nick chạy tại một thời điểm → không cắt IP nick khác).
+                    # MỖI LẦN MỘT NICK: cổng đã giữ ở ĐẦU hàm. Mỗi IP dùng cho ĐÚNG N nick (config.NICKS_PER_IP)
+                    # rồi mới xoay → không phí nhịp xoay, vẫn hạn chế trùng IP. N=1 = 1 nick/IP (an toàn nhất).
                     if one_nick_on:
-                        try:
-                            await asyncio.to_thread(rotate_effective_proxy, account)
-                        except Exception as _e:  # noqa: BLE001 — đổi IP lỗi thì chạy tiếp IP cũ
-                            print(f"[pool] MỖI LẦN MỘT NICK: đổi IP đầu nick lỗi (chạy tiếp IP cũ): {_e}", flush=True)
+                        n = max(1, config.NICKS_PER_IP)
+                        if self._ip_used >= n:
+                            self._ip_used = 0                       # IP hiện tại đã đủ N nick → lô mới, xoay IP
+                        if self._ip_used == 0:
+                            try:
+                                await asyncio.to_thread(rotate_effective_proxy, account)   # xin IP mới cho lô N nick
+                            except Exception as _e:  # noqa: BLE001 — đổi IP lỗi thì chạy tiếp IP cũ
+                                print(f"[pool] N nick/IP: đổi IP lỗi (chạy tiếp IP cũ): {_e}", flush=True)
+                        self._ip_used += 1
+                        print(f"[pool] {account}: dùng IP proxy xoay — lượt {self._ip_used}/{n} của IP này", flush=True)
                     try:
                         seen = {"balance": False}
 

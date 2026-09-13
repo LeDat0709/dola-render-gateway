@@ -30,7 +30,7 @@ export default function SettingsTab({ active = true }) {
   const [lane, setLane] = useState(null); const [laneBusy, setLaneBusy] = useState(false);
   const [rb, setRb] = useState(""); const [rk, setRk] = useState(""); const [ra, setRa] = useState(""); const [rMsg, setRMsg] = useState("");
   const [autoRetry, setAutoRetry] = useState(true); const [arMsg, setArMsg] = useState("");
-  const [oneNick, setOneNick] = useState(false); const [onMsg, setOnMsg] = useState("");
+  const [oneNick, setOneNick] = useState(false); const [onMsg, setOnMsg] = useState(""); const [nicksPerIp, setNicksPerIp] = useState(2);
   const [srv, setSrv] = useState(null);     // cấu hình server đang chạy (/api/admin/config) hoặc null khi server tắt
   const [up, setUp] = useState(false);
   const [ver, setVer] = useState(null);
@@ -47,7 +47,7 @@ export default function SettingsTab({ active = true }) {
     loadLane();
     api.getRemote?.().then((r) => { setRb(r?.base || ""); setRk(r?.apiKey || ""); setRa(r?.adminKey || ""); }).catch(() => {});
     api.getAutoRetry?.().then((r) => setAutoRetry(r?.on !== false)).catch(() => {});
-    api.getOneNick?.().then((r) => setOneNick(r?.on === true)).catch(() => {});
+    api.getOneNick?.().then((r) => { setOneNick(r?.on === true); if (r?.nicksPerIp) setNicksPerIp(r.nicksPerIp); }).catch(() => {});
     api.getVersion?.().then(setVer).catch(() => {});
     refreshHealth();
     adminConfig().then(setSrv).catch(() => setSrv(null));
@@ -79,9 +79,15 @@ export default function SettingsTab({ active = true }) {
   const toggleOneNick = async (e) => {
     const on = e.target.checked;
     setOneNick(on);
-    const r = await api.setOneNick?.(on);
+    const r = await api.setOneNick?.(on, nicksPerIp);
     if (!r?.ok) { setOneNick(!on); setOnMsg("✗ " + (r?.error || "Bật server rồi thử lại")); return; }
-    setOnMsg(`✓ Đã ${on ? "BẬT" : "TẮT"} MỖI LẦN MỘT NICK — áp dụng ngay. ${on ? "Chỉ chạy 1 nick/lần khi proxy chung là link/key xoay." : ""}`);
+    setOnMsg(`✓ Đã ${on ? "BẬT" : "TẮT"} MỖI LẦN MỘT NICK — áp dụng ngay. ${on ? `Mỗi IP dùng cho ${nicksPerIp} nick rồi xoay (chỉ khi proxy chung là link/key xoay).` : ""}`);
+  };
+  const saveNicksPerIp = async (v) => {
+    const n = Math.max(1, Math.min(50, parseInt(v, 10) || 1));
+    setNicksPerIp(n);
+    const r = await api.setOneNick?.(oneNick, n);
+    setOnMsg(r?.ok ? `✓ Mỗi IP dùng cho ${n} nick rồi xoay.` : "✗ " + (r?.error || "Bật server rồi thử lại"));
   };
   const testProxy = async () => {
     setGpMsg("⏳ đang thử vào dola.com…");
@@ -205,9 +211,16 @@ export default function SettingsTab({ active = true }) {
           <Msg text={arMsg} />
           <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">
             <input type="checkbox" className="mt-1" checked={oneNick} onChange={toggleOneNick} />
-            <span><span className="font-medium">Mỗi lần một nick (1 key proxy xoay cho nhiều nick)</span>
-              <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật: chỉ 1 nick chạy trọn (gửi + render) tại một thời điểm, đổi IP đầu mỗi nick — dùng khi 1 key/link proxy xoay gánh nhiều nick (1 key = 1 IP sống), tránh "nhiều nick một IP" (710022002). Chạy tuần tự nên chậm hơn. Chỉ có tác dụng khi Proxy chung là link/key xoay; proxy tĩnh / nối thẳng bỏ qua. Tắt: chạy song song theo số luồng như thường.</span></span>
+            <span><span className="font-medium">Chạy tuần tự + xoay IP theo lô (1 key proxy xoay cho nhiều nick)</span>
+              <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật: chạy tuần tự từng nick trọn job, mỗi IP dùng cho <b>N nick</b> rồi mới xoay — dùng khi 1 key/link proxy xoay gánh nhiều nick, tránh "nhiều nick một IP" (710022002). N=1 = mỗi nick một IP (an toàn nhất, chậm nhất); N lớn = ít xoay hơn, nhanh hơn. Chỉ có tác dụng khi Proxy chung là link/key xoay; proxy tĩnh/nối thẳng bỏ qua.</span></span>
           </label>
+          <div className={"flex items-center gap-2 pl-7 text-[12px] " + (oneNick ? "" : "opacity-50")}>
+            <span className="text-muted-foreground">Số nick mỗi IP rồi xoay:</span>
+            <Input type="number" min={1} max={50} value={nicksPerIp} disabled={!oneNick}
+              className="h-7 w-16 text-center" onChange={(e) => setNicksPerIp(e.target.value)}
+              onBlur={(e) => saveNicksPerIp(e.target.value)} />
+            <span className="text-muted-foreground">nick / IP</span>
+          </div>
           <Msg text={onMsg} />
           <Help>Các số khác nằm trong <code className="font-mono">.env.local</code> (DOLA_DAILY_LIMIT, DOLA_VIDEO_TIMEOUT, DOLA_SUBMIT_GAP) — đổi xong bấm "Tắt" rồi "Bật server".</Help>
         </Card>

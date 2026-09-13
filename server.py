@@ -542,6 +542,7 @@ async def health():
         "http_poll": config.HTTP_POLL,
         "auto_retry": config.AUTO_RETRY,
         "one_nick": config.ONE_NICK,
+        "nicks_per_ip": config.NICKS_PER_IP,
     }
 
 
@@ -924,16 +925,19 @@ async def admin_retry(body: AutoRetryUpdate, x_admin_key: str | None = Header(de
 
 class OneNickUpdate(BaseModel):
     one_nick: bool
+    nicks_per_ip: int | None = Field(None, ge=1, le=50)   # số nick mỗi IP trước khi xoay (None = giữ nguyên)
 
 
 @app.post("/api/admin/one-nick")
 async def admin_one_nick(body: OneNickUpdate, x_admin_key: str | None = Header(default=None)):
     """Bật/tắt MỖI LẦN MỘT NICK ngay lúc chạy (không cần khởi động lại). Chỉ ăn thua khi proxy chung là
-    key/link xoay — 1 nick chạy trọn job tại một thời điểm, đổi IP đầu mỗi nick."""
+    key/link xoay — chạy tuần tự, mỗi IP dùng cho N nick (nicks_per_ip) rồi mới xoay."""
     _admin_auth(x_admin_key)
     config.ONE_NICK = body.one_nick
-    print(f"[gateway] MỖI LẦN MỘT NICK: {'BẬT' if config.ONE_NICK else 'TẮT'}", flush=True)
-    return {"ok": True, "one_nick": config.ONE_NICK}
+    if body.nicks_per_ip is not None:
+        config.NICKS_PER_IP = max(1, body.nicks_per_ip)
+    print(f"[gateway] MỖI LẦN MỘT NICK: {'BẬT' if config.ONE_NICK else 'TẮT'} · {config.NICKS_PER_IP} nick/IP", flush=True)
+    return {"ok": True, "one_nick": config.ONE_NICK, "nicks_per_ip": config.NICKS_PER_IP}
 
 
 class GlobalProxyUpdate(BaseModel):

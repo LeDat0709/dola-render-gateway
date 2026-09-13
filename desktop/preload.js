@@ -41,7 +41,7 @@ contextBridge.exposeInMainWorld("api", {
   getAutoRetry: () => ipcRenderer.invoke("config:getAutoRetry"),
   setAutoRetry: (on) => ipcRenderer.invoke("config:setAutoRetry", { on }),
   getOneNick: () => ipcRenderer.invoke("config:getOneNick"),
-  setOneNick: (on) => ipcRenderer.invoke("config:setOneNick", { on }),
+  setOneNick: (on, nicksPerIp) => ipcRenderer.invoke("config:setOneNick", { on, nicksPerIp }),
   chooseVideoDir: () => ipcRenderer.invoke("video:chooseDir"),
   tailLogs: (n) => ipcRenderer.invoke("logs:tail", n),
 });

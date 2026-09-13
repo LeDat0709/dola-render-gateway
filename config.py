@@ -116,6 +116,10 @@ NO_COOLDOWN = os.getenv("DOLA_NO_COOLDOWN", "0").strip().lower() in ("1", "true"
 # IP" (710022002). Mặc định TẮT. Chỉ ăn thua khi proxy chung là key/link xoay; proxy tĩnh/nối thẳng bỏ qua.
 ONE_NICK = os.getenv("DOLA_ONE_NICK", "0").strip().lower() in ("1", "true", "yes", "on")
 
+# Khi bật MỖI LẦN MỘT NICK: mỗi IP proxy xoay dùng cho ĐÚNG N nick rồi mới đổi IP (điểm giữa: N=1 = 1 nick/IP
+# an toàn nhất nhưng chậm; N lớn = ít xoay hơn, nhanh hơn nhưng nhiều nick chung 1 IP). Mặc định 2 nick/IP.
+NICKS_PER_IP = max(1, int(os.getenv("DOLA_NICKS_PER_IP", "2")))
+
 # Tự xóa watermark "Dola AI" ngay khi tải video xong (BẬT mặc định; DOLA_AUTO_REMOVE_WM=0 để tắt)
 AUTO_REMOVE_WM = os.getenv("DOLA_AUTO_REMOVE_WM", "1").strip().lower() not in ("0", "false", "no", "off", "")
 
