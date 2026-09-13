@@ -412,7 +412,8 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     # Headless leaks "HeadlessChrome" in the UA; override with the de-headlessed UA.
     if launch_headless:
         kwargs["user_agent"] = await _headless_ua(p)
-    proxy_cfg = account_proxy(account)
+    # tmproxy://KEY → account_proxy gọi API TMProxy (đồng bộ, có cache) → đưa ra thread cho vòng lặp không khựng.
+    proxy_cfg = await asyncio.to_thread(account_proxy, account)
     if proxy_cfg:
         kwargs["proxy"] = proxy_cfg
     context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)

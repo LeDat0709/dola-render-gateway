@@ -154,7 +154,7 @@ class PoolStore:
         now = time.time()
 
         async def check_one(pid: str, raw: str):
-            url = _aiohttp_url(raw)
+            url = await asyncio.to_thread(_aiohttp_url, raw)   # tmproxy://KEY → gọi API (đồng bộ) ngoài vòng lặp
             alive = False
             if url:
                 try:
@@ -208,7 +208,9 @@ def make_router(ctx: dict[str, Any]) -> APIRouter:
     async def add_proxies(body: AddProxies, x_admin_key: str | None = Header(default=None)):
         admin_auth(x_admin_key)
         raws = [l.strip() for l in body.text.splitlines() if l.strip()]
-        added = store.add_many(raws)
+        # tmproxy://KEY được kiểm bằng cách gọi API TMProxy (đồng bộ, ~1s/key) → chạy ở thread kẻo dán 18 key
+        # một lúc là vòng lặp gateway đứng ~18s (poll video, /health cùng khựng).
+        added = await asyncio.to_thread(store.add_many, raws)
         return {"ok": True, "added": added, "total": len(store.items)}
 
     @r.post("/api/admin/proxies/check")

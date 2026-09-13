@@ -49,7 +49,7 @@ def _post(path: str, body: dict) -> dict:
         _API + path, data=json.dumps(body).encode("utf-8"), method="POST",
         headers={"Content-Type": "application/json", "accept": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=8) as r:   # tmproxy.com trả ~1s; 8s đủ, không treo dài
             return json.loads(r.read().decode("utf-8", "replace") or "{}")
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise TMProxyError(f"không tới được tmproxy.com: {str(exc)[:80]}") from exc
