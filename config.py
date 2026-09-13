@@ -87,6 +87,11 @@ SUBMIT_JITTER_SEC = float(os.getenv("DOLA_SUBMIT_JITTER", "3"))
 # 1 lỗi hệ thống = mở Chrome trên cả chục nick, đốt sạch lượt.
 MAX_ROTATE = int(os.getenv("DOLA_MAX_ROTATE", "3"))
 
+# Proxy xoay IP kiểu STICKY-SESSION: trong proxy.txt của nick, đặt {SESSION} vào chỗ phần đổi
+# (vd: host:port:user-session-{SESSION}:pass). Tool giữ nguyên session suốt 1 video (submit+poll cùng IP),
+# rồi đổi session sau mỗi N video → IP mới. 0 = tắt (không đổi). "2 video đổi 1 phát" → đặt =2.
+PROXY_ROTATE_EVERY = int(os.getenv("DOLA_PROXY_ROTATE_EVERY", "0"))
+
 # Tắt CHẾ ĐỘ NGHỈ: nick KHÔNG bị bench sau 710022002 / captcha và KHÔNG dừng gửi theo proxy → nick luôn
 # sẵn sàng, chạy tới khi Dola thật sự chặn (hết credit / cookie chết / chặn nội dung). Vẫn giữ giãn nhịp
 # SUBMIT_GAP giữa các lần gửi. CẢNH BÁO: dội liên tục vào 710022002/captcha có thể làm Dola soi nick mạnh hơn.

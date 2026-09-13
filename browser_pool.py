@@ -677,6 +677,8 @@ class BrowserPool:
                             seen["balance"] = True
                             self._set_credit_balance(account, balance, source)
 
+                        from browser import rotate_proxy_session
+                        rotate_proxy_session(account, config.PROXY_ROTATE_EVERY)   # sticky: đổi IP sau mỗi N video
                         await _pace(account_proxy_raw(account) or "")
                         await _hold_browser()
                         result = await generate_video(

@@ -131,6 +131,38 @@ def parse_proxy(raw: str) -> dict | None:
     return out
 
 
+import secrets as _secrets
+
+# Proxy xoay sticky-session: mỗi nick giữ 1 session id (=1 IP) suốt 1 video; đổi sau mỗi N video.
+_proxy_sessions: dict[str, dict] = {}   # nick -> {"id": str, "count": int}
+
+
+def _current_session(account: str) -> str:
+    st = _proxy_sessions.get(account)
+    if not st:
+        st = _proxy_sessions[account] = {"id": _secrets.token_hex(4), "count": 0}
+    return st["id"]
+
+
+def rotate_proxy_session(account: str, every: int) -> str:
+    """Gọi lúc BẮT ĐẦU mỗi job. Giữ session cũ trong N video; video thứ N+1 → session mới (IP mới).
+    Trả session id hiện hành. every<=0 = không xoay."""
+    st = _proxy_sessions.get(account)
+    if not st:
+        return _current_session(account)
+    if every > 0:
+        st["count"] += 1
+        if st["count"] >= every:
+            st["id"] = _secrets.token_hex(4)
+            st["count"] = 0
+    return st["id"]
+
+
+def _sub_session(raw: str, account: str) -> str:
+    """Thay {SESSION} trong chuỗi proxy bằng session hiện hành của nick (giữ nguyên trong 1 video)."""
+    return raw.replace("{SESSION}", _current_session(account)) if raw and "{SESSION}" in raw else raw
+
+
 def account_proxy(account: str) -> dict | None:
     """Per-account proxy from accounts/<account>/proxy.txt, else the global config.PROXY.
 
@@ -140,7 +172,7 @@ def account_proxy(account: str) -> dict | None:
     try:
         f = config.ACCOUNTS_DIR / account / "proxy.txt"
         if f.exists():
-            got = parse_proxy(f.read_text(encoding="utf-8"))
+            got = parse_proxy(_sub_session(f.read_text(encoding="utf-8"), account))
             if got:
                 return got
     except OSError:
