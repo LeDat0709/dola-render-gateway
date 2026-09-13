@@ -541,6 +541,7 @@ async def health():
         "max_login_slots": MAX_LOGIN_SLOTS,
         "http_poll": config.HTTP_POLL,
         "auto_retry": config.AUTO_RETRY,
+        "one_nick": config.ONE_NICK,
     }
 
 
@@ -921,6 +922,20 @@ async def admin_retry(body: AutoRetryUpdate, x_admin_key: str | None = Header(de
     return {"ok": True, "auto_retry": config.AUTO_RETRY}
 
 
+class OneNickUpdate(BaseModel):
+    one_nick: bool
+
+
+@app.post("/api/admin/one-nick")
+async def admin_one_nick(body: OneNickUpdate, x_admin_key: str | None = Header(default=None)):
+    """Bật/tắt MỖI LẦN MỘT NICK ngay lúc chạy (không cần khởi động lại). Chỉ ăn thua khi proxy chung là
+    key/link xoay — 1 nick chạy trọn job tại một thời điểm, đổi IP đầu mỗi nick."""
+    _admin_auth(x_admin_key)
+    config.ONE_NICK = body.one_nick
+    print(f"[gateway] MỖI LẦN MỘT NICK: {'BẬT' if config.ONE_NICK else 'TẮT'}", flush=True)
+    return {"ok": True, "one_nick": config.ONE_NICK}
+
+
 class GlobalProxyUpdate(BaseModel):
     proxy: str = ""
 
@@ -932,14 +947,53 @@ async def admin_set_global_proxy(body: GlobalProxyUpdate, x_admin_key: str | Non
     config.PROXY được browser/poll/tải video đọc lại mỗi lần chạy nên áp dụng cho job mới liền. Nhờ vậy
     app ở chế độ máy chủ từ xa đặt được proxy chung cho VPS thẳng từ giao diện."""
     _admin_auth(x_admin_key)
-    from browser import parse_proxy
-    v = (body.proxy or "").strip()
-    if v and not parse_proxy(v):
-        raise HTTPException(422, "proxy không hợp lệ (host:port, user:pass@host:port, hoặc host:port:user:pass)")
+    from browser import parse_proxy, is_rotating_proxy, normalize_proxy_input
+    v = normalize_proxy_input((body.proxy or "").strip())   # key TMProxy trần → tmproxy://KEY (lưu bản chuẩn)
+    # Proxy xoay (tmproxy://KEY, key trần, link get.php?key=…): chỉ nhận diện DẠNG, khỏi gọi mạng/tốn 1 lượt
+    # xoay lúc lưu — thẻ làn mới thật sự gọi nhà bán. Proxy tĩnh thì parse_proxy kiểm host:port như cũ.
+    if v and not is_rotating_proxy(v) and not parse_proxy(v):
+        raise HTTPException(422, "proxy không hợp lệ (host:port, user:pass@host:port, host:port:user:pass, "
+                                 "tmproxy://KEY, hoặc link xoay get.php?key=…)")
     config.PROXY = v
     config.upsert_env_local("DOLA_PROXY", v)
     print(f"[gateway] proxy chung đổi thành: {v or '(nối thẳng)'}", flush=True)
     return {"ok": True, "proxy": v or "(nối thẳng)"}
+
+
+def _lane_fields(ent: dict) -> dict:
+    return {k: ent.get(k, "") for k in ("ip", "network", "location", "expiration", "message")}
+
+
+@app.get("/api/admin/global-proxy/lane")
+async def admin_global_proxy_lane(x_admin_key: str | None = Header(default=None)):
+    """Thẻ làn cho proxy chung XOAY (TMProxy `tmproxy://KEY`/key trần, hoặc link get.php?key=…): IP/nhà
+    mạng/vị trí/hạn hiện hành. Giữ IP đã cache trong phiên (không đổi giữa lúc nick chạy). Proxy chung không
+    xoay → {key_link: False}. Gọi nhà bán trong to_thread vì urllib chặn luồng; IP whitelist theo máy chủ."""
+    _admin_auth(x_admin_key)
+    from browser import is_rotating_proxy, rotating_lane
+    raw = (config.PROXY or "").strip()
+    if not is_rotating_proxy(raw):
+        return {"key_link": False}
+    try:
+        ent = await asyncio.to_thread(rotating_lane, raw)
+    except Exception as e:  # noqa: BLE001 — lỗi nhà bán (TMProxyError/ProxyXoayError…) hiện thẳng ra thẻ làn
+        return {"key_link": True, "ok": False, "error": str(e)[:160]}
+    return {"key_link": True, "ok": True, **_lane_fields(ent or {})}
+
+
+@app.post("/api/admin/global-proxy/rotate")
+async def admin_global_proxy_rotate(x_admin_key: str | None = Header(default=None)):
+    """Nút "Đổi IP": xin IP mới từ nhà bán (TMProxy/proxyxoay), tôn trọng khoảng chờ ép (chưa tới giờ → giữ IP cũ)."""
+    _admin_auth(x_admin_key)
+    from browser import is_rotating_proxy, rotating_rotate
+    raw = (config.PROXY or "").strip()
+    if not is_rotating_proxy(raw):
+        raise HTTPException(422, "Proxy chung không phải key/link xoay được")
+    try:
+        ent = await asyncio.to_thread(rotating_rotate, raw)
+    except Exception as e:  # noqa: BLE001 — lỗi nhà bán hiện thẳng cho người dùng
+        raise HTTPException(502, str(e)[:160])
+    return {"ok": True, **_lane_fields(ent or {})}
 
 
 class ConcurrencyUpdate(BaseModel):

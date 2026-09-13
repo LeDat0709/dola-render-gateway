@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld("api", {
   getGlobalProxy: () => ipcRenderer.invoke("proxy:getGlobal"),
   setGlobalProxy: (proxy) => ipcRenderer.invoke("proxy:setGlobal", { proxy }),
   testProxy: (proxy) => ipcRenderer.invoke("proxy:test", { proxy }),
+  getProxyLane: () => ipcRenderer.invoke("proxy:lane"),
+  rotateProxy: () => ipcRenderer.invoke("proxy:rotate"),
   getRemote: () => ipcRenderer.invoke("remote:get"),
   setRemote: (base, apiKey, adminKey) => ipcRenderer.invoke("remote:set", { base, apiKey, adminKey }),
   testRemote: (base, apiKey, adminKey) => ipcRenderer.invoke("remote:test", { base, apiKey, adminKey }),
@@ -38,6 +40,8 @@ contextBridge.exposeInMainWorld("api", {
   setConcurrency: (send, login) => ipcRenderer.invoke("config:setConcurrency", { send, login }),
   getAutoRetry: () => ipcRenderer.invoke("config:getAutoRetry"),
   setAutoRetry: (on) => ipcRenderer.invoke("config:setAutoRetry", { on }),
+  getOneNick: () => ipcRenderer.invoke("config:getOneNick"),
+  setOneNick: (on) => ipcRenderer.invoke("config:setOneNick", { on }),
   chooseVideoDir: () => ipcRenderer.invoke("video:chooseDir"),
   tailLogs: (n) => ipcRenderer.invoke("logs:tail", n),
 });

@@ -51,6 +51,25 @@ function parseProxy(raw) {
   return { scheme, host, port, user, pass, rules: `${scheme}://${host}:${port}` };
 }
 
+// Proxy xoay theo LINK KEY (proxyxoay.shop và tương tự): "https://…/get.php?key=…". Khác proxy tĩnh —
+// phải GỌI link mới ra IP thật, việc đó do server Python (proxyxoay.py, IP whitelist) làm. Ở JS chỉ
+// nhận diện để: (1) không báo "sai định dạng" khi lưu, (2) cửa sổ Electron nối thẳng thay vì kẹt lỗi.
+function isKeyLink(raw) {
+  const s = String(raw || "").trim().toLowerCase();
+  return /^https?:\/\//.test(s) && (s.includes("get.php") || s.includes("key="));
+}
+function isBareTmproxyKey(raw) { return /^[a-f0-9]{32}$/i.test(String(raw || "").trim()); }
+// Proxy XOAY (server tự gọi nhà bán lấy IP): link get.php?key=, tmproxy://KEY, hoặc KEY TMProxy trần (32 hex).
+function isRotating(raw) {
+  const s = String(raw || "").trim().toLowerCase();
+  return isKeyLink(s) || s.startsWith("tmproxy://") || isBareTmproxyKey(s);
+}
+// KEY TMProxy trần → tmproxy://KEY để lưu/dùng thống nhất (khớp browser.normalize_proxy_input phía Python).
+function normalizeProxyInput(raw) {
+  const s = String(raw || "").trim();
+  return isBareTmproxyKey(s) ? "tmproxy://" + s : s;
+}
+
 // Khớp config.py: thiếu khoá DOLA_PROXY hoặc trống → nối thẳng. Trước đây thiếu khoá là rơi về
 // 127.0.0.1:7890 (Clash của máy dev) → máy khách không chạy Clash lỗi ERR_PROXY_CONNECTION_FAILED
 // ở mọi cửa sổ. Muốn Clash thì ghi DOLA_PROXY=http://127.0.0.1:7890 vào .env.local.
@@ -90,6 +109,11 @@ function hookProxyAuth() {
 
 // Gắn một chuỗi proxy vào session Electron. Trả về mô tả proxy đang dùng (null = nối thẳng).
 async function applyProxyRaw(ses, raw, send) {
+  if (isRotating(raw)) {   // proxy xoay: chỉ server Python gọi ra IP thật; cửa sổ Electron nối thẳng.
+    if (send) send("Proxy xoay theo key/link — cửa sổ này nối thẳng (proxy chỉ áp khi render).");
+    try { await ses.setProxy({ mode: "direct" }); } catch (_) {}
+    return null;
+  }
   const p = parseProxy(raw);
   if (!p) {
     if (send && raw) send(`⚠ Proxy "${raw}" sai định dạng — đang nối thẳng.`);
@@ -111,6 +135,7 @@ const PROXY_FORMATS = "host:port · user:pass@host:port · host:port:user:pass �
 // Thử một chuỗi proxy (chưa cần lưu) có vào được dola.com không. Session tạm trong RAM, không dính cookie nick.
 async function testProxy(raw, url = "https://www.dola.com/") {
   const s = String(raw || "").trim();
+  if (isRotating(s)) return { ok: false, error: "Proxy xoay theo key/link — bấm \"Đổi IP\" ở thẻ làn để lấy/kiểm IP (server gọi nhà bán)." };
   if (s && !parseProxy(s)) return { ok: false, error: `Proxy sai định dạng. Chấp nhận: ${PROXY_FORMATS}` };
   const { session } = require("electron");
   const ses = session.fromPartition(`proxy-test-${Date.now()}`);
@@ -201,7 +226,7 @@ async function preflightDola(ses, repoRoot, name, url = "https://www.dola.com/")
 }
 
 module.exports = {
-  readEnvLocal, parseProxy, globalProxy, accountProxy, applyProxyRaw, applyProxy, hookProxyAuth,
+  readEnvLocal, parseProxy, isKeyLink, isRotating, normalizeProxyInput, globalProxy, accountProxy, applyProxyRaw, applyProxy, hookProxyAuth,
   describeNetError, showLoadError, attachLoadErrorHandler, probeUrl, preflightDola, testProxy,
   DEFAULT_PROXY, PROXY_FORMATS,
 };

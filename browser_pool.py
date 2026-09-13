@@ -139,6 +139,7 @@ class BrowserPool:
         self.accounts_dir = Path(accounts_dir)
         self.max_concurrency = max(1, max_concurrency)
         self.semaphore = asyncio.Semaphore(self.max_concurrency)
+        self._one_nick = asyncio.Semaphore(1)   # MỖI LẦN MỘT NICK: 1 nick chạy trọn job tại một thời điểm
         self._locks: dict[str, asyncio.Lock] = {}
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -647,6 +648,13 @@ class BrowserPool:
         account: when set, only that nick is used (no rotation). Raises if it does not
         exist or is not currently usable.
         """
+        # MỖI LẦN MỘT NICK: giữ cổng SUỐT job (submit + render) → 1 nick/lần. Acquire TRƯỚC browser-sema để
+        # thứ tự khoá luôn one_nick→browser (nếu acquire trong vòng lặp, nhánh retry gọi lại browser-sema khi
+        # đang giữ one_nick sẽ khoá chéo với job kia đang giữ browser-sema chờ one_nick). Chỉ khi proxy chung xoay.
+        from browser import is_rotating_proxy, rotate_effective_proxy
+        one_nick_on = config.ONE_NICK and is_rotating_proxy(config.PROXY)
+        if one_nick_on:
+            await self._one_nick.acquire()
         # Semaphore = số Chrome chạy cùng lúc (RAM), KHÔNG phải số video cùng lúc: khi bật
         # DOLA_HTTP_POLL worker gọi on_browser_free ngay sau khi gửi xong (~20s) nên slot được trả
         # lại trong lúc video vẫn đang render → nhiều nick chạy song song mà không tốn thêm RAM.
@@ -707,6 +715,13 @@ class BrowserPool:
                     if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
                         continue  # State changed while waiting
                     tried.add(account)
+                    # MỖI LẦN MỘT NICK: cổng đã giữ ở ĐẦU hàm; ở đây chỉ xin IP mới cho nick sắp chạy (an toàn
+                    # đổi cả proxy chung vì chỉ 1 nick chạy tại một thời điểm → không cắt IP nick khác).
+                    if one_nick_on:
+                        try:
+                            await asyncio.to_thread(rotate_effective_proxy, account)
+                        except Exception as _e:  # noqa: BLE001 — đổi IP lỗi thì chạy tiếp IP cũ
+                            print(f"[pool] MỖI LẦN MỘT NICK: đổi IP đầu nick lỗi (chạy tiếp IP cũ): {_e}", flush=True)
                     try:
                         seen = {"balance": False}
 
@@ -862,3 +877,5 @@ class BrowserPool:
             raise RuntimeError(f"No available accounts in pool: {last_err or 'No accounts'}")
         finally:
             _release_browser()
+            if one_nick_on:
+                self._one_nick.release()   # MỖI LẦN MỘT NICK: hết job (xong/lỗi) → mở cổng cho nick sau

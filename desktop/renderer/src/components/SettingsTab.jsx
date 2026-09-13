@@ -27,8 +27,10 @@ const Row = ({ label, value, hint }) => (
 export default function SettingsTab({ active = true }) {
   const [vid, setVid] = useState("…"); const [acc, setAcc] = useState("…"); const [dirMsg, setDirMsg] = useState("");
   const [gp, setGp] = useState(""); const [gpMsg, setGpMsg] = useState("");
+  const [lane, setLane] = useState(null); const [laneBusy, setLaneBusy] = useState(false);
   const [rb, setRb] = useState(""); const [rk, setRk] = useState(""); const [ra, setRa] = useState(""); const [rMsg, setRMsg] = useState("");
   const [autoRetry, setAutoRetry] = useState(true); const [arMsg, setArMsg] = useState("");
+  const [oneNick, setOneNick] = useState(false); const [onMsg, setOnMsg] = useState("");
   const [srv, setSrv] = useState(null);     // cấu hình server đang chạy (/api/admin/config) hoặc null khi server tắt
   const [up, setUp] = useState(false);
   const [ver, setVer] = useState(null);
@@ -42,8 +44,10 @@ export default function SettingsTab({ active = true }) {
     api.getVideoDir?.().then((r) => setVid(r?.abs || "downloads")).catch(() => {});
     api.getAccountsDir?.().then((r) => setAcc(r?.abs || r?.dir || "accounts")).catch(() => {});
     api.getGlobalProxy?.().then((r) => setGp(r?.proxy || "")).catch(() => {});
+    loadLane();
     api.getRemote?.().then((r) => { setRb(r?.base || ""); setRk(r?.apiKey || ""); setRa(r?.adminKey || ""); }).catch(() => {});
     api.getAutoRetry?.().then((r) => setAutoRetry(r?.on !== false)).catch(() => {});
+    api.getOneNick?.().then((r) => setOneNick(r?.on === true)).catch(() => {});
     api.getVersion?.().then(setVer).catch(() => {});
     refreshHealth();
     adminConfig().then(setSrv).catch(() => setSrv(null));
@@ -54,12 +58,30 @@ export default function SettingsTab({ active = true }) {
   useEffect(() => { if (!active) return; load(); const t = setInterval(refreshHealth, 4000); return () => clearInterval(t); }, [active]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const remote = rb.trim() !== "";
+  const gpv = gp.trim();
+  const isRotating = (/^https?:\/\//i.test(gpv) && (/get\.php/i.test(gpv) || /key=/i.test(gpv))) || /^tmproxy:\/\//i.test(gpv) || /^[a-f0-9]{32}$/i.test(gpv);
+  // Thẻ làn proxy xoay theo link: server (proxyxoay.py) gọi nhà bán lấy IP hiện hành. Không phải link key → ẩn thẻ.
+  const loadLane = () => api.getProxyLane?.().then((r) => setLane(r?.key_link ? r : null)).catch(() => setLane(null));
+  const rotateIp = async () => {
+    setLaneBusy(true);
+    const r = await api.rotateProxy?.();
+    setLaneBusy(false);
+    if (r?.ok) { setLane({ key_link: true, ...r }); setGpMsg(`✓ Đã đổi IP: ${r.ip}${r.network ? ` · ${r.network}` : ""}`); }
+    else setGpMsg("✗ " + (r?.error || "chưa đổi được IP — kiểm tra key/whitelist IP máy chủ"));
+  };
   const toggleAutoRetry = async (e) => {
     const on = e.target.checked;
     setAutoRetry(on);
     const r = await api.setAutoRetry?.(on);
     if (!r?.ok) { setAutoRetry(!on); setArMsg("✗ " + (r?.error || "Bật server rồi thử lại")); return; }
     setArMsg(`✓ Đã ${on ? "BẬT" : "TẮT"} tự thử lại / xoay nick — áp dụng ngay cho server đang chạy.`);
+  };
+  const toggleOneNick = async (e) => {
+    const on = e.target.checked;
+    setOneNick(on);
+    const r = await api.setOneNick?.(on);
+    if (!r?.ok) { setOneNick(!on); setOnMsg("✗ " + (r?.error || "Bật server rồi thử lại")); return; }
+    setOnMsg(`✓ Đã ${on ? "BẬT" : "TẮT"} MỖI LẦN MỘT NICK — áp dụng ngay. ${on ? "Chỉ chạy 1 nick/lần khi proxy chung là link/key xoay." : ""}`);
   };
   const testProxy = async () => {
     setGpMsg("⏳ đang thử vào dola.com…");
@@ -68,8 +90,10 @@ export default function SettingsTab({ active = true }) {
   };
   const saveProxy = async () => {
     const r = await api.setGlobalProxy?.(gp);
-    setGpMsg(r?.ok ? (r.remote ? `✓ Đã đổi proxy chung của máy chủ: ${r.proxy} — áp dụng ngay cho job mới.`
-                               : `✓ Đã lưu proxy chung: ${r.proxy} → bấm "Tắt" rồi "Bật server" để áp dụng.`) : "✗ " + (r?.error || "?"));
+    const applied = r?.remote || r?.live;   // đặt được cho server đang chạy → job mới dùng ngay
+    setGpMsg(r?.ok ? (applied ? `✓ Đã lưu & áp dụng proxy chung: ${r.proxy} — job mới dùng ngay.`
+                              : `✓ Đã lưu proxy chung: ${r.proxy} → bấm "Tắt" rồi "Bật server" để áp dụng.`) : "✗ " + (r?.error || "?"));
+    if (r?.ok) loadLane();   // link key: kéo IP hiện hành về thẻ làn
   };
   const testRemote = async () => {
     setRMsg("⏳ đang nối máy chủ…");
@@ -131,18 +155,37 @@ export default function SettingsTab({ active = true }) {
         </Card>
 
         <Card icon={<Network className="h-4 w-4 text-tertiary" />} title="Mạng"
-              right={<Badge variant={gp.trim() ? "info" : "secondary"}>{gp.trim() ? "có proxy chung" : "nối thẳng"}</Badge>}>
+              right={<Badge variant={isRotating ? "info" : gp.trim() ? "info" : "secondary"}>{isRotating ? "proxy xoay theo link" : gp.trim() ? "có proxy chung" : "nối thẳng"}</Badge>}>
           <div className="space-y-1.5">
             <div className="text-[13px] font-medium">Proxy chung</div>
-            <Input value={gp} onChange={(e) => setGp(e.target.value)} placeholder="user:pass@host:port · socks5://host:port · host:port:user:pass" />
-            <Help>Ở Việt Nam bắt buộc có exit node Nhật hoặc Hàn khi server chạy trên máy này. Để trống = nối thẳng. Nick có proxy riêng (tab Proxy) dùng proxy riêng.</Help>
+            <Input value={gp} onChange={(e) => setGp(e.target.value)} placeholder="user:pass@host:port · host:port:user:pass · https://…/get.php?key=… (xoay)" />
+            <Help>Ở Việt Nam bắt buộc có exit node Nhật hoặc Hàn khi server chạy trên máy này. Dán nguyên link xoay <code className="font-mono text-primary">get.php?key=…</code> để tự lấy/đổi IP. Để trống = nối thẳng. Nick có proxy riêng (tab Proxy) dùng proxy riêng.</Help>
           </div>
+          {isRotating && (
+            <div className="space-y-2 rounded-lg bg-surface px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-tertiary">IP đang dùng</span>
+                <Button variant="outline" size="sm" className="ml-auto h-7" onClick={rotateIp} disabled={laneBusy}>{laneBusy ? "đang đổi…" : "Đổi IP"}</Button>
+              </div>
+              {lane?.ok ? (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
+                  <span className="font-mono"><span className="text-muted-foreground">IP </span><b className="tabular-nums">{lane.ip || "—"}</b></span>
+                  {lane.network && <span className="font-mono"><span className="text-muted-foreground">nhà mạng </span>{lane.network}</span>}
+                  {lane.location && <span className="font-mono"><span className="text-muted-foreground">vị trí </span>{lane.location}</span>}
+                  {lane.expiration && <span className="font-mono"><span className="text-muted-foreground">hạn </span>{lane.expiration}</span>}
+                </div>
+              ) : (
+                <div className="text-[12px] text-warn">{lane?.error || "Chưa lấy được IP — bấm Lưu để server gọi nhà bán (IP máy chủ phải được whitelist trên trang proxy)."}</div>
+              )}
+              {lane?.message && <div className="text-[11px] leading-relaxed text-muted-foreground">{lane.message}</div>}
+            </div>
+          )}
           <div className="flex gap-2">
-            <Button variant="outline" className="flex-1" onClick={testProxy}>Kiểm tra vào dola.com</Button>
+            <Button variant="outline" className="flex-1" onClick={testProxy} disabled={isRotating}>Kiểm tra vào dola.com</Button>
             <Button variant="outline" onClick={saveProxy}>Lưu</Button>
           </div>
           <Msg text={gpMsg} />
-          <Help>Đổi proxy xong: bấm "Tắt" rồi "Bật server" để áp dụng.</Help>
+          <Help>{isRotating ? "IP giữ cố định suốt mỗi video; server tự đổi IP đầu mỗi nick và khi Dola chặn. Bấm \"Đổi IP\" để đổi tay." : "Đổi proxy xong: bấm \"Tắt\" rồi \"Bật server\" để áp dụng."}</Help>
         </Card>
 
         <Card icon={<SlidersHorizontal className="h-4 w-4 text-info" />} title="Vận hành"
@@ -160,6 +203,12 @@ export default function SettingsTab({ active = true }) {
               <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật: Dola báo lỗi tạm thời thì gửi lại 1 lần trên chính nick đó (không tốn lượt); job không ghim nick thì thử nick khác. Tắt: lỗi là dừng ngay. Job trong Studio luôn ghim đúng nick của thẻ.</span></span>
           </label>
           <Msg text={arMsg} />
+          <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">
+            <input type="checkbox" className="mt-1" checked={oneNick} onChange={toggleOneNick} />
+            <span><span className="font-medium">Mỗi lần một nick (1 key proxy xoay cho nhiều nick)</span>
+              <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật: chỉ 1 nick chạy trọn (gửi + render) tại một thời điểm, đổi IP đầu mỗi nick — dùng khi 1 key/link proxy xoay gánh nhiều nick (1 key = 1 IP sống), tránh "nhiều nick một IP" (710022002). Chạy tuần tự nên chậm hơn. Chỉ có tác dụng khi Proxy chung là link/key xoay; proxy tĩnh / nối thẳng bỏ qua. Tắt: chạy song song theo số luồng như thường.</span></span>
+          </label>
+          <Msg text={onMsg} />
           <Help>Các số khác nằm trong <code className="font-mono">.env.local</code> (DOLA_DAILY_LIMIT, DOLA_VIDEO_TIMEOUT, DOLA_SUBMIT_GAP) — đổi xong bấm "Tắt" rồi "Bật server".</Help>
         </Card>
 

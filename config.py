@@ -103,6 +103,11 @@ TMPROXY_ID_ISP = int(os.getenv("DOLA_TMPROXY_ISP", "0"))
 # SUBMIT_GAP giữa các lần gửi. CẢNH BÁO: dội liên tục vào 710022002/captcha có thể làm Dola soi nick mạnh hơn.
 NO_COOLDOWN = os.getenv("DOLA_NO_COOLDOWN", "0").strip().lower() in ("1", "true", "yes", "on")
 
+# MỖI LẦN MỘT NICK: chỉ 1 nick chạy trọn (gửi + render) tại một thời điểm, đổi IP đầu mỗi nick. Dành cho
+# 1 KEY/LINK proxy xoay dùng cho NHIỀU nick — vì 1 key = 1 IP sống → chạy tuần tự để không "nhiều nick một
+# IP" (710022002). Mặc định TẮT. Chỉ ăn thua khi proxy chung là key/link xoay; proxy tĩnh/nối thẳng bỏ qua.
+ONE_NICK = os.getenv("DOLA_ONE_NICK", "0").strip().lower() in ("1", "true", "yes", "on")
+
 # Tự xóa watermark "Dola AI" ngay khi tải video xong (BẬT mặc định; DOLA_AUTO_REMOVE_WM=0 để tắt)
 AUTO_REMOVE_WM = os.getenv("DOLA_AUTO_REMOVE_WM", "1").strip().lower() not in ("0", "false", "no", "off", "")
 

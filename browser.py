@@ -97,13 +97,63 @@ LAUNCH_ARGS = [
 ]
 
 
+def _is_bare_tmproxy_key(raw: str) -> bool:
+    """Key TMProxy trần: 32 ký tự hex (không có scheme/host/port). proxyxoay/khác luôn phải là link."""
+    return len(raw) == 32 and all(c in "0123456789abcdefABCDEF" for c in raw)
+
+
+def normalize_proxy_input(raw: str) -> str:
+    """Chuẩn hoá đầu vào proxy trước khi phân tích/lưu. KEY TMProxy trần (32 hex) → 'tmproxy://KEY' để dán
+    mỗi key là chạy (TMProxy xác thực bằng KEY, không whitelist IP). proxyxoay và nhà bán get.php khác phải
+    dán NGUYÊN link vì xác thực theo IP máy. Các dạng còn lại giữ nguyên."""
+    raw = (raw or "").strip()
+    return f"tmproxy://{raw}" if _is_bare_tmproxy_key(raw) else raw
+
+
+def is_rotating_proxy(raw: str) -> bool:
+    """Proxy XOAY được (đổi IP theo yêu cầu): key/link TMProxy, hoặc link get.php?key=… (proxyxoay & tương tự).
+    Proxy tĩnh (ip:port…) hoặc nối thẳng → False. Dùng để bật chế độ MỖI LẦN MỘT NICK đúng lúc."""
+    s = normalize_proxy_input(raw)
+    if s.lower().startswith("tmproxy://"):
+        return True
+    import proxyxoay
+    return proxyxoay.is_key_link(s)
+
+
+def _rotating_ent(raw: str, do_rotate: bool) -> dict | None:
+    """IP hiện hành (do_rotate=False) hoặc xin IP mới (True) của proxy xoay — dùng chung TMProxy & proxyxoay.
+    Trả {ip, network, location, expiration, message} cho thẻ làn; không phải proxy xoay → None. Ném lỗi nhà
+    bán (TMProxyError/ProxyXoayError) để nơi gọi hiện thông báo."""
+    s = normalize_proxy_input(raw)
+    if s.lower().startswith("tmproxy://"):
+        import tmproxy
+        key = tmproxy.key_of(s)
+        ent = tmproxy.rotate(key) if do_rotate else tmproxy.current(key)
+        return {"ip": ent.get("public_ip") or ent.get("https", ""), "network": "", "location": "",
+                "expiration": "", "message": ""}
+    import proxyxoay
+    if proxyxoay.is_key_link(s):
+        ent = proxyxoay.rotate(s) if do_rotate else proxyxoay.current(s)
+        return {k: ent.get(k, "") for k in ("ip", "network", "location", "expiration", "message")}
+    return None
+
+
+def rotating_lane(raw: str) -> dict | None:
+    return _rotating_ent(raw, False)
+
+
+def rotating_rotate(raw: str) -> dict | None:
+    return _rotating_ent(raw, True)
+
+
 def parse_proxy(raw: str) -> dict | None:
     """Turns a proxy string into a patchright proxy dict {server, username?, password?}.
 
     Accepts: scheme://user:pass@host:port, scheme://host:port, host:port,
-    host:port:user:pass (the common account-shop format). Default scheme http.
+    host:port:user:pass (the common account-shop format), tmproxy://KEY hoặc KEY TMProxy trần (32 hex),
+    và link xoay get.php?key=…. Default scheme http.
     """
-    raw = (raw or "").strip()
+    raw = normalize_proxy_input(raw)
     if not raw:
         return None
     if raw.lower().startswith("tmproxy://"):
@@ -165,13 +215,12 @@ def rotate_proxy_session(account: str, every: int) -> str:
     return st["id"]
 
 
-def rotate_tmproxy_now(account: str) -> None:
-    """Nick dùng `tmproxy://KEY` → gọi get-new-proxy (bỏ qua nếu chưa tới next_request; lỗi mạng thì giữ IP cũ).
-    Gọi lúc tới lượt xoay (rotate_proxy_session) và ngay khi Dola báo 710022002 (chặn theo IP)."""
-    raw = account_proxy_raw(account)
-    low = raw.lower()
+def _rotate_raw(raw: str, label: str) -> None:
+    """Xin IP mới cho MỘT chuỗi proxy xoay (tmproxy://KEY, KEY trần, hoặc link get.php?key=…). Không phải
+    proxy xoay hoặc lỗi mạng → giữ IP cũ. `label` chỉ để in log."""
+    raw = normalize_proxy_input(raw)
     try:
-        if low.startswith("tmproxy://"):
+        if raw.lower().startswith("tmproxy://"):
             import tmproxy
             ip = tmproxy.rotate(tmproxy.key_of(raw))["https"]
         else:
@@ -179,9 +228,21 @@ def rotate_tmproxy_now(account: str) -> None:
             if not proxyxoay.is_key_link(raw):
                 return
             ip = proxyxoay.rotate(raw)["ip"]
-        print(f"[proxy] {account}: IP hiện hành {ip}", flush=True)
+        print(f"[proxy] {label}: IP hiện hành {ip}", flush=True)
     except Exception as exc:
-        print(f"[proxy] {account}: đổi IP thất bại, giữ IP cũ: {str(exc)[:100]}", flush=True)
+        print(f"[proxy] {label}: đổi IP thất bại, giữ IP cũ: {str(exc)[:100]}", flush=True)
+
+
+def rotate_tmproxy_now(account: str) -> None:
+    """Nick dùng proxy XOAY RIÊNG (proxy.txt) → xin IP mới. KHÔNG đụng proxy chung vì nhiều nick song song
+    có thể đang dùng. Gọi lúc tới lượt xoay (rotate_proxy_session) và khi Dola báo 710022002 (chặn theo IP)."""
+    _rotate_raw(account_proxy_raw(account), account)
+
+
+def rotate_effective_proxy(account: str) -> None:
+    """Đổi IP proxy nick ĐANG dùng: riêng (proxy.txt) nếu có, không thì PROXY CHUNG xoay. An toàn ở chế độ
+    MỖI LẦN MỘT NICK vì chỉ 1 nick chạy tại một thời điểm nên đổi proxy chung không cắt IP của nick khác."""
+    _rotate_raw(account_proxy_raw(account) or config.PROXY, account)
 
 
 def _sub_session(raw: str, account: str) -> str:

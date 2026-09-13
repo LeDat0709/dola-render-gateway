@@ -111,10 +111,10 @@ class PoolStore:
             pass
 
     def add_many(self, raws: list[str]) -> int:
-        from browser import parse_proxy
+        from browser import parse_proxy, normalize_proxy_input
         added = 0
         for raw in raws:
-            raw = raw.strip()
+            raw = normalize_proxy_input(raw.strip())   # key TMProxy trần (32 hex) → tmproxy://KEY, lưu dạng chuẩn
             if not raw or raw.startswith("#") or not parse_proxy(raw):
                 continue
             pid = _proxy_id(raw)
@@ -269,6 +269,13 @@ def demo() -> None:
     ])
     assert n == 3, n
     assert store.add_many(["1.2.3.4:8080:user:secretpass"]) == 0, "trùng phải bỏ"
+
+    from browser import normalize_proxy_input, is_rotating_proxy   # string-only, không gọi mạng
+    assert normalize_proxy_input("a" * 32) == "tmproxy://" + "a" * 32
+    assert normalize_proxy_input("1.2.3.4:8080") == "1.2.3.4:8080"
+    # điều kiện bật MỖI LẦN MỘT NICK: chỉ khi proxy chung là key/link xoay
+    assert is_rotating_proxy("a" * 32) and is_rotating_proxy("https://x/get.php?key=1")
+    assert not is_rotating_proxy("1.2.3.4:8080") and not is_rotating_proxy("")
 
     pub = store.public()
     joined = json.dumps(pub, ensure_ascii=False)

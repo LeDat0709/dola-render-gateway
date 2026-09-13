@@ -20,7 +20,7 @@ const DATA_DIR = PACKAGED
   : REPO_ROOT;
 const { fetchGenerate } = require("./fetch-generate.cjs");
 const { applyProxy, attachLoadErrorHandler, preflightDola, readEnvLocal: _readEnvLocal,
-        parseProxy, globalProxy, testProxy, PROXY_FORMATS } = require("./proxy.cjs");
+        parseProxy, isKeyLink, isRotating, normalizeProxyInput, globalProxy, testProxy, PROXY_FORMATS } = require("./proxy.cjs");
 const { gatewayBase, normalizeRemoteBase, testRemote, getAccountProxy, setAccountProxy, getRemoteConfig } = require("./remote.cjs");
 const { createGateway } = require("./gateway.cjs");
 const _IS_WIN = process.platform === "win32";
@@ -109,6 +109,16 @@ function config() {
   return { base, remote, apiKey, adminKey, downloadsDir };
 }
 const isRemote = () => config().remote;
+// Gọi admin API của gateway ĐANG dùng (cục bộ hoặc VPS) — proxy xoay theo link giải qua đây (proxyxoay.py).
+async function adminApi(pathName, method = "GET", body = null) {
+  const c = config();
+  const headers = { "Content-Type": "application/json" };
+  if (c.adminKey) headers["x-admin-key"] = c.adminKey;
+  const r = await fetch(c.base + pathName, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
+  return j;
+}
 const REMOTE_ONLY = { ok: false, error: "Đang dùng máy chủ từ xa — thao tác này cần Python trên máy này. Dùng \"Đăng nhập\" (cửa sổ app) hoặc dán cookie: nick sẽ tự được đẩy lên máy chủ." };
 
 function createWindow() {
@@ -918,9 +928,29 @@ ipcMain.handle("config:setAutoRetry", async (_e, { on }) => {
     return { ok: true, on: !!on, remote: c.remote };
   } catch (e) { return { ok: false, error: "Server chưa chạy? " + String(e).slice(0, 80) }; }
 });
+// MỖI LẦN MỘT NICK: đọc từ /health, đổi qua /api/admin/one-nick (áp dụng ngay), nhớ vào .env.local.
+ipcMain.handle("config:getOneNick", async () => {
+  try {
+    const r = await fetch(config().base + "/health", { cache: "no-store" });
+    const j = await r.json();
+    return { ok: true, on: j.one_nick === true };
+  } catch (e) { return { ok: false, on: false, error: String(e).slice(0, 80) }; }
+});
+ipcMain.handle("config:setOneNick", async (_e, { on }) => {
+  const c = config();
+  const headers = { "Content-Type": "application/json" };
+  if (c.adminKey) headers["x-admin-key"] = c.adminKey;
+  try {
+    const r = await fetch(c.base + "/api/admin/one-nick", { method: "POST", headers, body: JSON.stringify({ one_nick: !!on }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
+    if (!c.remote) upsertEnvLocal("DOLA_ONE_NICK", on ? "1" : "0");
+    return { ok: true, on: !!on, remote: c.remote };
+  } catch (e) { return { ok: false, error: "Server chưa chạy? " + String(e).slice(0, 80) }; }
+});
 ipcMain.handle("proxy:setGlobal", async (_e, { proxy }) => {
-  const v = (proxy || "").trim();
-  if (v && !parseProxy(v)) return { ok: false, error: `Proxy sai định dạng. Chấp nhận: ${PROXY_FORMATS}` };
+  const v = normalizeProxyInput((proxy || "").trim());   // KEY TMProxy trần → tmproxy://KEY
+  if (v && !isRotating(v) && !parseProxy(v)) return { ok: false, error: `Proxy sai định dạng. Chấp nhận: ${PROXY_FORMATS} · tmproxy://KEY · link xoay https://…/get.php?key=…` };
   if (isRemote()) {   // đặt proxy chung của VPS ngay lúc chạy qua admin API (không phải file máy này)
     const c = config();
     const headers = { "Content-Type": "application/json" };
@@ -933,10 +963,22 @@ ipcMain.handle("proxy:setGlobal", async (_e, { proxy }) => {
     } catch (e) { return { ok: false, error: "Không nối được máy chủ: " + String(e).slice(0, 80) }; }
   }
   try { upsertEnvLocal("DOLA_PROXY", v); } catch (e) { return { ok: false, error: String(e) }; }
-  return { ok: true, proxy: v || "(nối thẳng)" };
+  // Đặt luôn cho server đang chạy (nếu có) để link key/thẻ làn áp dụng ngay, khỏi Tắt/Bật server.
+  let live = false;
+  try { await adminApi("/api/admin/global-proxy", "POST", { proxy: v }); live = true; } catch (_) { /* server chưa chạy → chờ lần bật sau */ }
+  return { ok: true, proxy: v || "(nối thẳng)", live };
 });
 ipcMain.handle("proxy:test", async (_e, { proxy }) => {
   try { return await testProxy(proxy); } catch (e) { return { ok: false, error: String(e) }; }
+});
+// Proxy xoay theo link: thẻ làn (IP/nhà mạng/vị trí/hạn) và nút Đổi IP — server (proxyxoay.py) gọi nhà bán.
+ipcMain.handle("proxy:lane", async () => {
+  try { return await adminApi("/api/admin/global-proxy/lane"); }
+  catch (e) { return { key_link: false, ok: false, error: String(e).slice(0, 120) }; }
+});
+ipcMain.handle("proxy:rotate", async () => {
+  try { return await adminApi("/api/admin/global-proxy/rotate", "POST"); }
+  catch (e) { return { ok: false, error: String(e).slice(0, 120) }; }
 });
 
 // Máy chủ từ xa: DOLA_REMOTE_BASE + cùng bộ khoá DOLA_API_KEYS / DOLA_ADMIN_KEY (server cục bộ cũng đọc
