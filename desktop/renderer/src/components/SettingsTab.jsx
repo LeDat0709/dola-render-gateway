@@ -221,6 +221,11 @@ export default function SettingsTab({ active = true }) {
               onBlur={(e) => saveNicksPerIp(e.target.value)} />
             <span className="text-muted-foreground">nick / IP</span>
           </div>
+          {oneNick && !isRotating && (
+            <div className="rounded-md border border-warn/40 bg-warn/10 px-2.5 py-1.5 text-[12px] text-warn">
+              ⚠ Chưa có proxy chung xoay — chế độ này CHƯA CHẠY. Vào <b>Mạng → Proxy chung</b> dán 1 key/link xoay (nick sẽ tự dùng key chung). Proxy tĩnh/nối thẳng/khoá riêng mỗi nick → bỏ qua chế độ này.
+            </div>
+          )}
           <Msg text={onMsg} />
           <Help>Các số khác nằm trong <code className="font-mono">.env.local</code> (DOLA_DAILY_LIMIT, DOLA_VIDEO_TIMEOUT, DOLA_SUBMIT_GAP) — đổi xong bấm "Tắt" rồi "Bật server".</Help>
         </Card>
