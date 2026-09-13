@@ -219,13 +219,22 @@ class BrowserPool:
         ).fetchone()
         return row[0] if row else 0
 
-    def _claim(self, account: str):
+    def _claim(self, account: str, cost: int = 1):
+        """Cộng CREDIT đã dùng hôm nay (không phải số video): 30s Seedance 2.5 = 2 credit (đo 13/09)."""
         self._conn.execute(
-            "INSERT INTO usage(account, day, used) VALUES (?,?,1) "
-            "ON CONFLICT(account, day) DO UPDATE SET used=used+1",
-            (account, date.today().isoformat()),
+            "INSERT INTO usage(account, day, used) VALUES (?,?,?) "
+            "ON CONFLICT(account, day) DO UPDATE SET used=used+excluded.used",
+            (account, date.today().isoformat(), max(1, int(cost or 1))),
         )
         self._conn.commit()
+
+    @staticmethod
+    def _default_cost(duration) -> int:
+        """Giá khi chưa học được từ Dola — khớp UI creditCost (api.js): >=30s = 2 credit, còn lại 1."""
+        try:
+            return 2 if int(duration or 0) >= 30 else 1
+        except (TypeError, ValueError):
+            return 1
 
     def _next_limit_reset(self) -> float:
         """Calculates next daily quota reset timestamp."""
@@ -420,11 +429,21 @@ class BrowserPool:
         return row[0] if row else None
 
     def _credit_short(self, a: dict, need, duration, model) -> str | None:
-        """Nick biết credit thật mà ít hơn giá video này → nói trước, khỏi mở Chrome rồi mới bị Dola từ chối."""
+        """Nick không đủ credit cho video này → nói trước, khỏi mở Chrome rồi mới bị Dola từ chối.
+
+        Biết số dư thật (cb) thì so với cb; chưa biết thì so với trần ngày (used_today đếm theo credit).
+        Lý do có nhánh sau: 13/09 nick đã tiêu 4/4 credit (2 video 30s) nhưng pool đếm 2 video → vẫn mở
+        Chrome rồi Dola báo 「1日あたりの上限に達しました」.
+        """
+        if not need:
+            return None
         cb = a["credit_balance"]
-        if need and cb is not None and cb < need:
+        if cb is not None and cb < need:
             return (f"Nick '{a['name']}' còn {cb} credit, video {duration}s ({model}) cần {need} "
                     f"— chọn nick khác hoặc giảm thời lượng")
+        if cb is None and a["used_today"] + need > DAILY_LIMIT:
+            return (f"Nick '{a['name']}' đã dùng {a['used_today']}/{DAILY_LIMIT} credit hôm nay, video {duration}s "
+                    f"({model}) cần {need} — chọn nick khác hoặc giảm thời lượng")
         return None
 
     def _settle(self, account: str, result, model, duration, balance_seen: bool):
@@ -434,11 +453,11 @@ class BrowserPool:
         ponytail: nếu Dola báo "残り" TRƯỚC khi trừ thì lệch một video; lần thiếu credit kế tiếp
         (ParameterChangeError mang need/left) tự chỉnh lại.
         """
-        self._claim(account)
         used = result.get("credits_used") if isinstance(result, dict) else None
         if used and duration and model:
             self._remember_cost(model, duration, used)
-        cost = used or self._cost_for(model, duration)
+        cost = used or self._cost_for(model, duration) or self._default_cost(duration)
+        self._claim(account, cost)
         m = self._meta(account)
         cb = m["credit_balance"] if m else None
         if cost and cb is not None and not balance_seen:
@@ -632,7 +651,7 @@ class BrowserPool:
             last_err = None
             pinned = account is not None
             tried: set[str] = set()
-            need = self._cost_for(model, duration)
+            need = self._cost_for(model, duration) or self._default_cost(duration)
             if account is not None:
                 match = next((a for a in self.list_accounts() if a["name"] == account), None)
                 if match is None:
