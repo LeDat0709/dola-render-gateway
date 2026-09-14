@@ -423,14 +423,19 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, onSel, onChange, onR
       </td>
       <td className={td + " whitespace-nowrap"}><Badge variant={chip.variant}>{chip.text}</Badge></td>
       <td className={td}>
-        {s.videoUrl
-          ? <video className="h-[46px] w-[26px] cursor-pointer rounded bg-surface-lowest object-cover" src={s.videoUrl + "#t=0.6"} muted preload="metadata" onClick={() => onPlay?.(s.videoUrl)} title="Bấm để xem" />
-          : <span className="text-muted-foreground">—</span>}
+        {s.videoUrl ? (
+          <div className="flex flex-col items-start gap-0.5">
+            <video className="h-[46px] w-[26px] cursor-pointer rounded bg-surface-lowest object-cover" src={s.videoUrl + "#t=0.6"} muted preload="metadata" onClick={() => onPlay?.(s.videoUrl)} title="Bấm để xem" />
+            <div className="flex gap-0.5">
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" title="Mở thư mục" onClick={onOpen}><FolderOpen className="h-3.5 w-3.5" /></Button>
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" title="Copy đường dẫn" onClick={() => onCopy?.(s.videoUrl)}><Copy className="h-3.5 w-3.5" /></Button>
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" title="Xoá logo Dola" onClick={() => onRemoveWm?.(s.videoUrl)}><Eraser className="h-3.5 w-3.5" /></Button>
+            </div>
+          </div>
+        ) : <span className="text-muted-foreground">—</span>}
       </td>
       <td className={td + " min-w-[260px]"}>
-        {s.phase === "done"
-          ? <DoneRow s={s} onPlay={onPlay} onOpen={onOpen} onCopy={onCopy} onRemoveWm={onRemoveWm} onNew={onNew} />
-          : <Input className="h-8 text-[12.5px]" value={s.prompt} placeholder={`prompt cho ${n}…`} onChange={(e) => onChange({ prompt: e.target.value })} />}
+        <Input className="h-8 text-[12.5px]" value={s.prompt} placeholder={`prompt cho ${n}…`} onChange={(e) => onChange({ prompt: e.target.value })} />
       </td>
       <td className={td}><SelectNative className="h-8 w-[122px] text-xs" value={s.model} onChange={(e) => onChange({ model: e.target.value })}>{MODELS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
       <td className={td}><SelectNative className="h-8 w-[68px] text-xs" value={s.ratio} onChange={(e) => onChange({ ratio: e.target.value })}>{RATIOS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
