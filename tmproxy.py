@@ -105,6 +105,15 @@ def rotate(key: str) -> dict:
         return _store(key, _call("get-new-proxy", _new_body(key)), now)
 
 
+def cached_ip(key: str) -> dict:
+    """IP đang cache của key (KHÔNG gọi mạng) cho thẻ/cột trạng thái. TMProxy không trả ISP → để trống."""
+    ent = _cache.get(key)
+    if not ent:
+        return {}
+    ip = ent.get("public_ip") or ent.get("https", "").split(":")[0]
+    return {"ip": ip, "network": "", "location": ""}
+
+
 def resolve_dict(raw: str) -> dict | None:
     """`tmproxy://KEY` → dict proxy cho patchright {server, username?, password?}. Lỗi → None (đã log)."""
     key = key_of(raw)

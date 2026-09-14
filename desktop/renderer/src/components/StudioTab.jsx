@@ -19,6 +19,24 @@ const STEPS = ["Hàng đợi", "Gửi", "Dựng", "Tải về", "Xong"];
 const STEP_OF = { checking: 0, queued: 0, opening: 1, submitting: 1, rendering: 2, processing: 2, downloading: 3 };
 const H2 = "font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground";
 const TH = "h-9 whitespace-nowrap px-2 text-left font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground";
+
+// Chip chọn (thay dropdown cho model/thời lượng/tỉ lệ) — nhanh, dễ nhìn. options: [v,label] hoặc "v".
+const Chips = ({ options, value, onChange, label }) => (
+  <div className="flex items-center gap-1">
+    {label && <span className="mr-0.5 text-[11px] text-muted-foreground">{label}</span>}
+    {options.map((o) => {
+      const [v, txt] = Array.isArray(o) ? o : [o, o];
+      const on = String(value) === String(v);
+      return (
+        <button key={v} type="button" onClick={() => onChange(v)}
+          className={"rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors " +
+            (on ? "bg-primary text-primary-foreground" : "bg-surface-high text-muted-foreground hover:text-foreground")}>
+          {txt}
+        </button>
+      );
+    })}
+  </div>
+);
 // Chip trạng thái trên thẻ/dòng: job đang chạy/xong/lỗi đè lên trạng thái nick; nick không chạy được thì mờ đi.
 const stateChip = (a, s) => s.phase === "running" ? { variant: "default", text: "Đang chạy" } : s.phase === "done" ? { variant: "success", text: "Xong" } : s.phase === "error" ? { variant: "danger", text: "Lỗi" } : accChip(a);
 const isDim = (a, s) => s.phase === "idle" && accState(a) !== "ready" && accState(a) !== "busy";
@@ -242,8 +260,13 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const ordered = [...accounts].sort((x, y) => rank(x) - rank(y) || String(x.account).localeCompare(String(y.account)));
   const usable = accounts.filter((a) => rank(a) <= 1).length;
   // Thẻ (lưới) và dòng (bảng) nhận đúng cùng một bộ props — đổi kiểu hiển thị không đổi hành vi.
+  // IP xoay đang dùng + lượt k/N (dùng chung khi 1 key cho nhiều nick) — lấy từ /health, không gọi mạng.
+  const proxyCell = health?.rotating_ip?.ip
+    ? { ip: health.rotating_ip.ip, isp: health.rotating_ip.network || health.rotating_ip.location || "",
+        used: health.ip_used || 0, per: health.nicks_per_ip || 0 }
+    : null;
   const nickProps = (a) => ({
-    a, s: row(a.account), selected: !!sel[a.account], clock, elapsed,
+    a, s: row(a.account), selected: !!sel[a.account], clock, elapsed, proxyCell,
     onSel: (v) => setSel((p) => ({ ...p, [a.account]: v })), onChange: (patch) => setRow(a.account, patch),
     onRun: () => { stop.current = false; runOne(a.account); }, onRelogin: () => relogin(a.account), onProxy: () => setProxy(a.account), onDelete: () => del(a.account),
     onPlay, onOpen: () => api.openDownloads?.(), onCopy: copyPath, onRemoveWm: removeWm,
@@ -269,9 +292,9 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
       {/* Cấu hình mặc định */}
       <div className="flex flex-wrap items-center gap-2">
         <span className={H2 + " w-36"}>Cấu hình mặc định</span>
-        <SelectNative className="w-auto" value={def.model} onChange={(e) => setDef({ ...def, model: e.target.value })}>{MODELS.map((m) => <option key={m}>{m}</option>)}</SelectNative>
-        <SelectNative className="w-auto" value={def.dur} onChange={(e) => setDef({ ...def, dur: e.target.value })}>{DURS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}</SelectNative>
-        <SelectNative className="w-auto" value={def.ratio} onChange={(e) => setDef({ ...def, ratio: e.target.value })}>{RATIOS.map((m) => <option key={m}>{m}</option>)}</SelectNative>
+        <Chips label="Model" options={MODELS} value={def.model} onChange={(v) => setDef({ ...def, model: v })} />
+        <Chips label="Dài" options={DURS} value={def.dur} onChange={(v) => setDef({ ...def, dur: v })} />
+        <Chips label="Tỉ lệ" options={RATIOS} value={def.ratio} onChange={(v) => setDef({ ...def, ratio: v })} />
         <Button variant="outline" size="sm" onClick={syncDef}><Repeat className="h-3.5 w-3.5" />Đồng bộ mặc định</Button>
         <Button variant="outline" size="sm" onClick={verifyAll}><Stethoscope className="h-3.5 w-3.5" />Kiểm tra tất cả</Button>
         <Button variant="outline" size="sm" onClick={enableAllScheduling} title="Mở lại mọi nick đang tạm ngưng (nick bị tắt ở Kho tài khoản hoặc theo file nhập)"><Power className="h-3.5 w-3.5" />Cho chạy lại tất cả</Button>
@@ -332,6 +355,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
                 <th className={TH}>Model</th>
                 <th className={TH}>Tỷ lệ</th>
                 <th className={TH}>Dài</th>
+                <th className={TH}>Proxy (IP xoay)</th>
                 <th className={TH}>Tiến trình</th>
                 <th className={TH + " text-right"}>Thao tác</th>
               </tr>
@@ -362,7 +386,7 @@ function Timeline({ s, compact = false }) {
 }
 
 // Dạng bảng: một dòng một nick, cùng dữ liệu và thao tác với thẻ nhưng nhìn được 15–20 nick không cần cuộn.
-function NickRow({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
+function NickRow({ a, s, selected, elapsed, proxyCell, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
   const n = a.account;
   const chip = stateChip(a, s);
   const tint = s.phase === "done" ? " bg-tertiary/5" : s.phase === "error" ? " bg-error/5" : "";
@@ -383,6 +407,14 @@ function NickRow({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, o
       <td className={td}><SelectNative className="h-8 w-[122px] text-xs" value={s.model} onChange={(e) => onChange({ model: e.target.value })}>{MODELS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
       <td className={td}><SelectNative className="h-8 w-[68px] text-xs" value={s.ratio} onChange={(e) => onChange({ ratio: e.target.value })}>{RATIOS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
       <td className={td}><SelectNative className="h-8 w-[74px] text-xs" value={s.dur} onChange={(e) => onChange({ dur: e.target.value })}>{DURS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}</SelectNative></td>
+      <td className={td + " whitespace-nowrap font-mono text-[11px]"}>
+        {proxyCell ? (
+          <div className="leading-tight">
+            <div className="text-tertiary">{proxyCell.ip}</div>
+            <div className="text-[10px] text-muted-foreground">{proxyCell.isp ? proxyCell.isp + " · " : ""}lượt {Math.min(proxyCell.used, proxyCell.per) || proxyCell.used}/{proxyCell.per}</div>
+          </div>
+        ) : <span className="text-muted-foreground">—</span>}
+      </td>
       <td className={td + " w-[240px] max-w-[280px]"}>
         <Timeline s={s} compact />
         <div className="mt-1 flex min-h-5 items-center"><Footer s={s} a={a} elapsed={elapsed} onRun={onRun} /></div>

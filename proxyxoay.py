@@ -136,6 +136,14 @@ def rotate(link: str) -> dict:
         return _fetch(link, now)
 
 
+def cached_ip(link: str) -> dict:
+    """IP + nhà mạng + vị trí đang cache của link (KHÔNG gọi mạng) cho cột/thẻ trạng thái."""
+    ent = _cache.get((link or "").strip())
+    if not ent:
+        return {}
+    return {"ip": ent.get("ip", ""), "network": ent.get("network", ""), "location": ent.get("location", "")}
+
+
 def resolve_dict(raw: str) -> dict | None:
     """Link → dict proxy cho patchright {server, username?, password?}; lỗi → None (đã log)."""
     try:

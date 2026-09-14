@@ -543,7 +543,17 @@ async def health():
         "auto_retry": config.AUTO_RETRY,
         "one_nick": config.ONE_NICK,
         "nicks_per_ip": config.NICKS_PER_IP,
+        "rotating_ip": _rotating_ip_cached(),          # IP xoay đang dùng (đọc cache, không gọi mạng)
+        "ip_used": getattr(pool, "_ip_used", 0),       # số nick đã dùng IP hiện tại (lượt k/N)
     }
+
+
+def _rotating_ip_cached() -> dict:
+    try:
+        from browser import rotating_ip_info
+        return rotating_ip_info(config.PROXY) or {}
+    except Exception:
+        return {}
 
 
 @app.get("/api/report")

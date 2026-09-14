@@ -183,6 +183,20 @@ def _rotating_ent(raw: str, do_rotate: bool) -> dict | None:
     return None
 
 
+def rotating_ip_info(raw: str) -> dict:
+    """IP/ISP/vị trí đang cache của proxy xoay (KHÔNG gọi mạng) — dùng cho /health poll thường xuyên."""
+    s = normalize_proxy_input(raw)
+    if not s:
+        return {}
+    if s.lower().startswith("tmproxy://"):
+        import tmproxy
+        return tmproxy.cached_ip(tmproxy.key_of(s))
+    import proxyxoay
+    if proxyxoay.is_key_link(s):
+        return proxyxoay.cached_ip(s)
+    return {}
+
+
 def rotating_lane(raw: str) -> dict | None:
     return _rotating_ent(raw, False)
 
