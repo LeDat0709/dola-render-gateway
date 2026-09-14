@@ -363,13 +363,14 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         </div>
       ) : accounts.length > 0 && (
         <div className="overflow-x-auto rounded-lg bg-surface">
-          <table className="w-full min-w-[1240px] border-collapse text-[12.5px]">
+          <table className="w-full min-w-[1300px] border-collapse text-[12.5px]">
             <thead className="border-b border-surface-high">
               <tr className="sticky top-0 z-10 bg-surface">
                 <th className={TH + " w-8"}><input type="checkbox" checked={allSel} title={allSel ? "Bỏ chọn" : "Chọn tất cả"} onChange={() => selectWhere(() => !allSel, allSel ? "" : "tất cả")} /></th>
                 <th className={TH + " w-10"}>STT</th>
                 <th className={TH}>Nick</th>
                 <th className={TH}>Trạng thái</th>
+                <th className={TH}>Video</th>
                 <th className={TH}>Prompt</th>
                 <th className={TH}>Model</th>
                 <th className={TH}>Tỷ lệ</th>
@@ -421,6 +422,11 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, onSel, onChange, onR
         <div className="font-mono text-[10.5px] text-muted-foreground">{a.used_today}/{a.limit} hôm nay{a.remaining != null ? ` · còn ${a.remaining}` : ""}</div>
       </td>
       <td className={td + " whitespace-nowrap"}><Badge variant={chip.variant}>{chip.text}</Badge></td>
+      <td className={td}>
+        {s.videoUrl
+          ? <video className="h-[46px] w-[26px] cursor-pointer rounded bg-surface-lowest object-cover" src={s.videoUrl + "#t=0.6"} muted preload="metadata" onClick={() => onPlay?.(s.videoUrl)} title="Bấm để xem" />
+          : <span className="text-muted-foreground">—</span>}
+      </td>
       <td className={td + " min-w-[260px]"}>
         {s.phase === "done"
           ? <DoneRow s={s} onPlay={onPlay} onOpen={onOpen} onCopy={onCopy} onRemoveWm={onRemoveWm} onNew={onNew} />
