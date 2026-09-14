@@ -248,20 +248,36 @@ class TaskResponse(BaseModel):
     prompt: str | None = None
     video_url: str | None = None
     error: str | None = None
-    proxy_ip: str | None = None    # IP xoay đang gắn cho nick job này (peek cache, không gọi mạng)
+    proxy_ip: str | None = None       # IP xoay đang gắn cho nick job này (peek cache, không gọi mạng)
     proxy_isp: str | None = None
+    proxy_provider: str | None = None  # tmproxy | proxyxoay | "" (tĩnh/nối thẳng)
+    proxy_used: int | None = None      # lượt thứ k của IP hiện tại (N nick/IP); None khi không bật
+    proxy_per: int | None = None       # N nick mỗi IP
+    proxy_fresh: bool | None = None    # True = IP mới (vừa xoay), False = IP cũ (dùng lại)
 
 
-def _job_proxy_ip(account: str | None) -> tuple[str | None, str | None]:
-    """IP + nhà mạng đang cache của proxy nick này (KHÔNG gọi mạng) — cột 'Proxy (IP xoay)' hiện IP thật lúc chạy.
-    Nick có proxy riêng thì lấy theo proxy đó; không có thì theo proxy chung. Rỗng khi proxy tĩnh/nối thẳng."""
+def _job_proxy(account: str | None) -> dict:
+    """Thông tin proxy đang gắn cho job của nick — cột 'Proxy' hiện IP · IP mới/cũ · lượt k/N · nhà cung cấp (như đối thủ).
+    Ưu tiên dấu do pool ghi lúc chạy (chính xác lượt/mới-cũ); chưa chạy thì peek cache. KHÔNG gọi mạng."""
+    st = {}
     try:
-        from browser import rotating_ip_info, account_proxy_raw
-        raw = (account_proxy_raw(account) if account else "") or config.PROXY
-        info = rotating_ip_info(raw or "")
-        return (info.get("ip") or None, info.get("network") or info.get("location") or None)
-    except Exception:  # noqa: BLE001 — chỉ là thông tin hiển thị, lỗi thì để trống
-        return (None, None)
+        st = pool.proxy_stamp(account) if account else {}
+    except Exception:  # noqa: BLE001
+        st = {}
+    ip, isp, prov = st.get("ip") or None, st.get("isp") or None, st.get("provider")
+    if not ip:   # chưa đóng dấu (job chưa chạy tới bước dùng IP) → peek cache của proxy nick
+        try:
+            from browser import rotating_ip_info, account_proxy_raw
+            raw = (account_proxy_raw(account) if account else "") or config.PROXY
+            info = rotating_ip_info(raw or "")
+            ip = info.get("ip") or None
+            isp = isp or info.get("network") or info.get("location") or None
+            low = (raw or "").lower()
+            prov = prov or ("tmproxy" if low.startswith("tmproxy://") else "")
+        except Exception:  # noqa: BLE001 — chỉ là thông tin hiển thị
+            pass
+    return {"ip": ip, "isp": isp, "provider": prov or None,
+            "used": st.get("used"), "per": st.get("per"), "fresh": st.get("fresh")}
 
 
 def _task_stage(row: dict) -> str:
@@ -519,11 +535,12 @@ async def get_video(task_id: str, authorization: str | None = Header(default=Non
     row = store.get_for_client(task_id, client["api_key_hash"])
     if not row:
         raise HTTPException(404, "task not found")
-    proxy_ip, proxy_isp = _job_proxy_ip(row.get("account"))
+    px = _job_proxy(row.get("account"))
     return TaskResponse(
         id=row["id"], status=row["status"], stage=_task_stage(row), model=row["model"],
         prompt=row["prompt"], video_url=row["video_url"], error=row["error"],
-        proxy_ip=proxy_ip, proxy_isp=proxy_isp,
+        proxy_ip=px["ip"], proxy_isp=px["isp"], proxy_provider=px["provider"],
+        proxy_used=px["used"], proxy_per=px["per"], proxy_fresh=px["fresh"],
     )
 
 

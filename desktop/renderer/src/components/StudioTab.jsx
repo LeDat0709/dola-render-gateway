@@ -152,7 +152,8 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         setRow(n, { status: `chờ server trả lời (${fails})` });
         continue;
       }
-      if ((pj.proxy_ip || "") !== pip) { pip = pj.proxy_ip || ""; setRow(n, { proxyIp: pip, proxyIsp: pj.proxy_isp || "" }); }   // IP xoay đang gắn → cột Proxy
+      const pk = [pj.proxy_ip, pj.proxy_provider, pj.proxy_used, pj.proxy_per, pj.proxy_fresh].join("|");   // IP + lượt + NCC → cột Proxy
+      if (pk !== pip) { pip = pk; setRow(n, { proxyIp: pj.proxy_ip || "", proxyIsp: pj.proxy_isp || "", proxyProvider: pj.proxy_provider || "", proxyUsed: pj.proxy_used, proxyPer: pj.proxy_per, proxyFresh: pj.proxy_fresh }); }
       if (pj.status === "completed") { setRow(n, { phase: "done", stage: "done", videoUrl: pj.video_url }); api.saveVideo?.(pj.video_url); return true; }
       if (pj.status === "failed") { setRow(n, { phase: "error", errorRaw: pj.error || "?" }); return false; }
       if (pj.stage && pj.stage !== stage) { stage = pj.stage; setRow(n, { stage }); }
@@ -410,9 +411,13 @@ function NickRow({ a, s, selected, elapsed, proxyCell, onSel, onChange, onRun, o
       <td className={td}><SelectNative className="h-8 w-[74px] text-xs" value={s.dur} onChange={(e) => onChange({ dur: e.target.value })}>{DURS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}</SelectNative></td>
       <td className={td + " whitespace-nowrap font-mono text-[11px]"}>
         {s.proxyIp ? (
-          <div className="leading-tight">
+          <div className="inline-block rounded bg-tertiary/10 px-1.5 py-0.5 leading-tight">
             <div className="text-tertiary">{s.proxyIp}</div>
-            {s.proxyIsp ? <div className="text-[10px] text-muted-foreground">{s.proxyIsp}</div> : null}
+            <div className="text-[10px] text-muted-foreground">{[
+              s.proxyFresh === true ? "IP mới" : s.proxyFresh === false ? "IP cũ" : "",
+              s.proxyUsed && s.proxyPer ? `lượt ${s.proxyUsed}/${s.proxyPer}` : "",
+              s.proxyProvider || "", s.proxyIsp || "",
+            ].filter(Boolean).join(" · ") || " "}</div>
           </div>
         ) : s.phase === "running" ? (
           <span className="text-primary">đang chờ IP…</span>

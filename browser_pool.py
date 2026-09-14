@@ -141,6 +141,7 @@ class BrowserPool:
         self.semaphore = asyncio.Semaphore(self.max_concurrency)
         self._one_nick = asyncio.Semaphore(1)   # MỖI LẦN MỘT NICK: 1 nick chạy trọn job tại một thời điểm
         self._ip_used = 0                        # số nick đã dùng IP proxy xoay hiện tại (đổi IP sau mỗi N nick)
+        self._proxy_stamp: dict[str, dict] = {}  # dấu proxy đang gắn cho job mỗi nick → cột "Proxy" hiện IP/lượt/NCC
         self._locks: dict[str, asyncio.Lock] = {}
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -361,6 +362,25 @@ class BrowserPool:
         if cb is None and a["used_today"] >= DAILY_LIMIT:
             return f"đã dùng {a['used_today']}/{DAILY_LIMIT} lượt hôm nay"
         return "không rõ lý do — xem tab Kho tài khoản"
+
+    def _stamp_proxy(self, account: str, used=None, per=None, fresh=None) -> None:
+        """Ghi IP/nhà cung cấp/lượt đang gắn cho job của nick — cột 'Proxy' hiện như đối thủ (peek cache, không gọi mạng)."""
+        try:
+            from browser import rotating_ip_info, account_proxy_raw, is_rotating_proxy
+            raw = account_proxy_raw(account) or config.PROXY
+            low = (raw or "").lower()
+            info = rotating_ip_info(raw or "")
+            prov = "tmproxy" if low.startswith("tmproxy://") else ("proxyxoay" if is_rotating_proxy(raw) else "")
+            self._proxy_stamp[account] = {
+                "ip": info.get("ip") or "", "isp": info.get("network") or info.get("location") or "",
+                "provider": prov, "used": used, "per": per, "fresh": fresh,
+            }
+        except Exception:  # noqa: BLE001 — chỉ là thông tin hiển thị
+            pass
+
+    def proxy_stamp(self, account: str) -> dict:
+        """Dấu proxy đang gắn cho nick (cho /v1/videos poll dựng cột Proxy). {} nếu chưa chạy."""
+        return dict(self._proxy_stamp.get(account) or {})
 
     def clear_cooldown(self, name: str) -> None:
         """Bỏ trạng thái 'đang nghỉ' để chạy lại ngay (người dùng tự quyết định chấp nhận rủi ro)."""
@@ -729,6 +749,9 @@ class BrowserPool:
                                 print(f"[pool] N nick/IP: đổi IP lỗi (chạy tiếp IP cũ): {_e}", flush=True)
                         self._ip_used += 1
                         print(f"[pool] {account}: dùng IP proxy xoay — lượt {self._ip_used}/{n} của IP này", flush=True)
+                        self._stamp_proxy(account, used=self._ip_used, per=n, fresh=(self._ip_used == 1))
+                    else:
+                        self._stamp_proxy(account)   # không bật N nick/IP: vẫn hiện IP + nhà cung cấp (không có lượt)
                     try:
                         seen = {"balance": False}
 
