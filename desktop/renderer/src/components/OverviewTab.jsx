@@ -21,6 +21,29 @@ function Chip({ icon, tag, value, label, tone = "muted", onClick }) {
   );
 }
 
+// Biểu đồ vòng (donut) thuần SVG — trực quan hoá tỉ lệ, không cần thư viện. segments: [{value, cls, label}].
+function Donut({ size = 108, stroke = 13, segments, center, sub }) {
+  const total = segments.reduce((s, x) => s + x.value, 0);
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r;
+  let off = 0;
+  return (
+    <div className="relative flex-none" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} stroke="currentColor" className="text-surface-high" />
+        {total > 0 && segments.filter((s) => s.value > 0).map((s, i) => {
+          const len = (s.value / total) * c;
+          const el = <circle key={i} cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} stroke="currentColor" className={s.cls} strokeDasharray={`${len} ${c - len}`} strokeDashoffset={-off} />;
+          off += len; return el;
+        })}
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
+        <span className="text-2xl font-semibold tabular-nums text-foreground">{center}</span>
+        {sub && <span className="mt-1 text-[10px] text-muted-foreground">{sub}</span>}
+      </div>
+    </div>
+  );
+}
+
 function Stat({ label, value, sub, tone = "text-foreground", icon }) {
   return (
     <div className="flex flex-col justify-between rounded-xl bg-surface-low p-4">
@@ -161,6 +184,10 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
           <span>Trạng thái nick ({accs.length})</span>
           <button className="flex items-center gap-1 normal-case text-primary hover:underline" onClick={() => onGo?.("acct")}>Quản lý kho <ArrowRight className="h-3 w-3" /></button>
         </div>
+        <div className="mb-2 flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-surface" title="Tỉ lệ trạng thái nick">
+          {[[chips.ready, "bg-tertiary"], [chips.busy, "bg-primary"], [chips.credit, "bg-error"], [chips.day, "bg-warn"], [chips.dead, "bg-outline"], [chips.cooling, "bg-info"]].map(([v, c], i) =>
+            v > 0 ? <div key={i} className={"h-full " + c} style={{ width: (v / Math.max(1, chips.total)) * 100 + "%" }} /> : null)}
+        </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
           <Chip icon={<Users className="h-4 w-4" />} tag="tất cả" value={chips.total} label="Nick trên server" onClick={() => onGo?.("acct")} />
           <Chip icon={<CheckCircle2 className="h-4 w-4 text-tertiary" />} tag="ready" tone="tertiary" value={chips.ready} label="Sẵn sàng nhận prompt" />
@@ -174,10 +201,24 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
 
       <div className="grid gap-3 lg:grid-cols-12">
         <div className="flex flex-col gap-3 lg:col-span-7">
-          <div className="grid gap-2 sm:grid-cols-3">
-            <Stat label="Đã gửi hôm nay" icon={<Send className="h-4 w-4" />} value={today.length} sub={`${running.length} đang chạy`} />
-            <Stat label="Xong" icon={<CheckCircle2 className="h-4 w-4 text-tertiary" />} value={done.length} tone="text-tertiary" sub={today.length ? `${Math.round((done.length / today.length) * 100)}% thành công` : "chưa có job"} />
-            <Stat label="Lỗi" icon={<XCircle className="h-4 w-4 text-error" />} value={failed.length} tone="text-error" sub={today.length ? `${Math.round((failed.length / today.length) * 100)}% thất bại` : "—"} />
+          <div className="flex flex-col items-center gap-4 rounded-xl bg-surface-low p-4 sm:flex-row">
+            <Donut center={today.length} sub="đã gửi" segments={[
+              { value: done.length, cls: "text-tertiary", label: "Xong" },
+              { value: failed.length, cls: "text-error", label: "Lỗi" },
+              { value: running.length, cls: "text-primary", label: "Đang chạy" },
+              { value: queued.length, cls: "text-outline", label: "Chờ" },
+            ]} />
+            <div className="grid w-full flex-1 grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-1">
+              {[["Xong", done.length, "text-tertiary", "bg-tertiary", today.length ? `${Math.round((done.length / today.length) * 100)}% thành công` : "chưa có job"],
+                ["Lỗi", failed.length, "text-error", "bg-error", today.length ? `${Math.round((failed.length / today.length) * 100)}% thất bại` : "—"],
+                ["Đang chạy", running.length, "text-primary", "bg-primary", queued.length ? `${queued.length} chờ slot` : "không có job chờ"]].map(([l, v, tone, dot, sub]) => (
+                <div key={l} className="flex items-center gap-2.5">
+                  <span className={"h-2.5 w-2.5 flex-none rounded-sm " + dot} />
+                  <span className={"text-xl font-semibold tabular-nums " + tone}>{v}</span>
+                  <div className="min-w-0 leading-tight"><div className="text-[12px] font-medium">{l}</div><div className="truncate font-mono text-[10.5px] text-muted-foreground">{sub}</div></div>
+                </div>
+              ))}
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-3 rounded-xl bg-surface-low p-4 text-xs text-muted-foreground">
             <Timer className="h-4 w-4 text-primary" />
