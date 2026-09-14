@@ -90,10 +90,10 @@ def _credits_used(text: str):
     return int(m.group(1)) if m else None
 
 
-async def _download_or_link(url: str, account: str) -> tuple[str | None, str | None]:
+async def _download_or_link(url: str, account: str, prompt: str = "") -> tuple[str | None, str | None]:
     """(đường dẫn file, lỗi). Tải hỏng sau mọi lần thử → (None, lỗi): job vẫn xong, giữ link CDN để tải tay."""
     try:
-        local = await _download(url, account)
+        local = await _download(url, account, prompt)
     except DownloadError as e:
         print(f"[{account}] {e}", flush=True)
         return None, str(e)
@@ -1095,7 +1095,7 @@ async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, dura
                 early = await poll_conversation(account, page, context, conv_id, timeout, on_poll,
                                                 on_balance, ratio, duration,
                                                 handoff_after=config.HTTP_POLL_AFTER_SEC,
-                                                answered=answered)
+                                                answered=answered, prompt=prompt)
                 if not early.get("handoff"):
                     return early                     # video xong ngay trong lúc còn trình duyệt
                 remaining = max(30, int(deadline - time.time()))
@@ -1124,7 +1124,7 @@ async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, dura
                     return await resume_video(account, conv_id, left, on_poll=on_poll,
                                               on_balance=on_balance, ratio=ratio, duration=duration,
                                               answered=answered)
-            return await poll_conversation(account, page, context, conv_id, timeout, on_poll, on_balance, ratio, duration)
+            return await poll_conversation(account, page, context, conv_id, timeout, on_poll, on_balance, ratio, duration, prompt=prompt)
         finally:
             if not closed:
                 await _persist_before_close(context, account)
@@ -1279,7 +1279,7 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
                 vm = poll["videoModels"]
                 url = extract_unwatermarked_url(vm[0] if vm else "", poll["videos"][0])
                 print(f"[{account}] Completed (http poll)! Downloading (unwatermarked priority)...", flush=True)
-                local, dl_err = await _download_or_link(url, account)
+                local, dl_err = await _download_or_link(url, account, prompt)
                 return {"video_url": url, "local_path": local, "download_error": dl_err,
                         "conversation_id": conversation_id, "account": account, "credits_used": credits_used}
             if last_msg and not _is_duration_confirm(last_msg) and not _is_spec_menu(last_msg):
@@ -1300,7 +1300,8 @@ HANDOFF_QUIET_AFTER_QA_SEC = 60   # đã phải trả lời: chờ lâu hơn, h�
 async def poll_conversation(account: str, page, context, conversation_id: str,
                             timeout: int, on_poll=None, on_balance=None,
                             ratio: str | None = None, duration: int | None = None,
-                            handoff_after: float | None = None, answered: set | None = None) -> dict:
+                            handoff_after: float | None = None, answered: set | None = None,
+                            prompt: str = "") -> dict:
     """Polls the accepted conversation until a video appears.
 
     Whatever Dola says, surface it: besides the specific handlers (daily limit, credits,
@@ -1417,7 +1418,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             url = extract_unwatermarked_url(
                 video_models[0] if video_models else "", poll["videos"][0])
             print(f"[{account}] Completed! Downloading (unwatermarked priority)...", flush=True)
-            local, dl_err = await _download_or_link(url, account)
+            local, dl_err = await _download_or_link(url, account, prompt)
             return {"video_url": url, "local_path": local, "download_error": dl_err,
                     "conversation_id": conversation_id, "account": account, "credits_used": credits_used}
         # A substantive reply that sticks around without a video is Dola's way of saying no.
@@ -1461,7 +1462,7 @@ async def resume_video(account: str, conversation_id: str, timeout: int,
             await page.wait_for_timeout(5000)
             handoff = config.HTTP_POLL_AFTER_SEC if config.HTTP_POLL else None
             early = await poll_conversation(account, page, context, conversation_id, timeout, on_poll,
-                                            on_balance, ratio, duration, handoff_after=handoff, answered=answered)
+                                            on_balance, ratio, duration, handoff_after=handoff, answered=answered, prompt=prompt)
             if not early.get("handoff"):
                 return early
             cookies = await context.cookies("https://www.dola.com")
@@ -1786,7 +1787,7 @@ async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duratio
             deadline = time.time() + timeout
             if on_conversation_id:
                 on_conversation_id(account, conv_id, deadline)
-            return await poll_conversation(account, page, context, conv_id, timeout, on_poll, on_balance, ratio, duration)
+            return await poll_conversation(account, page, context, conv_id, timeout, on_poll, on_balance, ratio, duration, prompt=prompt)
         finally:
             await _persist_before_close(context, account)
             await context.close()

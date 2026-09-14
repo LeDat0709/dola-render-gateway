@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import json
+import re
 import time
 from pathlib import Path
 
@@ -340,8 +341,18 @@ async def _fetch_to_file(url: str, fname: Path, proxy: str | None = None):
         raise RuntimeError(f"Video tải về bị lỗi/rỗng ({size/1024:.0f}KB)")
 
 
-async def _download(url: str, account: str) -> Path:
-    """Downloads video to DOWNLOAD_DIR (tên: <STT>_<nick>_<thời gian>.mp4) and returns local path.
+def _prompt_slug(prompt: str, n: int = 30) -> str:
+    """Mấy chữ ĐẦU của prompt cho tên file: dòng đầu, bỏ ký tự cấm, gộp khoảng trắng, cắt n ký tự.
+    Giữ Unicode (tiếng Việt/Trung) vì Mac/Windows đọc được; rỗng nếu prompt rỗng."""
+    lines = (prompt or "").strip().splitlines()
+    s = lines[0] if lines else ""
+    s = re.sub(r'[\\/:*?"<>|]+', " ", s)          # ký tự cấm trong tên file
+    s = re.sub(r"\s+", " ", s).strip()[:n].strip()
+    return s.replace(" ", "_")
+
+
+async def _download(url: str, account: str, prompt: str = "") -> Path:
+    """Downloads video to DOWNLOAD_DIR (tên: <STT>_<chữ đầu prompt>_<nick>_<thời gian>.mp4) and returns local path.
 
     Render mất 2–12 phút và đã trừ credit; một lần rớt mạng lúc tải không được làm mất job →
     thử DOWNLOAD_RETRIES lần, hết thì ném DownloadError mang URL để người dùng tải tay.
@@ -351,7 +362,8 @@ async def _download(url: str, account: str) -> Path:
     dl_dir = Path(config.DOWNLOAD_DIR)
     dl_dir.mkdir(parents=True, exist_ok=True)
     stt = await _next_stt(dl_dir)
-    fname = dl_dir / f"{stt:04d}_{account}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+    parts = [f"{stt:04d}", _prompt_slug(prompt), account, time.strftime('%Y%m%d_%H%M%S')]
+    fname = dl_dir / ("_".join(p for p in parts if p) + ".mp4")   # bỏ phần rỗng, khỏi "__"
     for attempt in range(1, DOWNLOAD_RETRIES + 1):
         try:
             await _fetch_to_file(url, fname, proxy=proxy)
