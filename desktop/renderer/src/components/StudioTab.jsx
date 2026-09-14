@@ -154,8 +154,8 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         setRow(n, { status: `chờ server trả lời (${fails})` });
         continue;
       }
-      const pk = [pj.proxy_ip, pj.proxy_provider, pj.proxy_used, pj.proxy_per, pj.proxy_fresh].join("|");   // IP + lượt + NCC → cột Proxy
-      if (pk !== pip) { pip = pk; setRow(n, { proxyIp: pj.proxy_ip || "", proxyIsp: pj.proxy_isp || "", proxyProvider: pj.proxy_provider || "", proxyUsed: pj.proxy_used, proxyPer: pj.proxy_per, proxyFresh: pj.proxy_fresh }); }
+      const pk = [pj.proxy_ip, pj.proxy_provider, pj.proxy_used, pj.proxy_per, pj.proxy_fresh, pj.proxy_kind].join("|");   // IP + lượt + NCC + loại → cột Proxy
+      if (pk !== pip) { pip = pk; setRow(n, { proxyIp: pj.proxy_ip || "", proxyIsp: pj.proxy_isp || "", proxyProvider: pj.proxy_provider || "", proxyUsed: pj.proxy_used, proxyPer: pj.proxy_per, proxyFresh: pj.proxy_fresh, proxyKind: pj.proxy_kind || "" }); }
       if (pj.status === "completed") { setRow(n, { phase: "done", stage: "done", videoUrl: pj.video_url }); api.saveVideo?.(pj.video_url); return true; }
       if (pj.status === "failed") { setRow(n, { phase: "error", errorRaw: pj.error || "?" }); return false; }
       if (pj.stage && pj.stage !== stage) { stage = pj.stage; setRow(n, { stage }); }
@@ -445,7 +445,11 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, onSel, onChange, onR
               s.proxyProvider || "", s.proxyIsp || "",
             ].filter(Boolean).join(" · ") || " "}</div>
           </div>
-        ) : s.phase === "running" ? (
+        ) : s.proxyKind === "direct" ? (
+          <span className="text-muted-foreground">nối thẳng</span>
+        ) : s.proxyKind === "static" ? (
+          <span className="text-tertiary">proxy tĩnh</span>
+        ) : s.phase === "running" && s.proxyKind === "rotating" ? (
           <span className="text-primary">đang chờ IP…</span>
         ) : proxyCell ? (
           <div className="leading-tight">
