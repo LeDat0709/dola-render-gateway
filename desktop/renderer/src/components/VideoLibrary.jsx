@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Play, FolderOpen, Copy, Eraser, Search, Film, RefreshCw } from "lucide-react";
+import { Play, FolderOpen, Copy, Eraser, Search, Film, RefreshCw, X, ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,7 @@ export default function VideoLibrary({ active = true, onPlay }) {
   const [range, setRange] = useState("7");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [lb, setLb] = useState(null);   // chỉ số video đang xem lightbox (null = đóng)
   const [view, pickView] = useView("dolaVideoView");
   const load = useCallback(async () => {
     setBusy(true);
@@ -48,6 +49,14 @@ export default function VideoLibrary({ active = true, onPlay }) {
     catch (e) { setMsg("Lỗi: " + (e?.message || e)); }
   };
   const renderSec = (t) => (t.finished_at && t.started_at ? t.finished_at - t.started_at : 0);
+  // Lightbox: chuyển video trước/sau + phím tắt (← → Esc). Kẹp chỉ số trong [0, rows-1].
+  const step = useCallback((d) => setLb((i) => (i == null ? i : Math.max(0, Math.min(rows.length - 1, i + d)))), [rows.length]);
+  useEffect(() => {
+    if (lb == null) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") setLb(null); else if (e.key === "ArrowRight") step(1); else if (e.key === "ArrowLeft") step(-1); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lb, step]);
 
   return (
     <div className="space-y-3">
@@ -87,11 +96,11 @@ export default function VideoLibrary({ active = true, onPlay }) {
 
       {view === "grid" && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-          {rows.map((t) => {
+          {rows.map((t, i) => {
             const stt = sttFromUrl(t.video_url); const f = fnameFromUrl(t.video_url);
             return (
               <div key={t.id} className="flex flex-col gap-2 rounded-xl bg-surface-low p-2.5">
-                <div className="group relative aspect-[9/16] max-h-[220px] w-full cursor-pointer overflow-hidden rounded-lg bg-surface-lowest" onClick={() => onPlay?.(t.video_url)} title={f}>
+                <div className="group relative aspect-[9/16] max-h-[220px] w-full cursor-pointer overflow-hidden rounded-lg bg-surface-lowest" onClick={() => setLb(i)} title={f}>
                   <video className="h-full w-full object-cover" src={t.video_url + "#t=0.6"} muted preload="metadata" />
                   <span className="absolute left-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[11px] font-bold text-primary">{stt ? `#${stt}` : "—"}</span>
                   <span className="absolute right-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] text-white">{t.duration ? `${t.duration}s` : ""}</span>
@@ -103,7 +112,7 @@ export default function VideoLibrary({ active = true, onPlay }) {
                 <div className="flex items-center gap-0.5 border-t border-surface pt-1.5">
                   <button type="button" className="font-mono text-[10.5px] text-muted-foreground hover:text-primary" onClick={() => copy(t.prompt || "", "prompt")}>copy prompt</button>
                   <span className="ml-auto" />
-                  <Button variant="ghost" size="icon" className="h-7 w-7" title="Xem" onClick={() => onPlay?.(t.video_url)}><Play className="h-3.5 w-3.5" /></Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7" title="Xem" onClick={() => setLb(i)}><Play className="h-3.5 w-3.5" /></Button>
                   <Button variant="ghost" size="icon" className="h-7 w-7" title="Mở thư mục" onClick={() => api.openDownloads?.()}><FolderOpen className="h-3.5 w-3.5" /></Button>
                   <Button variant="ghost" size="icon" className="h-7 w-7" title="Copy tên file" onClick={() => copy(f, "tên file")}><Copy className="h-3.5 w-3.5" /></Button>
                   <Button variant="ghost" size="icon" className="h-7 w-7" title="Xoá logo Dola" onClick={() => removeWm(t.video_url)}><Eraser className="h-3.5 w-3.5" /></Button>
@@ -122,11 +131,11 @@ export default function VideoLibrary({ active = true, onPlay }) {
             <th className={th + " w-[150px]"}>Cấu hình</th><th className={th + " w-[120px]"}>Thời gian</th><th className={th + " w-[132px] text-right"}>Hành động</th>
           </tr></thead>
           <tbody>
-            {rows.map((t) => {
+            {rows.map((t, i) => {
               const stt = sttFromUrl(t.video_url); const f = fnameFromUrl(t.video_url);
               return (
                 <tr key={t.id} className="border-t border-surface hover:bg-surface/60">
-                  <td className="px-3 py-2"><video className="h-[46px] w-9 cursor-pointer rounded object-cover" src={t.video_url + "#t=0.6"} muted preload="metadata" onClick={() => onPlay?.(t.video_url)} title={f} /></td>
+                  <td className="px-3 py-2"><video className="h-[46px] w-9 cursor-pointer rounded object-cover" src={t.video_url + "#t=0.6"} muted preload="metadata" onClick={() => setLb(i)} title={f} /></td>
                   <td className="px-3 py-2 font-mono text-[12px] font-bold text-primary">{stt ? `#${stt}` : "—"}</td>
                   <td className="px-3 py-2 font-mono text-[12px]">{t.account || "—"}<div className="text-[10.5px] text-muted-foreground">{perNick.get(t.account)} video</div></td>
                   <td className="max-w-[420px] px-3 py-2">
@@ -136,7 +145,7 @@ export default function VideoLibrary({ active = true, onPlay }) {
                   <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">{t.model || "—"}<div>{t.ratio || "—"} · {t.duration ? `${t.duration}s` : "—"}</div></td>
                   <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">{timeAgo(t.finished_at)}<div>dựng {renderSec(t) ? fmtSec(renderSec(t)) : "—"}</div></td>
                   <td className="whitespace-nowrap px-3 py-2 text-right">
-                    <Button variant="ghost" size="icon" className="h-7 w-7" title="Xem" onClick={() => onPlay?.(t.video_url)}><Play className="h-3.5 w-3.5" /></Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" title="Xem" onClick={() => setLb(i)}><Play className="h-3.5 w-3.5" /></Button>
                     <Button variant="ghost" size="icon" className="h-7 w-7" title="Mở thư mục" onClick={() => api.openDownloads?.()}><FolderOpen className="h-3.5 w-3.5" /></Button>
                     <Button variant="ghost" size="icon" className="h-7 w-7" title="Copy tên file" onClick={() => copy(f, "tên file")}><Copy className="h-3.5 w-3.5" /></Button>
                     <Button variant="ghost" size="icon" className="h-7 w-7" title="Xoá logo Dola" onClick={() => removeWm(t.video_url)}><Eraser className="h-3.5 w-3.5" /></Button>
@@ -150,6 +159,42 @@ export default function VideoLibrary({ active = true, onPlay }) {
       </div>}
       {msg && <div className="text-xs text-muted-foreground">{msg}</div>}
       {nick && <Badge variant="info" className="cursor-pointer" onClick={() => setNick("")}>Đang lọc nick {nick} ✕</Badge>}
+
+      {lb != null && rows[lb] && (() => {
+        const t = rows[lb]; const stt = sttFromUrl(t.video_url); const f = fnameFromUrl(t.video_url);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4" onClick={() => setLb(null)}>
+            <button type="button" title="Đóng (Esc)" className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20" onClick={() => setLb(null)}><X className="h-5 w-5" /></button>
+            <button type="button" title="Trước (←)" disabled={lb <= 0} className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-2.5 text-white hover:bg-white/20 disabled:opacity-30" onClick={(e) => { e.stopPropagation(); step(-1); }}><ChevronLeft className="h-6 w-6" /></button>
+            <button type="button" title="Sau (→)" disabled={lb >= rows.length - 1} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-2.5 text-white hover:bg-white/20 disabled:opacity-30" onClick={(e) => { e.stopPropagation(); step(1); }}><ChevronRight className="h-6 w-6" /></button>
+            <div className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-surface md:flex-row" onClick={(e) => e.stopPropagation()}>
+              <video key={t.id} className="max-h-[88vh] w-full flex-1 bg-black object-contain md:max-w-[62%]" src={t.video_url} controls autoPlay />
+              <aside className="flex w-full flex-col gap-3 overflow-y-auto p-4 md:w-[38%]">
+                <div className="flex items-center gap-2">
+                  <span className="rounded bg-primary/15 px-2 py-0.5 font-mono text-[12px] font-bold text-primary">{stt ? `#${stt}` : "—"}</span>
+                  <span className="rounded bg-surface-high px-2 py-0.5 font-mono text-[11px] text-muted-foreground">{t.duration ? `${t.duration}s` : ""}</span>
+                  <span className="ml-auto font-mono text-[11px] text-muted-foreground">{lb + 1}/{rows.length}</span>
+                </div>
+                <div className="font-mono text-[13px] font-semibold">{t.account || "—"}</div>
+                <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-on-variant">{t.prompt || "—"}</div>
+                <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 font-mono text-[11px] text-muted-foreground">
+                  <div><dt className="opacity-60">Model</dt><dd className="text-foreground">{t.model || "—"}</dd></div>
+                  <div><dt className="opacity-60">Tỉ lệ</dt><dd className="text-foreground">{t.ratio || "—"}</dd></div>
+                  <div><dt className="opacity-60">Tạo lúc</dt><dd className="text-foreground">{timeAgo(t.finished_at)}</dd></div>
+                  <div><dt className="opacity-60">Thời gian dựng</dt><dd className="text-foreground">{renderSec(t) ? fmtSec(renderSec(t)) : "—"}</dd></div>
+                  <div className="col-span-2 min-w-0"><dt className="opacity-60">Tệp</dt><dd className="truncate text-foreground" title={f}>{f}</dd></div>
+                </dl>
+                <div className="mt-auto flex flex-wrap gap-2 border-t border-surface-high pt-3">
+                  <Button variant="secondary" size="sm" onClick={() => copy(t.prompt || "", "prompt")}><Copy className="h-3.5 w-3.5" />Copy prompt</Button>
+                  <Button variant="outline" size="sm" onClick={() => api.openDownloads?.()}><FolderOpen className="h-3.5 w-3.5" />Thư mục</Button>
+                  <Button variant="outline" size="sm" onClick={() => removeWm(t.video_url)}><Eraser className="h-3.5 w-3.5" />Xoá logo</Button>
+                  <Button variant="ghost" size="sm" onClick={() => onPlay?.(t.video_url)}><ExternalLink className="h-3.5 w-3.5" />Mở ngoài</Button>
+                </div>
+              </aside>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
