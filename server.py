@@ -248,6 +248,20 @@ class TaskResponse(BaseModel):
     prompt: str | None = None
     video_url: str | None = None
     error: str | None = None
+    proxy_ip: str | None = None    # IP xoay đang gắn cho nick job này (peek cache, không gọi mạng)
+    proxy_isp: str | None = None
+
+
+def _job_proxy_ip(account: str | None) -> tuple[str | None, str | None]:
+    """IP + nhà mạng đang cache của proxy nick này (KHÔNG gọi mạng) — cột 'Proxy (IP xoay)' hiện IP thật lúc chạy.
+    Nick có proxy riêng thì lấy theo proxy đó; không có thì theo proxy chung. Rỗng khi proxy tĩnh/nối thẳng."""
+    try:
+        from browser import rotating_ip_info, account_proxy_raw
+        raw = (account_proxy_raw(account) if account else "") or config.PROXY
+        info = rotating_ip_info(raw or "")
+        return (info.get("ip") or None, info.get("network") or info.get("location") or None)
+    except Exception:  # noqa: BLE001 — chỉ là thông tin hiển thị, lỗi thì để trống
+        return (None, None)
 
 
 def _task_stage(row: dict) -> str:
@@ -505,9 +519,11 @@ async def get_video(task_id: str, authorization: str | None = Header(default=Non
     row = store.get_for_client(task_id, client["api_key_hash"])
     if not row:
         raise HTTPException(404, "task not found")
+    proxy_ip, proxy_isp = _job_proxy_ip(row.get("account"))
     return TaskResponse(
         id=row["id"], status=row["status"], stage=_task_stage(row), model=row["model"],
         prompt=row["prompt"], video_url=row["video_url"], error=row["error"],
+        proxy_ip=proxy_ip, proxy_isp=proxy_isp,
     )
 
 

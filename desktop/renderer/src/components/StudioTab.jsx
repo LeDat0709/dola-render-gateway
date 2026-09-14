@@ -136,7 +136,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   }
   // Theo dõi một job đã có id — dùng cho cả job vừa gửi và job đang chạy dở từ lần mở app trước.
   async function watchJob(n, id) {
-    let stage = "queued", fails = 0;
+    let stage = "queued", fails = 0, pip = "";
     while (true) {
       await new Promise((r) => setTimeout(r, 3000));
       if (stop.current) { setRow(n, { phase: "idle", status: "đã dừng theo dõi" }); return true; }
@@ -152,6 +152,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         setRow(n, { status: `chờ server trả lời (${fails})` });
         continue;
       }
+      if ((pj.proxy_ip || "") !== pip) { pip = pj.proxy_ip || ""; setRow(n, { proxyIp: pip, proxyIsp: pj.proxy_isp || "" }); }   // IP xoay đang gắn → cột Proxy
       if (pj.status === "completed") { setRow(n, { phase: "done", stage: "done", videoUrl: pj.video_url }); api.saveVideo?.(pj.video_url); return true; }
       if (pj.status === "failed") { setRow(n, { phase: "error", errorRaw: pj.error || "?" }); return false; }
       if (pj.stage && pj.stage !== stage) { stage = pj.stage; setRow(n, { stage }); }
@@ -408,7 +409,14 @@ function NickRow({ a, s, selected, elapsed, proxyCell, onSel, onChange, onRun, o
       <td className={td}><SelectNative className="h-8 w-[68px] text-xs" value={s.ratio} onChange={(e) => onChange({ ratio: e.target.value })}>{RATIOS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
       <td className={td}><SelectNative className="h-8 w-[74px] text-xs" value={s.dur} onChange={(e) => onChange({ dur: e.target.value })}>{DURS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}</SelectNative></td>
       <td className={td + " whitespace-nowrap font-mono text-[11px]"}>
-        {proxyCell ? (
+        {s.proxyIp ? (
+          <div className="leading-tight">
+            <div className="text-tertiary">{s.proxyIp}</div>
+            {s.proxyIsp ? <div className="text-[10px] text-muted-foreground">{s.proxyIsp}</div> : null}
+          </div>
+        ) : s.phase === "running" ? (
+          <span className="text-primary">đang chờ IP…</span>
+        ) : proxyCell ? (
           <div className="leading-tight">
             <div className="text-tertiary">{proxyCell.ip}</div>
             <div className="text-[10px] text-muted-foreground">{proxyCell.isp ? proxyCell.isp + " · " : ""}lượt {Math.min(proxyCell.used, proxyCell.per) || proxyCell.used}/{proxyCell.per}</div>
