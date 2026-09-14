@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("api", {
   verifyAll: (names) => ipcRenderer.invoke("account:verifyAll", names),
   setConcurrency: (send, login) => ipcRenderer.invoke("config:setConcurrency", { send, login }),
   setSubmitGap: (minSec, maxSec) => ipcRenderer.invoke("config:setSubmitGap", { minSec, maxSec }),
+  notify: (title, body) => ipcRenderer.invoke("app:notify", { title, body }),
   getAutoRetry: () => ipcRenderer.invoke("config:getAutoRetry"),
   setAutoRetry: (on) => ipcRenderer.invoke("config:setAutoRetry", { on }),
   getOneNick: () => ipcRenderer.invoke("config:getOneNick"),

@@ -11,6 +11,9 @@
     "dist:win": "electron-builder --win nsis portable",
     "dist:mac": "electron-builder --mac dir"
   },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
   "devDependencies": {
     "electron": "^32.0.0",
     "electron-builder": "^24.13.3"
@@ -21,6 +24,13 @@
     "directories": {
       "output": "../dist-app"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "LeDat0709",
+        "repo": "dola-render-gateway"
+      }
+    ],
     "files": [
       "main.js",
       "preload.js",

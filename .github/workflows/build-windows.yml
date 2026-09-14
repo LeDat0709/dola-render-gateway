@@ -29,20 +29,25 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: dola-studio-windows
-          path: dist-app/*.exe
+          path: |
+            dist-app/*.exe
+            dist-app/latest.yml
+            dist-app/*.blockmap
           if-no-files-found: error
 
       # Đẩy tag v* (ví dụ: git tag v1.0.0 && git push mine v1.0.0) thì .exe tự lên Releases,
       # tải một cú bấm, không cần vào tab Actions. Mac chạy song song và có thể tạo Release trước ->
       # tạo không được thì upload vào Release có sẵn (--clobber ghi đè nếu trùng tên).
-      - name: Đính .exe vào Release
+      # latest.yml + *.blockmap: electron-updater đọc để TỰ CẬP NHẬT bản đã cài (NSIS) — thiếu là không auto-update được.
+      - name: Đính .exe + metadata auto-update vào Release
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist-app/*.exe \
+          FILES=$(ls dist-app/*.exe dist-app/latest.yml dist-app/*.blockmap 2>/dev/null)
+          gh release create "$GITHUB_REF_NAME" $FILES \
             --repo "$GITHUB_REPOSITORY" \
             --title "Dola Studio $GITHUB_REF_NAME" \
-            --notes "Bản Windows một-cú-bấm. Tải **Dola Studio Setup** để cài, hoặc **DolaStudio-portable** để chạy thẳng. Máy đích không cần cài Python/Node/Chrome." \
-          || gh release upload "$GITHUB_REF_NAME" dist-app/*.exe --clobber --repo "$GITHUB_REPOSITORY"
+            --notes "Bản Windows một-cú-bấm. Tải **Dola Studio Setup** để cài (bản cài TỰ CẬP NHẬT các phiên bản sau), hoặc **DolaStudio-portable** để chạy thẳng. Máy đích không cần cài Python/Node/Chrome." \
+          || gh release upload "$GITHUB_REF_NAME" $FILES --clobber --repo "$GITHUB_REPOSITORY"

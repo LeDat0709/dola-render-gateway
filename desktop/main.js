@@ -1,6 +1,6 @@
 // Electron main process for the Dola Render Gateway desktop GUI.
 // Spawns the gateway from the repo's .venv, and runs cookie-login imports.
-const { app, BrowserWindow, ipcMain, dialog, shell, session } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, session, Notification } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -1117,6 +1117,13 @@ ipcMain.handle("config:setConcurrency", async (_e, { send, login }) => {
   } catch (e) { return { ok: false, error: String(e) }; }
 });
 
+// Thông báo desktop (macOS/Windows) — bắn từ renderer khi batch xong / nick chết, kể cả app chạy nền.
+ipcMain.handle("app:notify", (_e, { title, body }) => {
+  try { new Notification({ title: String(title || "Dola Studio"), body: String(body || ""), silent: false }).show(); }
+  catch (e) { console.error("[notify]", e); }
+  return { ok: true };
+});
+
 ipcMain.handle("config:setSubmitGap", async (_e, { minSec, maxSec }) => {
   const lo = Math.max(0, Math.min(60, Number(minSec)));
   const hi = Math.max(lo, Math.min(120, Number(maxSec)));
@@ -1153,9 +1160,32 @@ ipcMain.handle("logs:tail", (_e, n) => {
   } catch (e) { return { ok: false, error: String(e) }; }
 });
 
+// Tự cập nhật: app đã cài (NSIS Windows) tự kiểm GitHub Releases, tải bản mới rồi hỏi cài — hết gửi link tay.
+// Chỉ chạy khi ĐÃ đóng gói + không phải chế độ máy chủ từ xa. Mac ad-hoc không auto-update được (cần Developer ID).
+function setupAutoUpdate() {
+  if (!app.isPackaged || isRemote()) return;
+  let autoUpdater;
+  try { ({ autoUpdater } = require("electron-updater")); } catch (e) { console.error("[updater] thiếu electron-updater:", e); return; }
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on("update-available", (i) => notifyMain("Có bản mới " + i.version, "Đang tải bản cập nhật ở chế độ nền…"));
+  autoUpdater.on("update-downloaded", (i) => {
+    const r = dialog.showMessageBoxSync({
+      type: "info", buttons: ["Cài & khởi động lại", "Để sau"], defaultId: 0, cancelId: 1,
+      title: "Cập nhật Dola Studio", message: `Đã tải bản ${i.version}.`,
+      detail: "Cài ngay (app đóng và mở lại), hoặc để lần thoát app sau tự cài.",
+    });
+    if (r === 0) { try { gateway.stop(); } catch {} autoUpdater.quitAndInstall(); }
+  });
+  autoUpdater.on("error", (e) => console.error("[updater]", e && e.message || e));
+  setTimeout(() => autoUpdater.checkForUpdates().catch((e) => console.error("[updater] check:", e && e.message || e)), 8000);
+}
+function notifyMain(title, body) { try { new Notification({ title, body, silent: false }).show(); } catch {} }
+
 app.whenReady().then(() => {
   createWindow();
   if (!isRemote()) gateway.start();   // mở app là có server, khỏi bấm "Bật server" mỗi lần
+  setupAutoUpdate();
 });
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();

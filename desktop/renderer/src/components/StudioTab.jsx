@@ -194,7 +194,9 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     setGen(`Đang chạy ${run.length} nick…` + (skipped ? ` (bỏ ${skipped})` : ""));
     const res = await Promise.all(run.map(runOne));   // runOne trả true=ok / false=lỗi
     const bad = run.filter((_, i) => res[i] === false);
-    setGen(bad.length ? `Xong ${run.length - bad.length}/${run.length} nick. Lỗi: ${bad.join(", ")}.` : `Xong ${run.length} nick.`);
+    const summary = bad.length ? `Xong ${run.length - bad.length}/${run.length} nick. Lỗi: ${bad.join(", ")}.` : `Xong ${run.length} nick.`;
+    setGen(summary);
+    api.notify?.("Dola Studio — chạy xong", summary);   // thông báo desktop (tiện để máy chạy đêm)
   }
   async function wakeAllCooling() {
     const cooling = accounts.filter((a) => a.cooling).map((a) => a.account);
