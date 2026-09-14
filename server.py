@@ -261,9 +261,9 @@ def _job_proxy(account: str | None) -> dict:
     """Thông tin proxy đang gắn cho job của nick — cột 'Proxy' hiện IP · IP mới/cũ · lượt k/N · nhà cung cấp (như đối thủ).
     Ưu tiên dấu do pool ghi lúc chạy (chính xác lượt/mới-cũ); chưa chạy thì peek cache. KHÔNG gọi mạng.
     kind = rotating (proxy xoay) | static (proxy tĩnh) | direct (không proxy) → UI hiện đúng, không kẹt 'đang chờ IP'."""
-    raw, rotating_ip_info = "", None
+    raw, rotating_ip_info, provider_label = "", None, None
     try:
-        from browser import rotating_ip_info, account_proxy_raw, is_rotating_proxy
+        from browser import rotating_ip_info, account_proxy_raw, is_rotating_proxy, provider_label
         raw = ((account_proxy_raw(account) if account else "") or config.PROXY or "").strip()
         kind = "rotating" if is_rotating_proxy(raw) else ("static" if raw else "direct")
     except Exception:  # noqa: BLE001
@@ -279,7 +279,7 @@ def _job_proxy(account: str | None) -> dict:
             info = rotating_ip_info(raw)
             ip = info.get("ip") or None
             isp = isp or info.get("network") or info.get("location") or None
-            prov = prov or ("tmproxy" if raw.lower().startswith("tmproxy://") else "proxyxoay")
+            prov = prov or (provider_label(raw) if provider_label else None)
         except Exception:  # noqa: BLE001 — chỉ là thông tin hiển thị
             pass
     return {"ip": ip, "isp": isp, "provider": prov or None, "kind": kind,

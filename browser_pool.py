@@ -366,11 +366,10 @@ class BrowserPool:
     def _stamp_proxy(self, account: str, used=None, per=None, fresh=None) -> None:
         """Ghi IP/nhà cung cấp/lượt đang gắn cho job của nick — cột 'Proxy' hiện như đối thủ (peek cache, không gọi mạng)."""
         try:
-            from browser import rotating_ip_info, account_proxy_raw, is_rotating_proxy
+            from browser import rotating_ip_info, account_proxy_raw, provider_label
             raw = account_proxy_raw(account) or config.PROXY
-            low = (raw or "").lower()
             info = rotating_ip_info(raw or "")
-            prov = "tmproxy" if low.startswith("tmproxy://") else ("proxyxoay" if is_rotating_proxy(raw) else "")
+            prov = provider_label(raw)   # tmproxy | topproxy | proxyxoay | ""
             self._proxy_stamp[account] = {
                 "ip": info.get("ip") or "", "isp": info.get("network") or info.get("location") or "",
                 "provider": prov, "used": used, "per": per, "fresh": fresh,

@@ -165,6 +165,18 @@ def is_rotating_proxy(raw: str) -> bool:
     return proxyxoay.is_key_link(s)
 
 
+def provider_label(raw: str) -> str:
+    """Tên nhà cung cấp proxy để hiện UI: tmproxy | topproxy | proxyxoay | '' (tĩnh/nối thẳng).
+    topproxy.vn dùng chung backend proxyxoay.shop/get.php nên vẫn qua proxyxoay.py — chỉ khác NHÃN hiển thị."""
+    s = normalize_proxy_input(raw or "").lower()
+    if s.startswith("tmproxy://"):
+        return "tmproxy"
+    if "topproxy" in s:
+        return "topproxy"
+    import proxyxoay
+    return "proxyxoay" if proxyxoay.is_key_link(s) else ""
+
+
 def _rotating_ent(raw: str, do_rotate: bool) -> dict | None:
     """IP hiện hành (do_rotate=False) hoặc xin IP mới (True) của proxy xoay — dùng chung TMProxy & proxyxoay.
     Trả {ip, network, location, expiration, message} cho thẻ làn; không phải proxy xoay → None. Ném lỗi nhà
