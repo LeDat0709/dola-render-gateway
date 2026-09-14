@@ -297,25 +297,6 @@ def _check_submit(result: dict) -> str:
     raise SubmitRejected(f"HTTP {status}: {body[:200]}")
 
 
-_STT_LOCK = asyncio.Lock()
-
-
-async def _next_stt(dl_dir: Path) -> int:
-    """Số thứ tự video tăng dần, bền qua các lần chạy (.stt_counter). An toàn khi tải song song."""
-    cfile = dl_dir / ".stt_counter"
-    async with _STT_LOCK:
-        try:
-            n = int(cfile.read_text().strip())
-        except Exception:
-            n = len(list(dl_dir.glob("*.mp4")))   # lần đầu: nối tiếp số video đã có
-        n += 1
-        try:
-            cfile.write_text(str(n))
-        except OSError:
-            pass
-        return n
-
-
 DOWNLOAD_RETRIES = 3
 DOWNLOAD_RETRY_SEC = 5
 
@@ -352,7 +333,7 @@ def _prompt_slug(prompt: str, n: int = 30) -> str:
 
 
 async def _download(url: str, account: str, prompt: str = "") -> Path:
-    """Downloads video to DOWNLOAD_DIR (tên: <STT>_<chữ đầu prompt>_<nick>_<thời gian>.mp4) and returns local path.
+    """Downloads video to DOWNLOAD_DIR (tên: <chữ đầu prompt>_<nick>_<thời gian>.mp4) and returns local path.
 
     Render mất 2–12 phút và đã trừ credit; một lần rớt mạng lúc tải không được làm mất job →
     thử DOWNLOAD_RETRIES lần, hết thì ném DownloadError mang URL để người dùng tải tay.
@@ -361,8 +342,7 @@ async def _download(url: str, account: str, prompt: str = "") -> Path:
     proxy = account_proxy_url(account) or None      # tải video đi đúng proxy của nick, không phải IP chung
     dl_dir = Path(config.DOWNLOAD_DIR)
     dl_dir.mkdir(parents=True, exist_ok=True)
-    stt = await _next_stt(dl_dir)
-    parts = [f"{stt:04d}", _prompt_slug(prompt), account, time.strftime('%Y%m%d_%H%M%S')]
+    parts = [_prompt_slug(prompt), account, time.strftime('%Y%m%d_%H%M%S')]   # theo PROMPT, không STT
     fname = dl_dir / ("_".join(p for p in parts if p) + ".mp4")   # bỏ phần rỗng, khỏi "__"
     for attempt in range(1, DOWNLOAD_RETRIES + 1):
         try:
