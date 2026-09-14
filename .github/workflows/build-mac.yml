@@ -1,0 +1,48 @@
+name: Build macOS dmg
+
+# Không có máy Mac thì đẩy tag v* (git tag v1.0.0 && git push mine v1.0.0) — .dmg tự lên Releases;
+# hoặc bấm Run workflow ở tab Actions, tải .dmg/.zip ở mục Artifacts.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  mac:
+    runs-on: macos-14          # Apple Silicon (arm64) — khớp máy Mac M-series
+    timeout-minutes: 60
+    permissions:
+      contents: write          # cần để đính .dmg vào Release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # cần tag để build-mac.sh lấy số phiên bản (git describe)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # build-mac.sh: tải Python tự chứa + Chromium (patchright) + build UI + electron-builder (dir) +
+      # ký ad-hoc + đóng .dmg (hdiutil) và .zip (ditto). Số phiên bản lấy từ tag, không sửa package.json.
+      - name: Dung runtime + dong goi app / dmg / zip
+        run: bash scripts/build-mac.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dola-studio-macos
+          path: |
+            dist-app/*.dmg
+            dist-app/*.zip
+          if-no-files-found: error
+
+      # Day tag v* thi .dmg tu len Releases. Windows chay song song va co the tao Release truoc ->
+      # tao khong duoc thi upload vao Release co san (--clobber ghi de neu trung ten).
+      - name: Dinh dmg vao Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist-app/*.dmg dist-app/*.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Dola Studio $GITHUB_REF_NAME" \
+            --notes "Ban macOS (Apple Silicon). Tai .dmg, mo roi keo Dola Studio vao Applications. Lan dau bi chan: chuot phai -> Open, hoac chay: xattr -dr com.apple.quarantine '/Applications/Dola Studio.app'. May dich khong can cai Python/Node/Chrome." \
+          || gh release upload "$GITHUB_REF_NAME" dist-app/*.dmg dist-app/*.zip --clobber --repo "$GITHUB_REPOSITORY"
