@@ -40,6 +40,7 @@ const hasChromeWin = () => CHROME_WIN_PATHS.some((p) => p && fs.existsSync(p));
 
 function pyEnv() {
   const env = { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" };
+  env.DOLA_DOWNLOAD_DIR = resolveDownloadsDir();   // Python lưu video ĐÚNG thư mục dễ thấy (tuyệt đối)
   if (BROWSERS_DIR) {
     env.PLAYWRIGHT_BROWSERS_PATH = BROWSERS_DIR;   // dùng Chromium đóng gói kèm
     env.PATCHRIGHT_BROWSERS_PATH = BROWSERS_DIR;
@@ -98,15 +99,19 @@ function pipeLog(stream, tag) {
 // .env.local parser sống trong proxy.cjs (một bản duy nhất, dùng chung).
 const readEnvLocal = () => _readEnvLocal(DATA_DIR);
 
+// Thư mục lưu video: env tuyệt đối > env tương đối (dưới DATA_DIR) > mặc định. Bản đóng gói mặc định vào
+// Downloads\Dola Studio (DỄ THẤY) thay vì %APPDATA% ẩn khiến người dùng tưởng "không tải"; dev = repo/downloads.
+function resolveDownloadsDir(env) {
+  const v = ((env || readEnvLocal()).DOLA_DOWNLOAD_DIR || "").trim();
+  if (v) return path.isAbsolute(v) ? v : path.join(DATA_DIR, v);
+  return PACKAGED ? path.join(app.getPath("downloads"), "Dola Studio") : path.join(DATA_DIR, "downloads");
+}
 function config() {
   const env = readEnvLocal();
   const { base, remote } = gatewayBase(env);
   const apiKey = (env.DOLA_API_KEYS || "").split(",").map((s) => s.trim()).filter(Boolean)[0] || "";
-  const downloadsDir = path.isAbsolute(env.DOLA_DOWNLOAD_DIR || "")
-    ? env.DOLA_DOWNLOAD_DIR
-    : path.join(DATA_DIR, env.DOLA_DOWNLOAD_DIR || "downloads");
   const adminKey = env.DOLA_ADMIN_KEY || "";
-  return { base, remote, apiKey, adminKey, downloadsDir };
+  return { base, remote, apiKey, adminKey, downloadsDir: resolveDownloadsDir(env) };
 }
 const isRemote = () => config().remote;
 // Gọi admin API của gateway ĐANG dùng (cục bộ hoặc VPS) — proxy xoay theo link giải qua đây (proxyxoay.py).
@@ -1028,7 +1033,11 @@ ipcMain.handle("video:save", async (_e, { url }) => {
   } catch (e) { return { ok: false, error: String((e && e.message) || e).slice(0, 160) }; }
 });
 
-ipcMain.handle("open:downloads", () => shell.openPath(config().downloadsDir));
+ipcMain.handle("open:downloads", () => {
+  const d = config().downloadsDir;
+  try { fs.mkdirSync(d, { recursive: true }); } catch (_) {}   // tạo sẵn để mở được kể cả khi chưa tải video nào
+  return shell.openPath(d);
+});
 
 // Ghi/đổi 1 khoá trong .env.local (dùng cho DOLA_ACCOUNTS_DIR).
 function upsertEnvLocal(key, value) {

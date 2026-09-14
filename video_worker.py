@@ -363,6 +363,7 @@ async def _download(url: str, account: str) -> Path:
             if attempt == DOWNLOAD_RETRIES:
                 raise DownloadError(url, last) from e
             await asyncio.sleep(DOWNLOAD_RETRY_SEC)
+    print(f"[{account}] ✓ Đã lưu video: {fname}", flush=True)   # in rõ ĐƯỜNG DẪN để biết video nằm đâu
     if getattr(config, "AUTO_REMOVE_WM", False):
         try:
             import watermark
