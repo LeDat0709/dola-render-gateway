@@ -6,6 +6,18 @@ import { cn } from "@/lib/utils";
 
 const KEY = "dolaSidebarCollapsed";
 
+// Gộp NAV theo field `group`, GIỮ thứ tự (các item cùng nhóm liền nhau) → [ [tênNhóm, [items]] ].
+function groupNav(items) {
+  const out = [];
+  for (const it of items) {
+    const g = it.group || "";
+    const last = out[out.length - 1];
+    if (last && last[0] === g) last[1].push(it);
+    else out.push([g, [it]]);
+  }
+  return out;
+}
+
 // Sidebar kiểu shadcn-admin: logo, điều hướng dọc (vẫn là TabsTrigger của Radix nên state tab không đổi),
 // thu gọn còn icon và nhớ lựa chọn. Chân sidebar: trạng thái gateway.
 export default function Sidebar({ items, health }) {
@@ -27,15 +39,21 @@ export default function Sidebar({ items, health }) {
         )}
       </div>
       <TabsList className="flex h-auto flex-col items-stretch gap-0.5 rounded-none bg-transparent p-2">
-        {items.map(({ value, label, icon: Icon }) => (
-          <TabsTrigger key={value} value={value} title={collapsed ? label : undefined}
-            className={cn("h-9 justify-start gap-2.5 rounded-md px-2.5 text-[13px] font-medium text-sidebar-foreground/70",
-              "hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-              "data-[state=active]:bg-sidebar-accent data-[state=active]:text-sidebar-primary data-[state=active]:shadow-none",
-              collapsed && "justify-center px-0")}>
-            <Icon className="h-4 w-4 shrink-0" />
-            {!collapsed && <span className="truncate">{label}</span>}
-          </TabsTrigger>
+        {groupNav(items).map(([group, its], gi) => (
+          <div key={group || gi} className={gi ? "mt-2" : ""}>
+            {!collapsed && group && <div className="px-2.5 pb-1 pt-1 font-mono text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/60">{group}</div>}
+            {collapsed && gi > 0 && <div className="mx-2 my-1.5 border-t border-sidebar-border/60" />}
+            {its.map(({ value, label, icon: Icon }) => (
+              <TabsTrigger key={value} value={value} title={collapsed ? label : undefined}
+                className={cn("h-9 w-full justify-start gap-2.5 rounded-md px-2.5 text-[13px] font-medium text-sidebar-foreground/70",
+                  "hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+                  "data-[state=active]:bg-sidebar-accent data-[state=active]:text-sidebar-primary data-[state=active]:shadow-none",
+                  collapsed && "justify-center px-0")}>
+                <Icon className="h-4 w-4 shrink-0" />
+                {!collapsed && <span className="truncate">{label}</span>}
+              </TabsTrigger>
+            ))}
+          </div>
         ))}
       </TabsList>
       <div className="mt-auto space-y-1 border-t border-sidebar-border p-2">

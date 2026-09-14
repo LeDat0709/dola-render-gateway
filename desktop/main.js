@@ -1117,6 +1117,22 @@ ipcMain.handle("config:setConcurrency", async (_e, { send, login }) => {
   } catch (e) { return { ok: false, error: String(e) }; }
 });
 
+ipcMain.handle("config:setSubmitGap", async (_e, { minSec, maxSec }) => {
+  const lo = Math.max(0, Math.min(60, Number(minSec)));
+  const hi = Math.max(lo, Math.min(120, Number(maxSec)));
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ok: false, error: "giá trị không hợp lệ" };
+  try {
+    const env = readEnvLocal();
+    const headers = { "Content-Type": "application/json" };
+    if (env.DOLA_ADMIN_KEY) headers["x-admin-key"] = env.DOLA_ADMIN_KEY;
+    const r = await fetch(config().base + "/api/admin/submit-gap",
+                          { method: "POST", headers, body: JSON.stringify({ min_sec: lo, max_sec: hi }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
+    return j;   // server tự ghi DOLA_SUBMIT_GAP/JITTER vào .env.local
+  } catch (e) { return { ok: false, error: String(e) }; }
+});
+
 ipcMain.handle("video:chooseDir", async () => {
   const r = await dialog.showOpenDialog({
     properties: ["openDirectory", "createDirectory"],

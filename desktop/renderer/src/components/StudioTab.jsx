@@ -57,7 +57,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   };
   const [clock, setClock] = useState(0);
   const inflight = useRef(new Set());
-  const [conc, setConc] = useState({ send: "", login: "" });
+  const [conc, setConc] = useState({ send: "", login: "", gmin: "", gmax: "" });   // gmin/gmax: chờ ngẫu nhiên giữa lần gửi
   const stop = useRef(false);
   const vidDir = useRef("");
 
@@ -80,8 +80,10 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   useEffect(() => {
     if (!health) return;
     setConc((c) => ({ send: c.send || String(health.max_concurrency || 3),
-                      login: c.login || String(health.login_concurrency || 3) }));
-  }, [health?.max_concurrency, health?.login_concurrency]);   // eslint-disable-line react-hooks/exhaustive-deps
+                      login: c.login || String(health.login_concurrency || 3),
+                      gmin: c.gmin || String(Math.round(health.submit_gap_min ?? 3)),
+                      gmax: c.gmax || String(Math.round(health.submit_gap_max ?? 6)) }));
+  }, [health?.max_concurrency, health?.login_concurrency, health?.submit_gap_min, health?.submit_gap_max]);   // eslint-disable-line react-hooks/exhaustive-deps
   // đồng hồ 1s khi có job chạy
   useEffect(() => {
     const any = Object.values(rows).some((r) => r.phase === "running");
@@ -221,6 +223,13 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
       onRefresh();
     } else setGen("Lỗi đổi luồng: " + (r?.error || "?"));
   }
+  async function applyGap() {
+    const lo = parseFloat(conc.gmin), hi = parseFloat(conc.gmax);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) { setGen("Nhập số giây hợp lệ cho 'chờ ngẫu nhiên'."); return; }
+    const r = await api.setSubmitGap?.(lo, hi);
+    if (r?.ok) setGen(`✓ Chờ ngẫu nhiên ${Math.round(r.min_sec)}–${Math.round(r.max_sec)}s giữa mỗi lần gửi (theo từng proxy) — chống 710022002.`);
+    else setGen("Lỗi đặt chờ ngẫu nhiên: " + (r?.error || "?"));
+  }
   const selected = Object.keys(sel).filter((n) => sel[n] && accounts.some((a) => a.account === n));
   const runSelected = () => runBatch(selected, "Chọn ít nhất 1 nick.");
   const runReady = () => runBatch(readyNicks(), "Không có nick sẵn sàng.");
@@ -336,6 +345,12 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <span>Đăng nhập cùng lúc</span>
         <Input className="h-7 w-14 font-mono text-[11px]" type="number" min={1} max={health?.max_login_slots || 12} value={conc.login} onChange={(e) => setConc({ ...conc, login: e.target.value })} />
         <Button variant="outline" size="sm" className="h-7" onClick={applyConc}>Áp dụng</Button>
+        <span className="ml-2" title="Giãn nhịp ngẫu nhiên giữa mỗi lần gửi (theo từng proxy) để tránh Dola chặn 710022002 'gửi quá dày'">Chờ ngẫu nhiên</span>
+        <Input className="h-7 w-12 font-mono text-[11px]" type="number" min={0} max={60} value={conc.gmin} onChange={(e) => setConc({ ...conc, gmin: e.target.value })} />
+        <span>–</span>
+        <Input className="h-7 w-12 font-mono text-[11px]" type="number" min={0} max={120} value={conc.gmax} onChange={(e) => setConc({ ...conc, gmax: e.target.value })} />
+        <span>giây</span>
+        <Button variant="outline" size="sm" className="h-7" onClick={applyGap}>Áp dụng</Button>
       </div>
       {gen && <div className="text-xs text-muted-foreground">{gen}</div>}
 
@@ -348,21 +363,24 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         </div>
       ) : accounts.length > 0 && (
         <div className="overflow-x-auto rounded-lg bg-surface">
-          <table className="w-full min-w-[1040px] border-collapse text-[12.5px]">
+          <table className="w-full min-w-[1240px] border-collapse text-[12.5px]">
             <thead className="border-b border-surface-high">
               <tr className="sticky top-0 z-10 bg-surface">
                 <th className={TH + " w-8"}><input type="checkbox" checked={allSel} title={allSel ? "Bỏ chọn" : "Chọn tất cả"} onChange={() => selectWhere(() => !allSel, allSel ? "" : "tất cả")} /></th>
+                <th className={TH + " w-10"}>STT</th>
                 <th className={TH}>Nick</th>
+                <th className={TH}>Trạng thái</th>
                 <th className={TH}>Prompt</th>
                 <th className={TH}>Model</th>
                 <th className={TH}>Tỷ lệ</th>
                 <th className={TH}>Dài</th>
                 <th className={TH}>Proxy (IP xoay)</th>
+                <th className={TH}>Tệp</th>
                 <th className={TH}>Tiến trình</th>
                 <th className={TH + " text-right"}>Thao tác</th>
               </tr>
             </thead>
-            <tbody>{ordered.map((a) => <NickRow key={a.account} {...nickProps(a)} />)}</tbody>
+            <tbody>{ordered.map((a, i) => <NickRow key={a.account} idx={i + 1} {...nickProps(a)} />)}</tbody>
           </table>
         </div>
       )}
@@ -388,7 +406,7 @@ function Timeline({ s, compact = false }) {
 }
 
 // Dạng bảng: một dòng một nick, cùng dữ liệu và thao tác với thẻ nhưng nhìn được 15–20 nick không cần cuộn.
-function NickRow({ a, s, selected, elapsed, proxyCell, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
+function NickRow({ a, s, idx, selected, elapsed, proxyCell, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
   const n = a.account;
   const chip = stateChip(a, s);
   const tint = s.phase === "done" ? " bg-tertiary/5" : s.phase === "error" ? " bg-error/5" : "";
@@ -397,10 +415,12 @@ function NickRow({ a, s, selected, elapsed, proxyCell, onSel, onChange, onRun, o
   return (
     <tr className={"border-b border-surface-high/60 last:border-0" + tint + (isDim(a, s) ? " opacity-60" : "")}>
       <td className={td}><input type="checkbox" checked={selected} onChange={(e) => onSel(e.target.checked)} /></td>
+      <td className={td + " font-mono text-[11px] text-muted-foreground tabular-nums"}>{idx}</td>
       <td className={td + " whitespace-nowrap"}>
-        <div className="flex items-center gap-2"><span className="font-mono text-[12px] font-semibold">{n}</span><Badge variant={chip.variant}>{chip.text}</Badge></div>
+        <div className="font-mono text-[12px] font-semibold">{n}</div>
         <div className="font-mono text-[10.5px] text-muted-foreground">{a.used_today}/{a.limit} hôm nay{a.remaining != null ? ` · còn ${a.remaining}` : ""}</div>
       </td>
+      <td className={td + " whitespace-nowrap"}><Badge variant={chip.variant}>{chip.text}</Badge></td>
       <td className={td + " min-w-[260px]"}>
         {s.phase === "done"
           ? <DoneRow s={s} onPlay={onPlay} onOpen={onOpen} onCopy={onCopy} onRemoveWm={onRemoveWm} onNew={onNew} />
@@ -427,6 +447,11 @@ function NickRow({ a, s, selected, elapsed, proxyCell, onSel, onChange, onRun, o
             <div className="text-[10px] text-muted-foreground">{proxyCell.isp ? proxyCell.isp + " · " : ""}lượt {Math.min(proxyCell.used, proxyCell.per) || proxyCell.used}/{proxyCell.per}</div>
           </div>
         ) : <span className="text-muted-foreground">—</span>}
+      </td>
+      <td className={td + " max-w-[180px]"}>
+        {s.videoUrl
+          ? <span className="block truncate font-mono text-[11px] text-muted-foreground" title={fnameFromUrl(s.videoUrl)}>{fnameFromUrl(s.videoUrl)}</span>
+          : <span className="text-muted-foreground">—</span>}
       </td>
       <td className={td + " w-[240px] max-w-[280px]"}>
         <Timeline s={s} compact />

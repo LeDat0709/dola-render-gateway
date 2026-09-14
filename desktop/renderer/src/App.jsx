@@ -15,12 +15,12 @@ import ProxyTab from "@/components/ProxyTab";
 import { loadConfig, health as fetchHealth } from "@/lib/api";
 
 const NAV = [
-  { value: "overview", label: "Tổng quan", icon: LayoutDashboard, subtitle: "Máy chủ, nick và job đang chạy" },
-  { value: "make", label: "Studio", icon: Clapperboard, subtitle: "Mỗi nick một thẻ, prompt riêng" },
-  { value: "video", label: "Video", icon: Film, subtitle: "Thư viện video đã tạo" },
-  { value: "acct", label: "Kho tài khoản", icon: Users, subtitle: "Nick, cookie, credit, proxy riêng" },
-  { value: "proxy", label: "Proxy", icon: Network, subtitle: "Kho proxy và phân bổ theo nick" },
-  { value: "settings", label: "Cài đặt", icon: Settings2, subtitle: "Server, proxy chung, tuỳ chọn" },
+  { value: "overview", label: "Tổng quan", icon: LayoutDashboard, subtitle: "Máy chủ, nick và job đang chạy", group: "Sáng tạo" },
+  { value: "make", label: "Studio", icon: Clapperboard, subtitle: "Mỗi nick một thẻ, prompt riêng", group: "Sáng tạo" },
+  { value: "video", label: "Video", icon: Film, subtitle: "Thư viện video đã tạo", group: "Sáng tạo" },
+  { value: "acct", label: "Kho tài khoản", icon: Users, subtitle: "Nick, cookie, credit, proxy riêng", group: "Quản lý" },
+  { value: "proxy", label: "Proxy", icon: Network, subtitle: "Kho proxy và phân bổ theo nick", group: "Quản lý" },
+  { value: "settings", label: "Cài đặt", icon: Settings2, subtitle: "Server, proxy chung, tuỳ chọn", group: "Hệ thống" },
 ];
 
 export default function App() {

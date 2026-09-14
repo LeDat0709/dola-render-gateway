@@ -578,6 +578,8 @@ async def health():
         "nicks_per_ip": config.NICKS_PER_IP,
         "rotating_ip": _rotating_ip_cached(),          # IP xoay đang dùng (đọc cache, không gọi mạng)
         "ip_used": getattr(pool, "_ip_used", 0),       # số nick đã dùng IP hiện tại (lượt k/N)
+        "submit_gap_min": config.SUBMIT_GAP_SEC,                                  # chờ ngẫu nhiên tối thiểu giữa lần gửi
+        "submit_gap_max": config.SUBMIT_GAP_SEC + config.SUBMIT_JITTER_SEC,       # …tối đa (min + jitter)
     }
 
 
@@ -981,6 +983,26 @@ async def admin_one_nick(body: OneNickUpdate, x_admin_key: str | None = Header(d
         config.NICKS_PER_IP = max(1, body.nicks_per_ip)
     print(f"[gateway] MỖI LẦN MỘT NICK: {'BẬT' if config.ONE_NICK else 'TẮT'} · {config.NICKS_PER_IP} nick/IP", flush=True)
     return {"ok": True, "one_nick": config.ONE_NICK, "nicks_per_ip": config.NICKS_PER_IP}
+
+
+class SubmitGapUpdate(BaseModel):
+    min_sec: float = Field(ge=0, le=60)
+    max_sec: float = Field(ge=0, le=120)
+
+
+@app.post("/api/admin/submit-gap")
+async def admin_submit_gap(body: SubmitGapUpdate, x_admin_key: str | None = Header(default=None)):
+    """"Chờ ngẫu nhiên X–Y giây" giữa các lần gửi (chống 710022002 'gửi quá dày') NGAY lúc chạy + ghi .env.local.
+    _pace đọc config.SUBMIT_GAP_SEC/SUBMIT_JITTER_SEC mỗi lần nên áp dụng cho job mới liền. Nhịp tính theo TỪNG proxy."""
+    _admin_auth(x_admin_key)
+    lo = max(0.0, float(body.min_sec))
+    hi = max(lo, float(body.max_sec))
+    config.SUBMIT_GAP_SEC = lo
+    config.SUBMIT_JITTER_SEC = hi - lo
+    config.upsert_env_local("DOLA_SUBMIT_GAP", str(lo))
+    config.upsert_env_local("DOLA_SUBMIT_JITTER", str(hi - lo))
+    print(f"[gateway] chờ ngẫu nhiên giữa lần gửi: {lo:.0f}–{hi:.0f}s (theo từng proxy)", flush=True)
+    return {"ok": True, "min_sec": lo, "max_sec": hi}
 
 
 class GlobalProxyUpdate(BaseModel):
