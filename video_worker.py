@@ -364,16 +364,8 @@ async def _download(url: str, account: str) -> Path:
                 raise DownloadError(url, last) from e
             await asyncio.sleep(DOWNLOAD_RETRY_SEC)
     print(f"[{account}] ✓ Đã lưu video: {fname}", flush=True)   # in rõ ĐƯỜNG DẪN để biết video nằm đâu
-    if getattr(config, "AUTO_REMOVE_WM", False):
-        try:
-            import watermark
-            loop = asyncio.get_event_loop()
-            res = await loop.run_in_executor(None, lambda: watermark.auto_remove_watermark(str(fname), replace=True))
-            if res.get("ok"):
-                print(f"  [wm] tự xóa logo ({res.get('segments')} mốc) → {Path(res['output']).name}", flush=True)
-            else:
-                print(f"  [wm] bỏ qua xóa logo: {res.get('error')}", flush=True)
-        except Exception as exc:   # xóa logo lỗi KHÔNG được làm hỏng video đã tải
-            print(f"  [wm] lỗi xóa logo (giữ video gốc): {str(exc)[:120]}", flush=True)
+    # Xoá logo do _strip_logo() lo (đúng model: bỏ qua 2.5, xoá TẠI CHỖ, 1 file). Trước đây gọi thêm
+    # auto_remove_watermark(replace=True) ở đây → chạy cho MỌI model, để lại bản .wmtmp dư (2 file/video)
+    # và blur góc video 2.5 vốn sạch. Bỏ hẳn: một đường xoá logo duy nhất.
     return fname
 
