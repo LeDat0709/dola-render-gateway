@@ -183,6 +183,7 @@ class PoolStore:
 
 class AddProxies(BaseModel):
     text: str = Field(..., min_length=1)
+    provider: str = ""   # "tmproxy" | "topproxy" | "" (auto: dán nguyên link / host:port)
 
 
 class AssignReq(BaseModel):
@@ -215,6 +216,9 @@ def make_router(ctx: dict[str, Any]) -> APIRouter:
     async def add_proxies(body: AddProxies, x_admin_key: str | None = Header(default=None)):
         admin_auth(x_admin_key)
         raws = [l.strip() for l in body.text.splitlines() if l.strip()]
+        prov = (body.provider or "").strip().lower()   # người dùng chọn loại → key TRẦN tự thành scheme đúng
+        if prov in ("tmproxy", "topproxy"):
+            raws = [l if ("://" in l or "/" in l) else f"{prov}://{l}" for l in raws]
         # tmproxy://KEY được kiểm bằng cách gọi API TMProxy (đồng bộ, ~1s/key) → chạy ở thread kẻo dán 18 key
         # một lúc là vòng lặp gateway đứng ~18s (poll video, /health cùng khựng).
         added = await asyncio.to_thread(store.add_many, raws)

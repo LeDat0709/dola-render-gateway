@@ -273,7 +273,7 @@ async function poolFetch(path, method = "GET", body) {
   return j;
 }
 export const proxyPoolList = () => poolFetch("");
-export const proxyPoolAdd = (text) => poolFetch("", "POST", { text });
+export const proxyPoolAdd = (text, provider = "") => poolFetch("", "POST", { text, provider });
 export const proxyPoolCheck = () => poolFetch("/check", "POST");
 export const proxyPoolPrune = () => poolFetch("/prune", "POST");
 export const proxyPoolAssign = (per_ip, scope) => poolFetch("/assign", "POST", { per_ip, scope });

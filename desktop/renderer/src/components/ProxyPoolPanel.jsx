@@ -14,6 +14,7 @@ import { proxyPoolList, proxyPoolAdd, proxyPoolCheck, proxyPoolPrune, proxyPoolA
 export default function ProxyPoolPanel({ onAssigned }) {
   const [data, setData] = useState(null);
   const [text, setText] = useState("");
+  const [provider, setProvider] = useState("");   // "" auto | tmproxy | topproxy — dán key trần thì chọn loại
   const [perIp, setPerIp] = useState(5);
   const [scope, setScope] = useState("noproxy");
   const [busy, setBusy] = useState("");
@@ -44,7 +45,7 @@ export default function ProxyPoolPanel({ onAssigned }) {
     catch (e) { setMsg("Lỗi: " + (e?.message || e)); }
     finally { setBusy(""); }
   };
-  const add = () => run("add", () => proxyPoolAdd(text), (r) => { setMsg(`Đã thêm ${r.added} proxy (kho có ${r.total}).`); if (r.added) setText(""); });
+  const add = () => run("add", () => proxyPoolAdd(text, provider), (r) => { setMsg(`Đã thêm ${r.added} proxy (kho có ${r.total}).`); if (r.added) setText(""); });
   const check = () => run("check", proxyPoolCheck, (r) => setMsg(`Kiểm xong: ${r.alive} sống · ${r.dead} chết (${r.threads} luồng, ${r.timeout}s/proxy).`));
   const prune = () => run("prune", proxyPoolPrune, (r) => setMsg(`Đã xoá ${r.removed} proxy chết (còn ${r.total}).`));
   const assign = () => run("assign", () => proxyPoolAssign(perIp, scope), (r) => { setMsg(`Đã chia proxy cho ${r.assigned} nick (${r.proxies_used} IP, tối đa ${r.per_ip}/IP).`); onAssigned?.(); });
@@ -65,8 +66,16 @@ export default function ProxyPoolPanel({ onAssigned }) {
       </div>
 
       <Textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} className="bg-background font-mono text-xs"
-        placeholder={"Mỗi dòng một proxy:\n103.1.2.3:8080:user:pass\nhttp://user:pass@1.2.3.4:8080\nsocks5://1.2.3.4:1080\ntmproxy://API_KEY   (TMProxy: tool tự lấy IP và tự đổi IP)"} />
+        placeholder={provider === "tmproxy" ? "Mỗi dòng một KEY TMProxy trần:\nabc123...   (tool tự lấy IP + tự đổi IP)"
+          : provider === "topproxy" ? "Mỗi dòng một KEY TopProxy trần:\nWvsxrBXBy...   (nhớ whitelist IP máy trên topproxy.vn)"
+          : "Mỗi dòng một proxy:\n103.1.2.3:8080:user:pass\nhttp://user:pass@1.2.3.4:8080\nsocks5://1.2.3.4:1080\ntmproxy://API_KEY\nhttps://proxyxoay.shop/api/get.php?key=...   (link topproxy/proxyxoay)"} />
       <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-muted-foreground">Loại</span>
+        <SelectNative className="h-8 w-auto text-xs" value={provider} onChange={(e) => setProvider(e.target.value)} title="Chọn loại để dán KEY TRẦN; 'Tự động' cho link đầy đủ / host:port">
+          <option value="">Tự động (link / host:port)</option>
+          <option value="tmproxy">TMProxy — dán key trần</option>
+          <option value="topproxy">TopProxy — dán key trần</option>
+        </SelectNative>
         <Button size="sm" onClick={add} disabled={!!busy || !text.trim()}><Plus className="h-4 w-4" />Thêm vào kho</Button>
         <span className="mx-1 h-4 w-px bg-surface-high" />
         <span className="text-xs text-muted-foreground">Chia proxy sống cho</span>

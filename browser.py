@@ -147,11 +147,22 @@ def _is_bare_tmproxy_key(raw: str) -> bool:
     return len(raw) == 32 and all(c in "0123456789abcdefABCDEF" for c in raw)
 
 
+_TOPPROXY_BASE = "https://proxyxoay.shop/api/get.php"   # topproxy.vn xoay qua backend proxyxoay.shop
+
+
 def normalize_proxy_input(raw: str) -> str:
     """Chuẩn hoá đầu vào proxy trước khi phân tích/lưu. KEY TMProxy trần (32 hex) → 'tmproxy://KEY' để dán
-    mỗi key là chạy (TMProxy xác thực bằng KEY, không whitelist IP). proxyxoay và nhà bán get.php khác phải
-    dán NGUYÊN link vì xác thực theo IP máy. Các dạng còn lại giữ nguyên."""
+    mỗi key là chạy (TMProxy xác thực bằng KEY, không whitelist IP). 'topproxy://KEY' → link get.php đầy đủ
+    (topproxy xác thực theo IP máy — nhớ whitelist). proxyxoay/nhà bán get.php khác dán NGUYÊN link. Còn lại giữ nguyên."""
     raw = (raw or "").strip()
+    if raw.lower().startswith("topproxy://"):
+        rest = raw[len("topproxy://"):].strip()
+        if not rest:
+            return raw
+        if "?" in rest:                                    # topproxy://KEY?nhamang=viettel&tinhthanh=5
+            key, qs = rest.split("?", 1)
+            return f"{_TOPPROXY_BASE}?key={key}&{qs}"
+        return f"{_TOPPROXY_BASE}?key={rest}&nhamang=random&tinhthanh=0"
     return f"tmproxy://{raw}" if _is_bare_tmproxy_key(raw) else raw
 
 
