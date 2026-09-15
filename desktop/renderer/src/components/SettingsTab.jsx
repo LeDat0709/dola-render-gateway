@@ -206,7 +206,7 @@ export default function SettingsTab({ active = true }) {
           <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">
             <input type="checkbox" className="mt-1" checked={autoRetry} onChange={toggleAutoRetry} />
             <span><span className="font-medium">Tự thử lại / xoay nick khi lỗi</span>
-              <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật: Dola báo lỗi tạm thời thì gửi lại 1 lần trên chính nick đó (không tốn lượt); nếu nick của thẻ HẾT LƯỢT/CHẾT/bị chặn thì TỰ XOAY sang nick khác còn chạy được (nick đang bận thì vẫn chờ). Tắt: lỗi là dừng ngay, chỉ chạy đúng nick của thẻ.</span></span>
+              <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật: Dola báo lỗi tạm thời thì gửi lại 1 lần trên chính nick đó (không tốn lượt); nếu nick của thẻ HẾT LƯỢT/CHẾT/bị chặn thì TỰ XOAY sang nick khác còn chạy được (nick của thẻ đang bận mà còn nick khác rảnh thì chạy luôn trên nick rảnh). Tắt: lỗi là dừng ngay, chỉ chạy đúng nick của thẻ (nick đang bận thì job CHỜ nick rảnh, tối đa 45 phút).</span></span>
           </label>
           <Msg text={arMsg} />
           <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">

@@ -551,6 +551,62 @@ def test_expiring_ip_rotated_before_opening_nick():
             assert env.rotations == [_LINK], "IP sắp hết tuổi, không ai dùng → đổi TRƯỚC khi mở nick"
 
 
+# ---------- R24–R26: nick được chọn ĐANG BẬN → không báo lỗi "Nick đang bận" ngay (đối thủ: job chờ tài nguyên) ----------
+class _busy_cfg:
+    def __init__(self, auto_retry, wait=5.0):
+        self.auto_retry, self.wait = auto_retry, wait
+    def __enter__(self):
+        self.saved = (browser_pool.config.AUTO_RETRY, browser_pool.PINNED_BUSY_WAIT_SEC, browser_pool.PINNED_BUSY_POLL_SEC)
+        browser_pool.config.AUTO_RETRY, browser_pool.PINNED_BUSY_WAIT_SEC, browser_pool.PINNED_BUSY_POLL_SEC = self.auto_retry, self.wait, 0.05
+    def __exit__(self, *a):
+        browser_pool.config.AUTO_RETRY, browser_pool.PINNED_BUSY_WAIT_SEC, browser_pool.PINNED_BUSY_POLL_SEC = self.saved
+
+
+def _run_while_busy(pool, nick, release_after, **kw):
+    async def main():
+        lock = pool._locks.setdefault(nick, asyncio.Lock())
+        await lock.acquire()                         # job khác đang dựng trên nick
+        async def release():
+            await asyncio.sleep(release_after)
+            lock.release()
+        rel = asyncio.create_task(release())
+        try:
+            return await pool.generate_video("p", "9:16", 10, account=nick, **kw)
+        finally:
+            await rel
+    return _run(main())
+
+
+def test_busy_pinned_nick_waits_instead_of_failing():
+    with tempfile.TemporaryDirectory() as tmp, _busy_cfg(auto_retry=False):
+        pool = _pool(tmp)
+        gen = _scripted({"n1": [("ok",)], "n2": [("ok",)]})
+        browser_pool.generate_video = gen
+        r = _run_while_busy(pool, "n1", 0.3)
+        assert r["account"] == "n1" and gen.calls == ["n1"], (r, gen.calls)
+
+
+def test_busy_pinned_nick_rotates_to_free_nick_when_auto_retry():
+    with tempfile.TemporaryDirectory() as tmp, _busy_cfg(auto_retry=True):
+        pool = _pool(tmp)
+        gen = _scripted({"n1": [("ok",)], "n2": [("ok",)]})
+        browser_pool.generate_video = gen
+        r = _run_while_busy(pool, "n1", 0.3)
+        assert r["account"] == "n2" and gen.calls == ["n2"], "có nick rảnh → chạy luôn, không chờ nick bận"
+
+
+def test_busy_pinned_nick_gives_up_after_wait_cap():
+    with tempfile.TemporaryDirectory() as tmp, _busy_cfg(auto_retry=False, wait=0.2):
+        pool = _pool(tmp)
+        browser_pool.generate_video = _scripted({"n1": [("ok",)], "n2": [("ok",)]})
+        try:
+            _run_while_busy(pool, "n1", 0.6)
+            raise AssertionError("chờ quá trần phải báo lỗi rõ")
+        except RuntimeError as e:
+            assert "đang bận" in str(e), str(e)
+        assert pool.semaphore._value == pool.max_concurrency, "chờ nick không được giữ slot Chrome"
+
+
 if __name__ == "__main__":
     import sys
     tests = [(k, v) for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]

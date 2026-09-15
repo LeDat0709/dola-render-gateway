@@ -36,6 +36,10 @@ PRESUBMIT_TIMEOUT_SEC = float(os.getenv("DOLA_PRESUBMIT_TIMEOUT", "300"))
 # Nick lỗi/treo TRƯỚC khi gửi thì nghỉ ngắn: không nghỉ, nick hỏng còn nhiều điểm nhất luôn đứng đầu danh sách
 # xoay → job nào cũng đâm vào nó trước (≥3 nick như vậy = mọi job "Đã thử 3 nick").
 PRESUBMIT_FAIL_COOLDOWN_SEC = 600
+# Job chọn đích danh nick ĐANG BẬN: chờ nick rảnh (không giữ slot Chrome) tối đa ngần này, thay vì báo lỗi "Nick đang bận"
+# ngay (đối thủ v1.0.88: job CHỜ tài nguyên, không gửi bừa). Một video 30s dựng 9–35 phút.
+PINNED_BUSY_WAIT_SEC = int(os.getenv("DOLA_PINNED_BUSY_WAIT", "2700"))
+PINNED_BUSY_POLL_SEC = 3.0
 # Lỗi của CODE/tham số (nick nào cũng gặp y hệt) → nổi lên ngay, không đốt MAX_ROTATE lượt mở Chrome + cho nick nghỉ oan.
 _NOT_NICK_ERRORS = (AttributeError, NameError, TypeError, KeyError, ImportError, AssertionError, ValueError, sqlite3.Error)
 
@@ -749,6 +753,25 @@ class BrowserPool:
         finally:
             _release_browser()
 
+    async def _wait_pinned_nick(self, account: str, model, duration) -> None:
+        """Nick được chọn đang bận (job khác đang dựng trên nó). Bật tự xoay mà có nick KHÁC rảnh + đủ điểm → đi luôn
+        (vòng xoay bỏ qua nick bận, chạy trên nick rảnh). Không thì CHỜ nick rảnh, không giữ slot Chrome/cổng lúc chờ."""
+        lock = self._locks.setdefault(account, asyncio.Lock())
+        if not lock.locked():
+            return
+        need = self._cost_for(model, duration) or self._default_cost(model, duration)
+        if config.AUTO_RETRY and any(
+                a["name"] != account and self._schedulable(a) and not a.get("busy")
+                and not self._credit_short(a, need, duration, model) for a in self.list_accounts()):
+            return
+        print(f"[pool] {account} đang bận — job chờ nick rảnh (tối đa {PINNED_BUSY_WAIT_SEC // 60} phút)", flush=True)
+        deadline = time.monotonic() + PINNED_BUSY_WAIT_SEC
+        while lock.locked():
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"Nick '{account}' đang bận tạo video khác quá {PINNED_BUSY_WAIT_SEC // 60} phút — "
+                                   "chạy lại sau hoặc chọn nick khác.")
+            await asyncio.sleep(PINNED_BUSY_POLL_SEC)
+
     async def generate_video(self, prompt: str, ratio: str = None, duration: int = None,
                              model: str = "seedance_v2.0", on_conversation_id=None,
                              on_poll=None, on_balance=None, on_submitted=None,
@@ -765,6 +788,8 @@ class BrowserPool:
         # thứ tự khoá luôn one_nick→browser (nếu acquire trong vòng lặp, nhánh retry gọi lại browser-sema khi
         # đang giữ one_nick sẽ khoá chéo với job kia đang giữ browser-sema chờ one_nick). Chỉ khi proxy chung xoay.
         from browser import is_rotating_proxy, rotate_effective_proxy
+        if account is not None:
+            await self._wait_pinned_nick(account, model, duration)   # TRƯỚC khi giữ cổng/slot Chrome
         one_nick_on = config.ONE_NICK and is_rotating_proxy(config.PROXY)
         if one_nick_on:
             await self._one_nick.acquire()
@@ -842,8 +867,8 @@ class BrowserPool:
                 match = next((a for a in self.list_accounts() if a["name"] == account), None)
                 if match is None:
                     raise RuntimeError(f"Nick '{account}' không tồn tại")
-                if self._locks.setdefault(account, asyncio.Lock()).locked():
-                    # BẬN thì CHỜ, KHÔNG xoay — người dùng đã chọn đúng nick này, video hiện tại xong rồi chạy tiếp.
+                if not config.AUTO_RETRY and self._locks.setdefault(account, asyncio.Lock()).locked():
+                    # Đã chờ ở _wait_pinned_nick mà vừa bị job khác giành lại (hiếm) → ghim cứng thì báo, không xoay.
                     raise RuntimeError(
                         f"Nick '{account}' đang bận tạo video khác — chờ video hiện tại xong rồi chạy tiếp.")
                 if config.AUTO_RETRY:
