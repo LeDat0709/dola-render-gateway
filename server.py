@@ -1091,6 +1091,7 @@ class ConcurrencyUpdate(BaseModel):
 @app.post("/api/admin/concurrency")
 async def admin_set_concurrency(body: ConcurrencyUpdate, x_admin_key: str | None = Header(default=None)):
     """Đổi số luồng ngay lúc đang chạy (job đang chạy không bị đụng tới)."""
+    _admin_auth(x_admin_key)   # thiếu dòng này thì ai tới được cổng VPS cũng đổi được luồng
     global login_concurrency
     if body.max_concurrency is not None:
         pool.set_max_concurrency(body.max_concurrency)
