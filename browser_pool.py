@@ -1,5 +1,6 @@
 """Browser Account Pool: Manages accounts/ profiles with concurrency control and daily limits."""
 import asyncio
+import os
 import random
 import shutil
 import sqlite3
@@ -28,6 +29,9 @@ import config
 
 DAILY_LIMIT = config.DAILY_LIMIT
 COOLDOWN_SEC = 1800  # 30-minute cooldown on risk control (captcha)
+# Trần thời gian KIỂM PHIÊN mỗi nick: proxy chết làm bước mở Chrome/HTTP kiểm treo 10+ phút (ảnh 15/09,
+# 8 nick kẹt "đang kiểm tra nick"). Hết giờ → bỏ qua nick đó (coi như chưa kiểm), KHÔNG treo cả đợt.
+VERIFY_TIMEOUT_SEC = int(os.getenv("DOLA_VERIFY_TIMEOUT", "30"))
 
 # Dola 710022002 "gửi quá dày" tính theo IP trong ngắn hạn: nhiều nick chung IP thì dính cả loạt. Trước đây
 # mỗi nick dính là nghỉ 30 phút rồi xoay ngay sang nick khác → cùng IP lại dính → vài phút là bench cả kho.
@@ -612,7 +616,7 @@ class BrowserPool:
         """
         browser_slots = asyncio.Semaphore(config.LOGIN_CONCURRENCY)
 
-        async def check(name: str) -> dict:
+        async def _check_one(name: str) -> dict:
             r = None
             try:
                 r = await self.verify_account_http(name)      # HTTP thuần: chạy song song thoải mái
@@ -622,6 +626,15 @@ class BrowserPool:
             except Exception as e:
                 print(f"[verify] {name} lỗi: {e}", flush=True)
             return {"name": name, "ok": bool(r), "checked": r is not None}
+
+        async def check(name: str) -> dict:
+            # Proxy chết → mở Chrome/HTTP kiểm phiên treo rất lâu. Cắt ở VERIFY_TIMEOUT_SEC: hết giờ coi như
+            # "chưa kiểm" (checked=False) để không treo cả đợt; wait_for hủy task → Chrome tự đóng (async with).
+            try:
+                return await asyncio.wait_for(_check_one(name), timeout=VERIFY_TIMEOUT_SEC)
+            except asyncio.TimeoutError:
+                print(f"[verify] {name} quá {VERIFY_TIMEOUT_SEC}s (proxy chết/mạng chậm?) → bỏ qua, không treo", flush=True)
+                return {"name": name, "ok": False, "checked": False}
 
         wanted = list(self.accounts) if names is None else [n for n in self.accounts if n in set(names)]
         return list(await asyncio.gather(*(check(n) for n in wanted)))
