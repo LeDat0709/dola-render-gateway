@@ -279,8 +279,12 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     ? { ip: health.rotating_ip.ip, isp: health.rotating_ip.network || health.rotating_ip.location || "",
         used: health.ip_used || 0, per: health.nicks_per_ip || 0 }
     : null;
+  // Nick nào đang là ĐÍCH xoay của thẻ khác → map {nickY: nickX}. Để thẻ Y báo rõ "job xoay từ X",
+  // khỏi hiện "Đang chạy trên server" mập mờ (nhìn như Y tự chạy job riêng, dễ tưởng chạy 2 lần).
+  const rotatedInto = {};
+  Object.entries(rows).forEach(([origin, r]) => { if (r?.ranOn && r.ranOn !== origin) rotatedInto[r.ranOn] = origin; });
   const nickProps = (a) => ({
-    a, s: row(a.account), selected: !!sel[a.account], clock, elapsed, proxyCell,
+    a, s: row(a.account), selected: !!sel[a.account], clock, elapsed, proxyCell, rotatedFrom: rotatedInto[a.account] || "",
     onSel: (v) => setSel((p) => ({ ...p, [a.account]: v })), onChange: (patch) => setRow(a.account, patch),
     onRun: () => { stop.current = false; runOne(a.account); }, onRelogin: () => relogin(a.account), onProxy: () => setProxy(a.account), onDelete: () => del(a.account),
     onPlay, onOpen: () => api.openDownloads?.(), onCopy: copyPath, onRemoveWm: removeWm,
@@ -410,7 +414,7 @@ function Timeline({ s, compact = false }) {
 }
 
 // Dạng bảng: một dòng một nick, cùng dữ liệu và thao tác với thẻ nhưng nhìn được 15–20 nick không cần cuộn.
-function NickRow({ a, s, idx, selected, elapsed, proxyCell, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
+function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
   const n = a.account;
   const chip = stateChip(a, s);
   const tint = s.phase === "done" ? " bg-tertiary/5" : s.phase === "error" ? " bg-error/5" : "";
@@ -474,7 +478,7 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, onSel, onChange, onR
       </td>
       <td className={td + " w-[240px] max-w-[280px]"}>
         <Timeline s={s} compact />
-        <div className="mt-1 flex min-h-5 items-center"><Footer s={s} a={a} elapsed={elapsed} onRun={onRun} /></div>
+        <div className="mt-1 flex min-h-5 items-center"><Footer s={s} a={a} elapsed={elapsed} onRun={onRun} rotatedFrom={rotatedFrom} /></div>
       </td>
       <td className={td + " whitespace-nowrap text-right"}>
         {s.phase !== "running" && <Button variant="ghost" size="icon" className={icon + " text-primary"} title="Chạy nick này" onClick={onRun}><Play className="h-3.5 w-3.5" /></Button>}
@@ -486,7 +490,7 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, onSel, onChange, onR
   );
 }
 
-function NickCard({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
+function NickCard({ a, s, selected, elapsed, rotatedFrom, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
   const n = a.account;
   const cardChip = stateChip(a, s);
   const border = s.phase === "done" ? " ring-1 ring-tertiary/25" : s.phase === "error" ? " ring-1 ring-error/30" : "";
@@ -511,7 +515,7 @@ function NickCard({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, 
       </div>
       <Timeline s={s} />
       <div className="flex min-h-7 items-center gap-1">
-        <Footer s={s} a={a} elapsed={elapsed} onRun={onRun} />
+        <Footer s={s} a={a} elapsed={elapsed} onRun={onRun} rotatedFrom={rotatedFrom} />
         <span className="ml-auto" />
         {s.phase !== "running" && <Button variant="ghost" size="icon" className={icon + " text-primary"} title="Chạy nick này" onClick={onRun}><Play className="h-3.5 w-3.5" /></Button>}
         <Button variant="ghost" size="icon" className={icon} title="Đăng nhập lại" onClick={onRelogin}><RotateCw className="h-3.5 w-3.5" /></Button>
@@ -522,7 +526,7 @@ function NickCard({ a, s, selected, elapsed, onSel, onChange, onRun, onRelogin, 
   );
 }
 
-function Footer({ s, a, elapsed, onRun }) {
+function Footer({ s, a, elapsed, onRun, rotatedFrom }) {
   if (s.phase === "running") return <span className="font-mono text-[11px] text-primary tabular-nums">{elapsed(s.startedAt)} <span className="text-muted-foreground">· {STAGE_TEXT[s.stage] || "đang tạo…"}</span></span>;
   if (s.phase === "done") return <span className="font-mono text-[11px] text-tertiary">Xong · {elapsed(s.startedAt)}</span>;
   if (s.phase === "error") {
@@ -538,6 +542,7 @@ function Footer({ s, a, elapsed, onRun }) {
     );
   }
   if (a.cooling && a.cooldown_until > 0) return <span className="font-mono text-[11px] text-info">nghỉ còn {Math.max(1, Math.ceil((a.cooldown_until - Date.now() / 1000) / 60))} phút</span>;
+  if (a.busy && rotatedFrom) return <span className="font-mono text-[11px] text-primary" title={"Nick này đang dựng video được xoay từ thẻ " + rotatedFrom}>⏳ đang dựng (job xoay từ {rotatedFrom})</span>;
   if (a.busy) return <span className="font-mono text-[11px] text-primary">Đang chạy trên server…</span>;   // #2: khớp badge, khỏi mâu thuẫn "Chưa chạy"
   return <span className="font-mono text-[11px] text-muted-foreground">{s.status || "Chưa chạy"}</span>;
 }
