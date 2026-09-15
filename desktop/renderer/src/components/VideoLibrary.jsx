@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Play, FolderOpen, Copy, Eraser, Search, Film, RefreshCw, X, ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
+import { Play, FolderOpen, Copy, Eraser, Search, Film, RefreshCw, X, ChevronLeft, ChevronRight, ExternalLink, CloudDownload, HardDriveDownload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SelectNative } from "@/components/ui/select-native";
 import { ViewToggle, useView } from "@/components/ui/view-toggle";
-import { api, recentTasks, fnameFromUrl, sttFromUrl, fmtSec, timeAgo } from "@/lib/api";
+import { api, recentTasks, fnameFromUrl, sttFromUrl, fmtSec, timeAgo, isLocalVideo, redownloadVideo } from "@/lib/api";
 
 // Kho video: mọi job đã ra video (tasks.db qua /api/admin/tasks), mỗi dòng ghi rõ nick nào, prompt nào.
 // Không thêm endpoint mới; video xem/mở/copy bằng IPC đã có.
@@ -49,6 +49,16 @@ export default function VideoLibrary({ active = true, onPlay }) {
     catch (e) { setMsg("Lỗi: " + (e?.message || e)); }
   };
   const renderSec = (t) => (t.finished_at && t.started_at ? t.finished_at - t.started_at : 0);
+  const [dling, setDling] = useState("");   // id đang tải lại
+  const redown = async (t) => {
+    setDling(t.id); setMsg("Đang tải lại về máy…");
+    try {
+      const r = await redownloadVideo(t.id, t.video_url, t.account || "", t.prompt || "");
+      setMsg(r?.already ? "Video này đã có trên máy." : "✓ Đã tải về máy: " + (r?.file || ""));
+      await load();
+    } catch (e) { setMsg("Tải lại lỗi: " + (e?.message || e)); }
+    finally { setDling(""); }
+  };
   // Lightbox: chuyển video trước/sau + phím tắt (← → Esc). Kẹp chỉ số trong [0, rows-1].
   const step = useCallback((d) => setLb((i) => (i == null ? i : Math.max(0, Math.min(rows.length - 1, i + d)))), [rows.length]);
   useEffect(() => {
@@ -98,12 +108,14 @@ export default function VideoLibrary({ active = true, onPlay }) {
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           {rows.map((t, i) => {
             const stt = sttFromUrl(t.video_url); const f = fnameFromUrl(t.video_url);
+            const onDisk = isLocalVideo(t.video_url);
             return (
               <div key={t.id} className="flex flex-col gap-2 rounded-xl bg-surface-low p-2.5">
                 <div className="group relative aspect-[9/16] max-h-[220px] w-full cursor-pointer overflow-hidden rounded-lg bg-surface-lowest" onClick={() => setLb(i)} title={f}>
                   <video className="h-full w-full object-cover" src={t.video_url + "#t=0.6"} muted preload="metadata" />
                   <span className="absolute left-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[11px] font-bold text-primary">{stt ? `#${stt}` : "—"}</span>
                   <span className="absolute right-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] text-white">{t.duration ? `${t.duration}s` : ""}</span>
+                  <span className={"absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 font-mono text-[10px] " + (onDisk ? "bg-tertiary/85 text-white" : "bg-warn/85 text-black")}>{onDisk ? "✓ đã về máy" : "☁ chỉ trên Dola"}</span>
                   <span className="absolute inset-0 flex items-center justify-center opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100"><span className="rounded-full bg-primary p-2"><Play className="h-4 w-4 fill-primary-foreground text-primary-foreground" /></span></span>
                 </div>
                 <div className="flex items-center gap-1 font-mono text-[11.5px]"><span className="truncate font-semibold" title={t.account}>{t.account || "—"}</span><span className="ml-auto flex-none text-[10.5px] text-muted-foreground">{perNick.get(t.account)} video</span></div>
@@ -112,6 +124,7 @@ export default function VideoLibrary({ active = true, onPlay }) {
                 <div className="flex items-center gap-0.5 border-t border-surface pt-1.5">
                   <button type="button" className="font-mono text-[10.5px] text-muted-foreground hover:text-primary" onClick={() => copy(t.prompt || "", "prompt")}>copy prompt</button>
                   <span className="ml-auto" />
+                  {!onDisk && <Button variant="ghost" size="icon" className="h-7 w-7 text-warn" title="Tải lại về máy" disabled={dling === t.id} onClick={() => redown(t)}><HardDriveDownload className={"h-3.5 w-3.5 " + (dling === t.id ? "animate-pulse" : "")} /></Button>}
                   <Button variant="ghost" size="icon" className="h-7 w-7" title="Xem" onClick={() => setLb(i)}><Play className="h-3.5 w-3.5" /></Button>
                   <Button variant="ghost" size="icon" className="h-7 w-7" title="Mở thư mục" onClick={() => api.openDownloads?.()}><FolderOpen className="h-3.5 w-3.5" /></Button>
                   <Button variant="ghost" size="icon" className="h-7 w-7" title="Copy tên file" onClick={() => copy(f, "tên file")}><Copy className="h-3.5 w-3.5" /></Button>
@@ -173,6 +186,7 @@ export default function VideoLibrary({ active = true, onPlay }) {
                 <div className="flex items-center gap-2">
                   <span className="rounded bg-primary/15 px-2 py-0.5 font-mono text-[12px] font-bold text-primary">{stt ? `#${stt}` : "—"}</span>
                   <span className="rounded bg-surface-high px-2 py-0.5 font-mono text-[11px] text-muted-foreground">{t.duration ? `${t.duration}s` : ""}</span>
+                  <span className={"rounded px-2 py-0.5 font-mono text-[11px] " + (isLocalVideo(t.video_url) ? "bg-tertiary/15 text-tertiary" : "bg-warn/15 text-warn")}>{isLocalVideo(t.video_url) ? "✓ đã về máy" : "☁ chỉ trên Dola"}</span>
                   <span className="ml-auto font-mono text-[11px] text-muted-foreground">{lb + 1}/{rows.length}</span>
                 </div>
                 <div className="font-mono text-[13px] font-semibold">{t.account || "—"}</div>
@@ -185,6 +199,7 @@ export default function VideoLibrary({ active = true, onPlay }) {
                   <div className="col-span-2 min-w-0"><dt className="opacity-60">Tệp</dt><dd className="truncate text-foreground" title={f}>{f}</dd></div>
                 </dl>
                 <div className="mt-auto flex flex-wrap gap-2 border-t border-surface-high pt-3">
+                  {!isLocalVideo(t.video_url) && <Button variant="default" size="sm" disabled={dling === t.id} onClick={() => redown(t)}><CloudDownload className={"h-3.5 w-3.5 " + (dling === t.id ? "animate-pulse" : "")} />Tải lại về máy</Button>}
                   <Button variant="secondary" size="sm" onClick={() => copy(t.prompt || "", "prompt")}><Copy className="h-3.5 w-3.5" />Copy prompt</Button>
                   <Button variant="outline" size="sm" onClick={() => api.openDownloads?.()}><FolderOpen className="h-3.5 w-3.5" />Thư mục</Button>
                   <Button variant="outline" size="sm" onClick={() => removeWm(t.video_url)}><Eraser className="h-3.5 w-3.5" />Xoá logo</Button>

@@ -253,6 +253,19 @@ export async function recentTasks(limit = 200) {
     return (await r.json()).tasks || [];
   } catch { return []; }
 }
+// Video "đã về máy" = video_url trỏ về /videos/ của gateway (đã tải); còn link CDN = "chỉ trên Dola".
+export const isLocalVideo = (u) => /\/videos\//.test(String(u || ""));
+// Tải lại video đã xong (còn trên Dola) về máy — cho video chưa có file (proxy rớt lúc chạy).
+export async function redownloadVideo(taskId, url, account = "", prompt = "") {
+  await ensureConfig();
+  const r = await fetch(cfg.base + "/api/admin/redownload", {
+    method: "POST", headers: { ...adminHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ task_id: taskId, url, account, prompt }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
+  return j;
+}
 // Cấu hình ĐANG chạy trên server (proxy chung đã che mật khẩu, luồng, giãn nhịp…): ở chế độ từ xa
 // app không đọc được .env.local trên VPS. Server cũ chưa có endpoint → null, caller tự lùi về IPC.
 export async function adminConfig() {

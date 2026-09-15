@@ -1102,6 +1102,31 @@ async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=
     return {"tasks": store.recent_tasks(min(max(limit, 1), 2000))}   # kho video cần xem xa hơn 200 job
 
 
+class RedownloadReq(BaseModel):
+    task_id: str
+    url: str          # link CDN Dola của video (video_url hiện tại của task)
+    account: str = ""
+    prompt: str = ""
+
+
+@app.post("/api/admin/redownload")
+async def admin_redownload(body: RedownloadReq, x_admin_key: str | None = Header(default=None)):
+    """Tải LẠI video đã xong (còn trên Dola) về máy — cho video 'chỉ trên Dola' (tải lúc chạy bị proxy rớt).
+    Tải thẳng link CDN về DOWNLOAD_DIR (fallback trực tiếp nếu proxy hỏng) rồi đổi video_url của task sang /videos/."""
+    _admin_auth(x_admin_key)
+    if "/videos/" in (body.url or ""):
+        return {"ok": True, "already": True, "url": body.url}   # đã là link local rồi
+    from video_worker import _download, DownloadError
+    try:
+        local = await _download(body.url, body.account or "video", body.prompt or "")
+    except DownloadError as e:
+        raise HTTPException(502, f"Tải lại thất bại: {str(e)[:160]}")
+    new_url = _public_video_url({"local_path": str(local), "video_url": body.url})
+    store.update(body.task_id, video_url=new_url)
+    print(f"[gateway] tải lại về máy: {Path(local).name}", flush=True)
+    return {"ok": True, "url": new_url, "file": Path(local).name}
+
+
 @app.get("/api/admin/stats")
 async def admin_stats(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)

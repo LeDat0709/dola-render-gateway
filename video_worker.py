@@ -344,17 +344,27 @@ async def _download(url: str, account: str, prompt: str = "") -> Path:
     dl_dir.mkdir(parents=True, exist_ok=True)
     parts = [_prompt_slug(prompt), account, time.strftime('%Y%m%d_%H%M%S')]   # theo PROMPT, không STT
     fname = dl_dir / ("_".join(p for p in parts if p) + ".mp4")   # bỏ phần rỗng, khỏi "__"
-    for attempt in range(1, DOWNLOAD_RETRIES + 1):
-        try:
-            await _fetch_to_file(url, fname, proxy=proxy)
+    # Tải qua PROXY của nick trước; rớt hết thì thử ĐI THẲNG (bỏ proxy) — CDN video thường không cần IP nick,
+    # nên proxy chậm/chết không làm mất video (trước đây rớt proxy là mất luôn bản về máy). last giữ lỗi cuối.
+    lanes = [proxy] if not proxy else [proxy, None]
+    last, saved = "", False
+    for lane in lanes:
+        for attempt in range(1, DOWNLOAD_RETRIES + 1):
+            try:
+                await _fetch_to_file(url, fname, proxy=lane)
+                if lane is None and proxy:
+                    print(f"[{account}] ✓ tải TRỰC TIẾP (bỏ proxy) OK", flush=True)
+                saved = True
+                break
+            except Exception as e:
+                last = str(e)[:120]
+                fname.unlink(missing_ok=True)
+                print(f"[{account}] tải video ({'proxy' if lane else 'trực tiếp'}) lỗi {attempt}/{DOWNLOAD_RETRIES}: {last}", flush=True)
+                await asyncio.sleep(DOWNLOAD_RETRY_SEC)
+        if saved:
             break
-        except Exception as e:
-            last = str(e)[:120]
-            fname.unlink(missing_ok=True)
-            print(f"[{account}] tải video lỗi lần {attempt}/{DOWNLOAD_RETRIES}: {last}", flush=True)
-            if attempt == DOWNLOAD_RETRIES:
-                raise DownloadError(url, last) from e
-            await asyncio.sleep(DOWNLOAD_RETRY_SEC)
+    if not saved:
+        raise DownloadError(url, last)
     print(f"[{account}] ✓ Đã lưu video: {fname}", flush=True)   # in rõ ĐƯỜNG DẪN để biết video nằm đâu
     # Xoá logo do _strip_logo() lo (đúng model: bỏ qua 2.5, xoá TẠI CHỖ, 1 file). Trước đây gọi thêm
     # auto_remove_watermark(replace=True) ở đây → chạy cho MỌI model, để lại bản .wmtmp dư (2 file/video)
