@@ -150,6 +150,7 @@ export default function ProxyPoolPanel({ onAssigned }) {
                         </div>
                         <div className="text-muted-foreground">đổi {rot.changes ?? 0} lần hôm nay · {rot.rotate_in > 0 ? `đổi được sau ${ago(rot.rotate_in)}` : "đổi được ngay"}</div>
                         {rot.whitelist_ip && <div className="font-mono text-[10.5px] text-info">whitelist {rot.whitelist_ip} (tự khai)</div>}
+                        {rot.dirty && <div className="text-[10.5px] font-semibold text-error" title="IP này vừa bị Dola chặn (710022002) — tool đổi IP trước khi giao cho nick kế, không dùng lại trong 24 giờ">⚠ IP bẩn (vừa bị Dola chặn)</div>}
                       </>
                     ) : <span className="text-muted-foreground">IP tĩnh</span>}
                   </TableCell>

@@ -647,6 +647,33 @@ def test_equal_credit_prefers_least_recently_used_nick():
         assert r["account"] == "n1", (r, "nhiều điểm hơn vẫn ưu tiên trước")
 
 
+# ---------- R29: IP vừa bị Dola chặn (710022002) = IP bẩn → nick kế mở nick trên key đó phải đổi IP trước ----------
+def test_dirty_ip_rotated_before_next_nick():
+    import browser
+    from video_worker_ui import RateLimitedError
+    old_nc = browser_pool.config.NO_COOLDOWN
+    browser_pool.config.NO_COOLDOWN = True
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            pool = _pool(tmp)
+            with _proxy_env(tmp, life=1500) as env:      # IP còn sống lâu → bình thường KHÔNG đổi trước job
+                browser._dirty_ips.clear()
+                gen = _scripted({"n1": [("raise", RateLimitedError("710022002"))], "n2": [("ok",)]})
+                browser_pool.generate_video = gen
+                r = _run(pool.generate_video("p", "9:16", 10, account="n1"))
+                assert r["account"] == "n2", r
+                assert "1.1.1.1:80" in browser._dirty_ips, browser._dirty_ips
+                # 1 lần đổi ngay sau 710022002 (n1) + 1 lần trước khi mở n2 vì IP (giả lập nhà bán cấp lại y IP) vẫn bẩn
+                assert env.rotations == [_LINK, _LINK], env.rotations
+                assert browser.rotating_status(_LINK)["dirty"] is True
+                browser._dirty_ips.clear()
+                assert browser.rotating_status(_LINK)["dirty"] is False
+    finally:
+        browser_pool.config.NO_COOLDOWN = old_nc
+        import browser as _b
+        _b._dirty_ips.clear()
+
+
 if __name__ == "__main__":
     import sys
     tests = [(k, v) for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]

@@ -301,7 +301,7 @@ def rotating_status(raw: str) -> dict:
         key = m.group(1) if m else ""
         st = proxyxoay.status(s)
     return {**st, "provider": provider_label(s), "key_tail": key[-4:] if len(key) >= 8 else "",
-            "error": rotating_last_error(s)}
+            "error": rotating_last_error(s), "dirty": bool(st) and ip_dirty(st)}
 
 
 def rotating_lane(raw: str) -> dict | None:
@@ -412,14 +412,45 @@ def proxy_lease(account: str):
                 _proxy_leases.pop(key, None)
 
 
-def rotate_if_expiring(account: str) -> bool:
-    """TRƯỚC khi mở nick: IP proxy xoay sắp hết tuổi (< PROXY_MIN_LIFE_SEC) → xin IP mới, để cổng không chết giữa lúc
-    mở Chrome/gửi prompt (đối thủ: xoay_truoc_job). Không gọi mạng nếu IP còn sống lâu / chưa lấy IP lần nào."""
+# IP BẨN: IP proxy xoay vừa bị Dola chặn (710022002) → không dùng lại trong DIRTY_IP_SEC (đối thủ v1.0.88: không cấp lại IP
+# đã dùng). Khoá = IP ra nếu nhà bán báo (tmproxy public_ip), không thì endpoint ip:cổng (proxy.vn/shoplike).
+DIRTY_IP_SEC = 24 * 3600
+_dirty_ips: dict[str, float] = {}
+
+
+def _ip_keys(st: dict) -> list[str]:
+    return [k for k in (st.get("exit_ip"), st.get("endpoint")) if k]
+
+
+def mark_ip_dirty(account: str, reason: str = "") -> None:
+    """Nick vừa dính 710022002 trên proxy xoay → ghi IP hiện tại là bẩn (trước khi đổi IP)."""
     key = _effective_rotating(account)
     st = rotating_status(key) if key else {}
-    if not st or st.get("expires_in", PROXY_MIN_LIFE_SEC) >= PROXY_MIN_LIFE_SEC:
+    for k in _ip_keys(st):
+        _dirty_ips[k] = time.time() + DIRTY_IP_SEC
+        print(f"[proxy] {account}: IP {k} bẩn 24 giờ ({reason[:60]}) — không dùng lại cho nick khác", flush=True)
+
+
+def ip_dirty(st: dict) -> bool:
+    now = time.time()
+    return any(_dirty_ips.get(k, 0) > now for k in _ip_keys(st))
+
+
+def rotate_if_expiring(account: str) -> bool:
+    """TRƯỚC khi mở nick: IP proxy xoay sắp hết tuổi (< PROXY_MIN_LIFE_SEC) HOẶC là IP bẩn → xin IP mới, để cổng không chết
+    giữa lúc mở Chrome/gửi prompt và nick không nhận IP Dola vừa chặn (đối thủ: xoay_truoc_job). Không gọi mạng nếu IP ổn."""
+    key = _effective_rotating(account)
+    st = rotating_status(key) if key else {}
+    if not st:
         return False
-    return _rotate_raw(key, f"{account} (IP còn {st['expires_in']}s, đổi trước khi mở nick)")
+    dirty = ip_dirty(st)
+    if not dirty and st.get("expires_in", PROXY_MIN_LIFE_SEC) >= PROXY_MIN_LIFE_SEC:
+        return False
+    why = "IP bẩn (vừa bị Dola chặn)" if dirty else f"IP còn {st['expires_in']}s"
+    done = _rotate_raw(key, f"{account} ({why}, đổi trước khi mở nick)")
+    if done and ip_dirty(rotating_status(key)):
+        print(f"[proxy] {account}: nhà bán vẫn cấp IP bẩn (chưa tới nhịp đổi) — chạy tạm IP này", flush=True)
+    return done
 
 
 def _rotate_raw(raw: str, label: str) -> bool:

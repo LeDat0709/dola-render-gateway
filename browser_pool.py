@@ -1097,7 +1097,8 @@ class BrowserPool:
                             last_err = e2
                             continue
                     except RateLimitedError as e:
-                        from browser import rotate_tmproxy_now
+                        from browser import mark_ip_dirty, rotate_tmproxy_now
+                        mark_ip_dirty(account, str(e))   # IP này Dola vừa chặn → nick sau không nhận lại trong 24 giờ
                         rotate_tmproxy_now(account)   # nick dùng tmproxy://KEY: Dola chặn IP này → xin IP mới ngay
                         if config.NO_COOLDOWN:
                             print(f"[pool] {account}: 710022002 — NO_COOLDOWN bật, không nghỉ/không dừng gửi, xoay ngay: {e}", flush=True)
