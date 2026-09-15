@@ -54,6 +54,7 @@ export function fmtError(raw) {
   if (/failed to fetch|networkerror|load failed|ECONNREFUSED|ERR_CONNECTION_REFUSED/i.test(r)) return T("🔌", "Chưa nối được server", "Server đang bật lại hoặc tắt — chờ 2–3s rồi chạy lại.");
   if (/ERR_INTERNET|ERR_NETWORK|ERR_CONNECTION|ERR_PROXY|ERR_TIMED_OUT|ERR_NAME_NOT|mất mạng|net::/i.test(r)) return T("🌐", "Mất mạng tạm thời", "Kiểm tra internet/proxy rồi chạy lại.");
   if (/đang bận|đang tạo video khác/i.test(r)) return A("⏳", "Nick đang bận", "Chờ video hiện tại xong rồi chạy tiếp.");
+  if (/đã thử \d+ nick|đều lỗi — dừng/i.test(r)) { const cuoi = (r.match(/Lỗi cuối:\s*([\s\S]+)$/i) || [])[1] || ""; return T("🔁", "Đã xoay nhiều nick, đều lỗi", (cuoi.trim() || "Xem chi tiết ở Log.").slice(0, 70)); }
   if (/không tồn tại/i.test(r)) return T("👻", "Nick không còn trong pool", "Bảng đang cũ (đã tự làm mới) — nick có thể vừa bị xoá.");
   if (/đang nghỉ chống risk-control/i.test(r)) return A("⏰", "Nick đang nghỉ", r.replace(/^.*?còn/, "Còn").slice(0, 60));
   if (/tạm ngưng|tắt lịch/i.test(r)) return A("⏸", "Nick đang tạm ngưng", "Bấm chạy nick này là tự mở lại; hoặc 'Cho chạy lại' ở Kho tài khoản.");
@@ -90,6 +91,8 @@ export function riskyPrompt(p) {
   const harm = /(đánh|đe doạ|đe dọa|bạo lực|hành hạ|dọa|khóc|sợ hãi|co rúm|殴打|抽打|打骂|威胁|恐吓|木尺|哭|吓|缩|abuse|beat|\bhit\b|threat|intimidat|scared|cry|slap|punish)/i;
   if (kid.test(t) && harm.test(t)) return "trẻ em trong cảnh bạo lực/đe doạ";
   if (/(máu me|giết|xác chết|tra tấn|đâm|súng|血腥|杀|尸体|拷问|枪|刺|gore|kill|murder|torture|stab|blood)/i.test(t)) return "bạo lực/máu me";
+  // Hành động mạnh/gây hấn hay bị Dola chặn (vd prompt "violently shove/STRONGEST TRIGGER/angry ... slam")
+  if (/(xô đẩy|giằng|xô ngã|đập|tát|hung hãn|gây hấn|nổi điên|\bviolent|violently|shove|slam|smash|punch|choke|strangle|assault|aggressiv|\brage\b|\battack|grab(bing)?|throw(ing)?|strongest trigger)/i.test(t)) return "hành động mạnh/gây hấn (dễ bị chặn)";
   if (/(khoả thân|khỏa thân|khiêu dâm|裸|色情|性行为|nude|nsfw|erotic|sexual)/i.test(t)) return "nội dung người lớn";
   if (/(tự tử|tự sát|tự hại|自杀|自残|suicide|self-harm)/i.test(t)) return "tự hại";
   return "";
