@@ -29,6 +29,15 @@ def test_check_proxy_input_normalizes_without_network():
         # dạng tool Seedance AI Studio (1 dấu hai chấm) dán sang được, proxy tĩnh không bị ảnh hưởng
         assert browser.check_proxy_input("proxyvn:PV") == browser.check_proxy_input("proxyvn://PV")
         assert browser.check_proxy_input("tmproxy:" + KEY) == "tmproxy://" + KEY
+        # đuôi khoá tỉnh/nhà mạng như tool Seedance: KHÔNG được nhét vào key
+        base = "https://proxyxoay.shop/api/get.php?key=PV&"
+        assert browser.check_proxy_input("proxyvn:PV@nhamang=viettel,tinhthanh=3") == base + "nhamang=viettel&tinhthanh=3"
+        assert browser.check_proxy_input("proxyvn:PV@isp=fpt,location=16") == base + "nhamang=fpt&tinhthanh=16"
+        v = browser.check_proxy_input("tmproxy:" + KEY + "@location=9,isp=1")
+        assert v == "tmproxy://" + KEY + "@location=9,isp=1" and tmproxy.key_of(v) == KEY, v
+        body = tmproxy._new_body(KEY)
+        assert body["id_location"] == 9 and body["id_isp"] == 1 and body["api_key"] == KEY, body
+        assert browser.normalize_proxy_input(v) == v and KEY not in browser.mask_proxy(v)
         assert browser.check_proxy_input("proxy.example.com:3128:u:p") == "proxy.example.com:3128:u:p"
         assert browser.check_proxy_input("1.2.3.4:8080") == "1.2.3.4:8080"
         assert browser.check_proxy_input(" 1.2.3.4:8080 ") == "1.2.3.4:8080"

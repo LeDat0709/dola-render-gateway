@@ -13,6 +13,7 @@ Xác thực: whitelist IP (ip_allow, đặt trên tmproxy.com) hoặc username/p
 Mỗi key = 1 IP tại một thời điểm → 1 key cho 1 nick (hoặc vài nick cùng key, chia bằng Kho proxy).
 """
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -36,8 +37,24 @@ def is_tmproxy(raw: str | None) -> bool:
     return (raw or "").strip().lower().startswith(PREFIX)
 
 
+_opts: dict[str, dict] = {}   # key -> {"id_location", "id_isp"} từ đuôi "@location=9,isp=1" (như tool Seedance)
+
+
 def key_of(raw: str | None) -> str:
-    return (raw or "").strip()[len(PREFIX):].strip()
+    """KEY trong 'tmproxy://KEY[@location=9,isp=1]'. Có đuôi thì nhớ vị trí/nhà mạng RIÊNG cho key để get-new-proxy
+    xin đúng tỉnh (không có thì dùng DOLA_TMPROXY_LOCATION/ISP chung)."""
+    rest = (raw or "").strip()[len(PREFIX):].strip()
+    key, _, tail = rest.partition("@")
+    key = key.strip()
+    opts = {}
+    for part in re.split(r"[,&;\s]+", tail):
+        k, _, v = part.partition("=")
+        name = {"location": "id_location", "id_location": "id_location", "isp": "id_isp", "id_isp": "id_isp"}.get(k.strip().lower())
+        if name and v.strip().isdigit():
+            opts[name] = int(v)
+    if key and opts:
+        _opts[key] = opts
+    return key
 
 
 def mask(raw: str | None) -> str:
@@ -84,7 +101,7 @@ def _store(key: str, data: dict, now: float) -> dict:
 
 
 def _new_body(key: str) -> dict:
-    return {"api_key": key, "id_location": config.TMPROXY_ID_LOCATION, "id_isp": config.TMPROXY_ID_ISP}
+    return {"api_key": key, "id_location": config.TMPROXY_ID_LOCATION, "id_isp": config.TMPROXY_ID_ISP, **_opts.get(key, {})}
 
 
 def current(key: str) -> dict:

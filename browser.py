@@ -3,6 +3,7 @@ import asyncio
 import contextlib
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -170,6 +171,15 @@ def normalize_proxy_input(raw: str) -> str:
             rest = raw[len(pfx) + (3 if low.startswith(pfx + "://") else 1):].strip()
             if not rest:
                 return raw
+            if "@" in rest:   # đuôi kiểu tool Seedance: proxyvn:KEY@nhamang=viettel,tinhthanh=3 (isp/location = tên khác)
+                key, _, tail = rest.partition("@")
+                q = {"nhamang": "random", "tinhthanh": "0"}
+                for part in re.split(r"[,&;\s]+", tail):
+                    k, _, v = part.partition("=")
+                    k = {"isp": "nhamang", "location": "tinhthanh"}.get(k.strip().lower(), k.strip().lower())
+                    if k and v.strip():
+                        q[k] = v.strip()
+                return f"{_PROXYXOAY_BASE}?key={key.strip()}&" + "&".join(f"{k}={v}" for k, v in q.items())
             if "?" in rest:                                # proxyvn://KEY?nhamang=viettel&tinhthanh=5
                 key, qs = rest.split("?", 1)
                 return f"{_PROXYXOAY_BASE}?key={key}&{qs}"
