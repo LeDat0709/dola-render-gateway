@@ -34,6 +34,9 @@ from pydantic import BaseModel, Field
 
 CHECK_CONCURRENCY = int(os.getenv("PROXY_CHECK_THREADS", "8"))     # 8 luồng song song
 CHECK_TIMEOUT = float(os.getenv("PROXY_CHECK_TIMEOUT", "15"))      # 15 giây/proxy
+# Kiểm 2 VÒNG (đối thủ v1.0.88 kiemTraProxyTrinhDuyet): proxy qua vòng 1 phải qua thêm vòng 2 mới tính sống — bắt cổng
+# chập chờn (lúc được lúc không) trước khi chia cho nick, thay vì để nick chết giữa lúc gửi.
+CHECK_ROUNDS = max(1, int(os.getenv("PROXY_CHECK_ROUNDS", "2")))
 CHECK_URL = os.getenv("PROXY_CHECK_URL", "https://www.dola.com/")  # proxy phải với tới Dola mới coi là sống
 # Hỏi IP RA thật qua proxy (IP + nhà mạng + tỉnh) để Kho proxy hiện "IP ra 116.107.x.x · viettel HungYen" như tool đối thủ.
 IPINFO_URL = os.getenv("PROXY_IPINFO_URL", "http://ip-api.com/json/?fields=status,query,isp,city,regionName")
@@ -215,9 +218,20 @@ class PoolStore:
         if pid in self.items:
             self.items[pid].update(info)
 
-    async def check_ids(self, pids: list[str]) -> None:
+    async def check_ids(self, pids: list[str], rounds: int | None = None) -> None:
         sem = asyncio.Semaphore(CHECK_CONCURRENCY)
         await asyncio.gather(*(self._check_one(pid, sem) for pid in pids))
+        for _ in range((rounds or CHECK_ROUNDS) - 1):
+            passed = {pid: dict(self.items[pid]) for pid in pids if self.items.get(pid, {}).get("alive")}
+            await asyncio.gather(*(self._check_one(pid, sem) for pid in passed))
+            for pid, first in passed.items():
+                it = self.items.get(pid)
+                if it is None:
+                    continue
+                if not it.get("alive"):
+                    it["error"] = f"chập chờn — vòng trước đạt, vòng sau hỏng: {it.get('error') or '?'}"[:160]
+                elif not it.get("exit_ip"):   # vòng sau không hỏi được IP ra → giữ số của vòng trước
+                    it.update({k: first.get(k) for k in ("exit_ip", "isp", "city")})
         self._save()
 
     async def check_all(self) -> tuple[int, int]:
@@ -274,7 +288,7 @@ def make_router(ctx: dict[str, Any]) -> APIRouter:
     async def check_proxies(x_admin_key: str | None = Header(default=None)):
         admin_auth(x_admin_key)
         alive, dead = await store.check_all()
-        return {"ok": True, "alive": alive, "dead": dead, "threads": CHECK_CONCURRENCY, "timeout": CHECK_TIMEOUT}
+        return {"ok": True, "alive": alive, "dead": dead, "threads": CHECK_CONCURRENCY, "timeout": CHECK_TIMEOUT, "rounds": CHECK_ROUNDS}
 
     @r.post("/api/admin/proxies/prune")
     async def prune_proxies(x_admin_key: str | None = Header(default=None)):
@@ -312,7 +326,7 @@ def make_router(ctx: dict[str, Any]) -> APIRouter:
             await asyncio.to_thread(rotating_rotate, it["raw"])   # chưa tới giờ nhà bán cho đổi → giữ IP cũ, không lỗi
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(502, f"nhà bán proxy báo lỗi: {str(exc)[:160]}")
-        await store.check_ids([pid])
+        await store.check_ids([pid], rounds=1)   # vừa đổi IP: kiểm nhanh 1 vòng
         return {"ok": True, "proxy": next(p for p in store.public(_nick_count) if p["id"] == pid)}
 
     @r.delete("/api/admin/proxies/{pid}")
@@ -354,6 +368,22 @@ def demo() -> None:
     alive = store.alive_raws()
     assert len(alive) == 2 and "9.9.9.9:1080" not in alive, alive
     assert store.prune_dead() == 1 and len(store.items) == 2
+
+    # kiểm 2 vòng: A qua cả 2 → sống (giữ IP ra vòng 1); B qua vòng 1, hỏng vòng 2 → chết "chập chờn"
+    calls = {}
+    ids = list(store.items)
+    plan = {ids[0]: [True, True], ids[1]: [True, False]}
+
+    async def fake_check(pid, sem):
+        n = calls.get(pid, 0)
+        calls[pid] = n + 1
+        ok = plan.get(pid, [False])[min(n, len(plan.get(pid, [False])) - 1)]
+        store.items[pid].update(alive=ok, error="" if ok else "Cannot connect", exit_ip="1.1.1.1" if ok and n == 0 else "")
+    store._check_one = fake_check
+    asyncio.run(store.check_ids(ids, rounds=2))
+    assert store.items[ids[0]]["alive"] is True and store.items[ids[0]]["exit_ip"] == "1.1.1.1", store.items[ids[0]]
+    assert store.items[ids[1]]["alive"] is False and "chập chờn" in store.items[ids[1]]["error"], store.items[ids[1]]
+    assert calls[ids[0]] == 2 and calls[ids[1]] == 2, calls
 
     print("proxy_pool demo: OK")
 
