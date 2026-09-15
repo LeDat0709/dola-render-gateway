@@ -366,6 +366,16 @@ export function accChip(a) {
   const M = { ready: ["success", "Sẵn sàng"], busy: ["default", "Đang chạy"], off: ["secondary", "Tạm ngưng"], dead: ["secondary", "⚠ Chưa đăng nhập"] };
   return { st, variant: M[st][0], text: M[st][1] };
 }
+// Cookie nick: Dola nhận lệnh (hoặc bấm kiểm tra) thì server ghi login_ok=1 + login_checked_at. Xác nhận trong
+// COOKIE_FRESH_SEC thì coi là sống chắc chắn → bấm Chạy bỏ qua bước "kiểm tra nick" cho nick đó.
+export const COOKIE_FRESH_SEC = 3600;
+export function cookieInfo(a) {
+  if (a?.login_ok === 0) return { st: "dead", text: "cookie chết" };
+  if (a?.login_ok !== 1) return { st: "unknown", text: "cookie chưa kiểm" };
+  const at = a.login_checked_at || 0;
+  if (at && Date.now() / 1000 - at < COOKIE_FRESH_SEC) return { st: "fresh", text: `cookie sống · ${timeAgo(at)} trước` };
+  return { st: "stale", text: at ? `cookie sống · ${timeAgo(at)} trước` : "cookie sống" };
+}
 export const fmtSec = (s) => { s = Math.round(s || 0); return s >= 60 ? `${Math.floor(s / 60)}p ${String(s % 60).padStart(2, "0")}s` : `${s}s`; };
 
 // "5 phút trước" dạng ngắn: 45s · 12p · 3g · 2n

@@ -442,6 +442,25 @@ def test_settle_error_keeps_video():
         assert r["account"] == "n1", r
 
 
+# ---------- R19: Dola nhận lệnh (có conversation_id) = cookie còn sống → ghi luôn, khỏi phải kiểm tra nick ----------
+def test_accepted_job_marks_cookie_alive():
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp)
+        pool.set_login_status("n1", None)
+        got = []
+
+        async def gen(acc, *a, on_submitted=None, on_conversation_id=None, **kw):
+            on_submitted(acc, True)
+            on_conversation_id(acc, "123", 0)
+            return {"video_url": "u", "account": acc}
+        browser_pool.generate_video = gen
+        _run(pool.generate_video("p", "9:16", 10, account="n1", on_conversation_id=lambda *x: got.append(x)))
+        m = pool._meta("n1")
+        assert m["login_ok"] == 1 and m["login_checked_at"] > 0, dict(m)
+        assert got == [("n1", "123", 0)], "callback server vẫn phải nhận conversation_id"
+        assert next(x for x in pool.account_status() if x["account"] == "n1")["login_checked_at"] > 0, "/health phải có mốc xác nhận"
+
+
 if __name__ == "__main__":
     import sys
     tests = [(k, v) for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]

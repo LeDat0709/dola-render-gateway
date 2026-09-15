@@ -638,7 +638,8 @@ class BrowserPool:
             "account": a["name"], "used_today": a["used_today"], "limit": a["limit"],
             "rate_limited": a["rate_limited"], "rate_limited_until": a["rate_limited_until"],
             "quota_blocked": a["quota_blocked"], "quota_blocked_until": a["quota_blocked_until"],
-            "login_ok": a.get("login_ok"), "remaining": a.get("remaining"),
+            "login_ok": a.get("login_ok"), "login_checked_at": a.get("login_checked_at") or 0,
+            "remaining": a.get("remaining"),
             "scheduling": a.get("scheduling", True), "cooling": a.get("cooling", False),
             "cooldown_until": a.get("cooldown_until", 0),
             "busy": a.get("busy", False),
@@ -804,6 +805,16 @@ class BrowserPool:
                 self._claim_submitted(acc)
                 raise e
 
+        def _on_conversation(acc, conversation_id, deadline_at):
+            # Dola NHẬN lệnh = cookie nick chắc chắn còn sống và dùng được → ghi luôn (khỏi phải bấm "kiểm tra nick";
+            # Studio bỏ qua bước kiểm cho nick vừa được xác nhận). Lỗi ghi sổ không được làm hỏng job đã gửi.
+            try:
+                self.set_login_status(acc, True)
+            except Exception as e:  # noqa: BLE001
+                print(f"[pool] {acc}: ghi 'cookie sống' lỗi (bỏ qua): {e!r}", flush=True)
+            if on_conversation_id:
+                on_conversation_id(acc, conversation_id, deadline_at)
+
         async def _run_worker(acc, on_balance, seen):
             await _pace(account_proxy_raw(acc) or "")
             await _hold_browser()
@@ -814,7 +825,7 @@ class BrowserPool:
                     print(f"[pool] {acc}: ghi trạng thái 'đang mở nick' lỗi (bỏ qua): {e!r}", flush=True)
             result = await _presubmit_guard(
                 generate_video, acc, prompt, ratio, duration, model=model,
-                on_conversation_id=on_conversation_id, on_poll=on_poll,
+                on_conversation_id=_on_conversation, on_poll=on_poll,
                 on_balance=on_balance, on_submitted=_on_submitted,
                 on_browser_free=_release_browser, on_browser_hold=_hold_browser,
                 reference_image_paths=reference_image_paths)

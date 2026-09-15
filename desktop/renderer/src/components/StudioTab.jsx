@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Play, RotateCw, Settings, Trash2, FolderOpen, Copy, ArrowDown, Repeat, Stethoscope, Square, RefreshCw, Eraser, Power, Clock, ListOrdered, Zap } from "lucide-react";
+import { Play, RotateCw, Settings, Trash2, FolderOpen, Copy, ArrowDown, Repeat, Stethoscope, Square, RefreshCw, Eraser, Power, Clock, ListOrdered, Zap, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -7,16 +7,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { SelectNative } from "@/components/ui/select-native";
 import { ViewToggle, useView } from "@/components/ui/view-toggle";
-import { api, submitJob, pollJob, fmtError, creditCost, cheaperHint, firstLine, fnameFromUrl, sttFromUrl, accState, accChip, canRunAccount, deleteAccount, STAGE_TEXT, riskyPrompt, durationMismatch, deadNicks, setConcurrency, patchAccount, wakeAccount, inflightTasks, accState as accStateOf } from "@/lib/api";
+import { api, submitJob, pollJob, fmtError, creditCost, cheaperHint, firstLine, fnameFromUrl, sttFromUrl, accState, accChip, canRunAccount, deleteAccount, STAGE_TEXT, riskyPrompt, durationMismatch, deadNicks, setConcurrency, patchAccount, wakeAccount, inflightTasks, cookieInfo, accState as accStateOf } from "@/lib/api";
 
 const MODELS = ["seedance-2.0", "seedance-2.5"];
 const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"];
 // Dola đã bỏ 30 giây (chỉ còn 4–15). Chọn 30 thì Dola hỏi lại rồi tự hạ 15 → mất thêm
 // 1–2 phút giữ nick, nên mặc định 15 và nói rõ trên nhãn.
 const DURS = [["10", "10s"], ["15", "15s"], ["30", "30s"]];
-// Timeline 5 bước trên thẻ nick; giai đoạn server báo (STAGE_TEXT) ánh xạ về bước đang chạy.
-const STEPS = ["Hàng đợi", "Gửi", "Dựng", "Tải về", "Xong"];
-const STEP_OF = { checking: 0, queued: 0, waiting: 0, opening: 1, submitting: 1, rendering: 2, processing: 2, downloading: 3 };
 const H2 = "font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground";
 const TH = "h-9 whitespace-nowrap px-2 text-left font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground";
 
@@ -125,7 +122,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     }
     if (inflight.current.has(n)) return true;   // đã chạy ở nơi khác, không tính là lỗi
     inflight.current.add(n);
-    setRow(n, { prompt, phase: "running", stage: "queued", startedAt: Date.now(), errorRaw: "", videoUrl: "", ranOn: "" });
+    setRow(n, { prompt, phase: "running", stage: "queued", startedAt: Date.now(), stageAt: Date.now(), endedAt: 0, errorRaw: "", videoUrl: "", ranOn: "" });
     try {
       // Người dùng đã chọn đích danh nick này thì "tạm ngưng" không còn là lý do chặn: mở lại giúp rồi
       // gửi luôn (server từ chối job vào nick tạm ngưng). Trước đây thẻ chỉ báo "bấm Bật lịch tất cả rồi chạy lại".
@@ -165,9 +162,9 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
       const pk = [pj.proxy_ip, pj.proxy_provider, pj.proxy_used, pj.proxy_per, pj.proxy_fresh, pj.proxy_kind].join("|");   // IP + lượt + NCC + loại → cột Proxy
       if (pk !== pip) { pip = pk; setRow(n, { proxyIp: pj.proxy_ip || "", proxyIsp: pj.proxy_isp || "", proxyProvider: pj.proxy_provider || "", proxyUsed: pj.proxy_used, proxyPer: pj.proxy_per, proxyFresh: pj.proxy_fresh, proxyKind: pj.proxy_kind || "" }); }
       if (pj.account && pj.account !== n) setRow(n, { ranOn: pj.account });   // job đã XOAY sang nick khác → hiện nick thật
-      if (pj.status === "completed") { setRow(n, { phase: "done", stage: "done", videoUrl: pj.video_url }); api.saveVideo?.(pj.video_url); return true; }
-      if (pj.status === "failed") { setRow(n, { phase: "error", errorRaw: pj.error || "?" }); return false; }
-      if (pj.stage && pj.stage !== stage) { stage = pj.stage; setRow(n, { stage }); }
+      if (pj.status === "completed") { setRow(n, { phase: "done", stage: "done", videoUrl: pj.video_url, endedAt: Date.now() }); api.saveVideo?.(pj.video_url); return true; }
+      if (pj.status === "failed") { setRow(n, { phase: "error", errorRaw: pj.error || "?", endedAt: Date.now() }); return false; }
+      if (pj.stage && pj.stage !== stage) { stage = pj.stage; setRow(n, { stage, stageAt: Date.now() }); }
     }
   }
 
@@ -189,10 +186,12 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     }
     stop.current = false;
     // Phản hồi ngay trên từng thẻ: trước đây bấm Chạy là bảng đứng im tới 12s (chờ verify).
-    ns.forEach((n) => setRow(n, { phase: "running", stage: skipVerify ? "queued" : "checking", startedAt: Date.now(), errorRaw: "", videoUrl: "" }));
-    // Bỏ qua kiểm tra nick: chạy thẳng, khỏi mở Chrome kiểm phiên (nick cookie chết sẽ lỗi lúc gửi rồi tự xoay).
-    const dead = skipVerify ? [] : await deadNicks(ns);
-    if (!skipVerify) setGen("Kiểm tra phiên đăng nhập trước khi chạy…");
+    // Chỉ kiểm tra nick CHƯA được xác nhận gần đây: nick Dola vừa nhận lệnh (< 60 phút) chắc chắn cookie sống → chạy
+    // luôn. Bật "Bỏ qua kiểm tra nick" thì không kiểm nick nào (cookie chết sẽ lỗi lúc gửi rồi tự xoay).
+    const toCheck = skipVerify ? [] : ns.filter((n) => cookieInfo(accounts.find((x) => x.account === n)).st !== "fresh");
+    ns.forEach((n) => setRow(n, { phase: "running", stage: toCheck.includes(n) ? "checking" : "queued", startedAt: Date.now(), stageAt: Date.now(), endedAt: 0, errorRaw: "", videoUrl: "" }));
+    if (toCheck.length) setGen(`Kiểm tra cookie ${toCheck.length} nick` + (ns.length > toCheck.length ? ` (bỏ qua ${ns.length - toCheck.length} nick vừa chạy OK)` : "") + "…");
+    const dead = toCheck.length ? await deadNicks(toCheck) : [];
     dead.forEach((n) => setRow(n, { phase: "error", errorRaw: "Cookie hết hạn — đăng nhập lại nick này rồi chạy lại." }));
     const blocked = ns.filter((n) => {
       const a = accounts.find((x) => x.account === n);
@@ -489,20 +488,76 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   );
 }
 
-// Thanh 5 bước; compact = chỉ vạch màu (dòng trong bảng), tên bước hiện khi rê chuột.
-function Timeline({ s, compact = false }) {
-  const at = s.phase === "done" ? STEPS.length : s.phase === "idle" ? -1 : (STEP_OF[s.stage] ?? 2);
-  const tone = (i) => s.phase === "error" && i === at ? "bg-error" : i < at ? "bg-tertiary" : i === at ? "bg-primary" : "bg-surface-highest";
-  const text = (i) => s.phase === "error" && i === at ? "text-error" : i === at && s.phase === "running" ? "text-primary" : s.phase === "done" && i === STEPS.length - 1 ? "text-tertiary" : "text-muted-foreground";
+// TIẾN TRÌNH: MỘT thanh liên tục (%) + tên bước + thời gian, thay 5 vạch rời khó đọc. Bước "Dola dựng" tăng dần theo
+// thời gian dựng thường lệ (30s ~15p, 10/15s ~8p) để thấy còn lâu không; quá 1.5× thì chuyển vàng "đừng chạy lại".
+// [nhãn, % khi vào bước, màu chữ]
+const STAGE_META = {
+  checking: ["Kiểm tra cookie nick", 3, "text-info"], queued: ["Xếp hàng gửi", 5, "text-muted-foreground"],
+  waiting: ["Chờ slot Chrome", 8, "text-muted-foreground"], opening: ["Mở nick", 14, "text-info"],
+  submitting: ["Gửi prompt tới Dola", 22, "text-warn"], rendering: ["Dola đang dựng video", 25, "text-primary"],
+  processing: ["Đang tạo", 25, "text-primary"], downloading: ["Tải video về", 95, "text-tertiary"],
+};
+const STAGE_HINT = {
+  checking: "xem cookie còn sống không", queued: "chờ server nhận job",
+  waiting: "slot Chrome đang bận — máy khỏe thì tăng 'Nick gửi cùng lúc'",
+  opening: "mở Chrome + vào Dola (treo quá 5 phút tự cắt, xoay nick)", submitting: "chờ Dola nhận lệnh",
+};
+const MILESTONES = [["Gửi", 14], ["Dựng", 25], ["Tải", 95]];
+const renderSec = (dur) => (parseInt(dur, 10) >= 30 ? 900 : 480);
+const fmtMs = (ms) => { const x = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(x / 60)}p ${String(x % 60).padStart(2, "0")}s`; };
+
+function progressOf(s) {
+  const [label, base, tone] = STAGE_META[s.stage] || STAGE_META.processing;
+  if (s.phase === "done") return { pct: 100, label: "Xong", tone: "text-tertiary" };
+  if (s.phase !== "running" || base !== 25) return { pct: base, label, tone };
+  const t = (Date.now() - (s.stageAt || s.startedAt)) / 1000, exp = renderSec(s.dur);
+  return { pct: Math.min(95, base + 70 * (t / exp)), label, tone, left: exp - t, slow: t > exp * 1.5 };
+}
+
+function Progress({ s, a, compact = false, onRun, rotatedFrom }) {
+  const p = progressOf(s);
+  const run = s.phase === "running", done = s.phase === "done", err = s.phase === "error";
+  const idle = !run && !done && !err;
+  const took = s.startedAt ? fmtMs((s.endedAt || Date.now()) - s.startedAt) : "";
+  const fill = err ? "bg-error" : done ? "bg-tertiary" : p.slow ? "bg-warn" : "bg-gradient-to-r from-primary to-info shadow-[0_0_8px] shadow-primary/40";
   return (
-    <div className="flex gap-1">
-      {STEPS.map((label, i) => (
-        <div key={label} className="flex flex-1 flex-col gap-1" title={compact ? label : undefined}>
-          <div className={"h-[3px] rounded-sm " + tone(i)} />
-          {!compact && <span className={"whitespace-nowrap font-mono text-[10px] " + text(i)}>{label}</span>}
+    <div className="flex w-full min-w-0 flex-col gap-1">
+      {(run || done) && (
+        <div className="flex items-center gap-1.5 text-[12px] leading-none">
+          {run
+            ? <span className="relative flex h-2 w-2 flex-none"><span className="absolute h-full w-full animate-ping rounded-full bg-primary/60" /><span className="relative h-2 w-2 rounded-full bg-primary" /></span>
+            : <CheckCircle2 className="h-3.5 w-3.5 flex-none text-tertiary" />}
+          <span className={"truncate font-medium " + p.tone}>{p.label}</span>
+          <span className="ml-auto flex-none font-mono text-[10.5px] tabular-nums text-muted-foreground">{took}{run ? ` · ${Math.round(p.pct)}%` : ""}</span>
         </div>
-      ))}
+      )}
+      <div className="relative h-2 overflow-hidden rounded-full bg-surface-highest" title={run ? `${p.label} · ${Math.round(p.pct)}%` : undefined}>
+        {!idle && <div className={"h-full rounded-full transition-[width] duration-700 " + fill} style={{ width: (err ? Math.max(p.pct, 6) : p.pct) + "%" }} />}
+        {MILESTONES.map(([n, x]) => <span key={n} className="absolute top-0 h-full w-0.5 bg-surface-lowest/80" style={{ left: x + "%" }} />)}
+      </div>
+      {!compact && (
+        <div className="relative h-3 font-mono text-[9.5px] text-muted-foreground">
+          {MILESTONES.map(([n, x]) => <span key={n} className={"absolute -translate-x-1/2 " + (!idle && p.pct >= x ? (err ? "text-error" : "text-foreground/80") : "")} style={{ left: x + "%" }}>{n}</span>)}
+        </div>
+      )}
+      {run && (
+        <span className={"truncate font-mono text-[10.5px] " + (p.slow ? "text-warn" : "text-muted-foreground")}>
+          {p.left != null ? (p.slow ? "lâu hơn thường lệ — Dola vẫn dựng, ĐỪNG chạy lại" : p.left > 0 ? `~còn ${fmtMs(p.left * 1000)}` : "sắp xong…") : STAGE_HINT[s.stage] || ""}
+        </span>
+      )}
+      {(err || idle) && <div className="flex min-h-5 items-center"><Footer s={s} a={a} onRun={onRun} rotatedFrom={rotatedFrom} /></div>}
     </div>
+  );
+}
+
+// Nhãn cookie: xanh = Dola vừa nhận lệnh/vừa kiểm (< 60 phút) → bấm Chạy khỏi kiểm tra lại.
+function CookieTag({ a }) {
+  const c = cookieInfo(a);
+  const tone = { fresh: "text-tertiary", stale: "text-muted-foreground", unknown: "text-muted-foreground/70", dead: "text-error" }[c.st];
+  return (
+    <span className={"font-mono text-[10px] " + tone} title="Cookie được xác nhận MỖI KHI Dola nhận lệnh của nick (hoặc khi kiểm tra). Xác nhận trong 60 phút thì bấm Chạy bỏ qua bước kiểm tra nick.">
+      {c.st === "fresh" ? "● " : c.st === "dead" ? "✗ " : "○ "}{c.text}
+    </span>
   );
 }
 
@@ -521,6 +576,7 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotated
         <div className="font-mono text-[12px] font-semibold">{n}</div>
         {s.ranOn && s.ranOn !== n && <div className="font-mono text-[10px] text-primary" title="Job đã xoay sang nick này">↦ chạy trên {s.ranOn}</div>}
         <div className="font-mono text-[10.5px] text-muted-foreground">{a.used_today}/{a.limit} hôm nay{a.remaining != null ? ` · còn ${a.remaining}` : ""}{lowCredit && s.phase === "idle" ? <span className="text-warn"> · nghỉ (thiếu điểm)</span> : ""}</div>
+        <CookieTag a={a} />
       </td>
       <td className={td + " whitespace-nowrap"}><Badge variant={chip.variant}>{chip.text}</Badge></td>
       <td className={td}>
@@ -575,8 +631,7 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotated
           : <span className="text-muted-foreground">—</span>}
       </td>
       <td className={td + " w-[240px] max-w-[280px]"}>
-        <Timeline s={s} compact />
-        <div className="mt-1 flex min-h-5 items-center"><Footer s={s} a={a} elapsed={elapsed} onRun={onRun} rotatedFrom={rotatedFrom} /></div>
+        <Progress s={s} a={a} compact onRun={onRun} rotatedFrom={rotatedFrom} />
       </td>
       <td className={td + " whitespace-nowrap text-right"}>
         {s.phase !== "running" && <Button variant="ghost" size="icon" className={icon + " text-primary"} title="Chạy nick này" onClick={onRun}><Play className="h-3.5 w-3.5" /></Button>}
@@ -616,9 +671,9 @@ function NickCard({ a, s, selected, elapsed, rotatedFrom, rotatedPrompt, lowCred
         <SelectNative className="h-8 w-[70px] text-xs" value={s.ratio} onChange={(e) => onChange({ ratio: e.target.value })}>{RATIOS.map((m) => <option key={m}>{m}</option>)}</SelectNative>
         <SelectNative className="h-8 w-[74px] text-xs" value={s.dur} onChange={(e) => onChange({ dur: e.target.value })}>{DURS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}</SelectNative>
       </div>
-      <Timeline s={s} />
+      <Progress s={s} a={a} onRun={onRun} rotatedFrom={rotatedFrom} />
       <div className="flex min-h-7 items-center gap-1">
-        <Footer s={s} a={a} elapsed={elapsed} onRun={onRun} rotatedFrom={rotatedFrom} />
+        <CookieTag a={a} />
         <span className="ml-auto" />
         {s.phase !== "running" && <Button variant="ghost" size="icon" className={icon + " text-primary"} title="Chạy nick này" onClick={onRun}><Play className="h-3.5 w-3.5" /></Button>}
         <Button variant="ghost" size="icon" className={icon} title="Đăng nhập lại" onClick={onRelogin}><RotateCw className="h-3.5 w-3.5" /></Button>
@@ -629,9 +684,7 @@ function NickCard({ a, s, selected, elapsed, rotatedFrom, rotatedPrompt, lowCred
   );
 }
 
-function Footer({ s, a, elapsed, onRun, rotatedFrom }) {
-  if (s.phase === "running") return <span className="font-mono text-[11px] text-primary tabular-nums">{elapsed(s.startedAt)} <span className="text-muted-foreground">· {STAGE_TEXT[s.stage] || "đang tạo…"}</span></span>;
-  if (s.phase === "done") return <span className="font-mono text-[11px] text-tertiary">Xong · {elapsed(s.startedAt)}</span>;
+function Footer({ s, a, onRun, rotatedFrom }) {
   if (s.phase === "error") {
     const f = fmtError(s.errorRaw || "");
     return (
