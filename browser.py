@@ -624,47 +624,50 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     return context
 
 
+PASSPORT_INFO_PATH = "/passport/account/info/v2/?aid=495671"
+
+
+def passport_dead(data) -> bool | None:
+    """Kết luận phiên từ Dola passport /account/info/v2: True = cookie CHẾT, False = sống, None = không rõ.
+
+    Đo 15/09: nick cookie chết vẫn được /im/chain/recent_conv trả downlink_body (Dola cho KHÁCH có hội thoại) →
+    tool báo "sống" oan, gửi prompt thì Dola đáp 「ゲストは動画と画像を生成できません」. Passport phân biệt được:
+    sống = message 'success' + data.user_id; chết = error_code 13 'session expired, please sign in again'."""
+    if not isinstance(data, dict):
+        return None
+    d = data.get("data") if isinstance(data.get("data"), dict) else {}
+    if data.get("message") == "success" and d.get("user_id"):
+        return False
+    desc = f"{d.get('name') or ''} {d.get('description') or ''}".lower()
+    if d.get("error_code") == 13 or any(k in desc for k in ("session expired", "sign in", "not login")):
+        return True
+    return None
+
+
 async def verify_cookie_http(cookie_str: str, timeout: int = 20) -> tuple[bool | None, str]:
-    """Check a Dola session with ONE plain HTTP call (no browser) — fast login verify.
+    """Check a Dola session with ONE plain HTTP call (no browser) — fast login verify (~1s).
 
-    Hits the read-only /im/chain/recent_conv: a live session returns a downlink_body, a dead
-    one returns status_code 712012001 ("登录" / login required). ~1s vs ~8s for a browser check.
-
-    Trả (True, …) sống, (False, …) Dola nói CHƯA đăng nhập, (None, …) KHÔNG kiểm tra được (proxy
-    chết, mất mạng, WAF trả HTTP lạ). Máy Windows mới chưa đặt proxy từng nhập 9 nick thì 8 nick
-    bị ghi "cookie chết" oan chỉ vì proxy mặc định 127.0.0.1:7890 không chạy.
+    Hỏi passport /account/info/v2 (xem passport_dead). Trả (True, …) sống, (False, …) cookie chết (nick thành
+    khách), (None, …) KHÔNG kiểm tra được (proxy chết, mất mạng, WAF trả HTTP lạ). Máy Windows mới chưa đặt
+    proxy từng nhập 9 nick thì 8 nick bị ghi "cookie chết" oan chỉ vì proxy mặc định 127.0.0.1:7890 không chạy.
     """
-    import json as _json
-    import uuid as _uuid
     import aiohttp
-    params = {"version_code": "20800", "language": "ja", "device_platform": "web",
-              "doubao_device_platform": "web", "aid": "495671", "real_aid": "495671",
-              "pkg_type": "release_version", "pc_version": "3.32.62", "doubao_pc_version": "3.32.62",
-              "region": "JP", "sys_region": "JP", "samantha_web": "1", "web_platform": "browser",
-              "use-olympus-account": "1", "web_tab_id": str(_uuid.uuid4())}
-    body = {"cmd": 3200, "uplink_body": {"pull_recent_conv_chain_uplink_body": {
-        "limit": 1, "message_count_per_conv": 1, "api_version": 1, "conv_version": 0, "direction": 3,
-        "option": {"not_need_message": True, "need_complete_conversation": True}}},
-        "sequence_id": str(_uuid.uuid4()), "channel": 2, "version": "1"}
-    headers = {"Content-Type": "application/json; encoding=utf-8", "agw-js-conv": "str",
-               "Accept": "*/*", "cookie": cookie_str}
+    headers = {"Accept": "application/json", "cookie": cookie_str}
     try:
         async with aiohttp.ClientSession() as sess:
-            async with sess.post("https://www.dola.com/im/chain/recent_conv", params=params,
-                                 data=_json.dumps(body), headers=headers, proxy=config.PROXY or None,
-                                 timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+            async with sess.get("https://www.dola.com" + PASSPORT_INFO_PATH, headers=headers,
+                                proxy=config.PROXY or None, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
                 if r.status != 200:
                     return None, f"Dola/WAF trả HTTP {r.status} (chưa kết luận được cookie)"
                 data = await r.json(content_type=None)
     except Exception as exc:
         return None, f"không tới được dola.com qua {config.PROXY or 'nối thẳng'}: {str(exc)[:80]}"
-    code = data.get("status_code")
-    desc = str(data.get("status_desc") or "")
-    if code in (712012001,) or "登录" in desc or "login" in desc.lower():
-        return False, "Cookie chưa đăng nhập / đã hết hạn (Dola đòi đăng nhập)."
-    if data.get("downlink_body") is not None:
+    dead = passport_dead(data)
+    if dead:
+        return False, "Cookie hết hạn — Dola coi nick là khách (session expired), đăng nhập lại."
+    if dead is False:
         return True, "Phiên Dola còn sống."
-    return None, f"Phản hồi không rõ (code={code})."
+    return None, f"Phản hồi không rõ (message={data.get('message') if isinstance(data, dict) else '?'})."
 
 
 def cookie_value(cookies: list, name: str) -> str:

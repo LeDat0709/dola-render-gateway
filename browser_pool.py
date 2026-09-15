@@ -805,16 +805,6 @@ class BrowserPool:
                 self._claim_submitted(acc)
                 raise e
 
-        def _on_conversation(acc, conversation_id, deadline_at):
-            # Dola NHẬN lệnh = cookie nick chắc chắn còn sống và dùng được → ghi luôn (khỏi phải bấm "kiểm tra nick";
-            # Studio bỏ qua bước kiểm cho nick vừa được xác nhận). Lỗi ghi sổ không được làm hỏng job đã gửi.
-            try:
-                self.set_login_status(acc, True)
-            except Exception as e:  # noqa: BLE001
-                print(f"[pool] {acc}: ghi 'cookie sống' lỗi (bỏ qua): {e!r}", flush=True)
-            if on_conversation_id:
-                on_conversation_id(acc, conversation_id, deadline_at)
-
         async def _run_worker(acc, on_balance, seen):
             await _pace(account_proxy_raw(acc) or "")
             await _hold_browser()
@@ -825,12 +815,15 @@ class BrowserPool:
                     print(f"[pool] {acc}: ghi trạng thái 'đang mở nick' lỗi (bỏ qua): {e!r}", flush=True)
             result = await _presubmit_guard(
                 generate_video, acc, prompt, ratio, duration, model=model,
-                on_conversation_id=_on_conversation, on_poll=on_poll,
+                on_conversation_id=on_conversation_id, on_poll=on_poll,
                 on_balance=on_balance, on_submitted=_on_submitted,
                 on_browser_free=_release_browser, on_browser_hold=_hold_browser,
                 reference_image_paths=reference_image_paths)
             try:
                 self._settle(acc, result, model, duration, seen["balance"])
+                # VIDEO XONG = cookie chắc chắn sống (Studio bỏ qua bước kiểm cho nick này). KHÔNG ghi lúc Dola mới nhận
+                # lệnh: nick cookie chết (KHÁCH) vẫn có conversation_id rồi mới bị từ chối (ảnh 15/09 báo sống oan).
+                self.set_login_status(acc, True)
             except Exception as e:  # noqa: BLE001 — video ĐÃ có: lỗi ghi sổ không được biến job thành lỗi (chạy lại = trừ 2 lần)
                 print(f"[pool] {acc}: video xong nhưng ghi lượt/credit lỗi (bỏ qua): {e!r}", flush=True)
             return result
@@ -924,7 +917,11 @@ class BrowserPool:
                     except LoggedOutError as e:
                         print(f"[pool] {account} logged out (session invalid), disabling until re-login: {e}", flush=True)
                         self.set_login_status(account, False)
-                        _raise_if_delivered(account, e)   # logout lúc poll/resume = sau khi gửi → không xoay
+                        if getattr(e, "not_charged", False):
+                            # Dola từ chối vì nick là KHÁCH: không có credit để trừ → chắc chắn chưa tốn lượt, xoay an toàn.
+                            _on_submitted(account, False)
+                        else:
+                            _raise_if_delivered(account, e)   # logout lúc poll/resume = sau khi gửi → không xoay
                         last_err = e
                         continue
                     except RegionBlockedError as e:

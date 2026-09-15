@@ -442,8 +442,8 @@ def test_settle_error_keeps_video():
         assert r["account"] == "n1", r
 
 
-# ---------- R19: Dola nhận lệnh (có conversation_id) = cookie còn sống → ghi luôn, khỏi phải kiểm tra nick ----------
-def test_accepted_job_marks_cookie_alive():
+# ---------- R19: chỉ VIDEO XONG mới chứng minh cookie sống (nick KHÁCH vẫn có conversation_id rồi mới bị từ chối) ----------
+def test_only_finished_video_marks_cookie_alive():
     with tempfile.TemporaryDirectory() as tmp:
         pool = _pool(tmp)
         pool.set_login_status("n1", None)
@@ -452,6 +452,7 @@ def test_accepted_job_marks_cookie_alive():
         async def gen(acc, *a, on_submitted=None, on_conversation_id=None, **kw):
             on_submitted(acc, True)
             on_conversation_id(acc, "123", 0)
+            assert pool._meta(acc)["login_ok"] is None, "mới có conversation_id đã ghi 'cookie sống' → nick khách bị báo sống oan"
             return {"video_url": "u", "account": acc}
         browser_pool.generate_video = gen
         _run(pool.generate_video("p", "9:16", 10, account="n1", on_conversation_id=lambda *x: got.append(x)))
@@ -459,6 +460,21 @@ def test_accepted_job_marks_cookie_alive():
         assert m["login_ok"] == 1 and m["login_checked_at"] > 0, dict(m)
         assert got == [("n1", "123", 0)], "callback server vẫn phải nhận conversation_id"
         assert next(x for x in pool.account_status() if x["account"] == "n1")["login_checked_at"] > 0, "/health phải có mốc xác nhận"
+
+
+# ---------- R20: Dola đáp "khách không tạo được video" → cookie chết + xoay nick (khách không bị trừ lượt) ----------
+def test_guest_refusal_marks_dead_and_rotates():
+    from video_worker_ui import GuestRefusedError
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp)
+        pool.set_login_status("n1", True)
+        gen = _scripted({"n1": [("submit_raise", GuestRefusedError("Cookie hết hạn — Dola coi nick là KHÁCH"))], "n2": [("ok",)]})
+        browser_pool.generate_video = gen
+        got, spy = _server_spy()
+        r = _run(pool.generate_video("p", "9:16", 10, account="n1", on_submitted=spy))
+        assert r["account"] == "n2" and gen.calls == ["n1", "n2"], (r, gen.calls)
+        assert pool._meta("n1")["login_ok"] == 0, "nick khách phải bị đánh dấu cookie chết"
+        assert got == [("n1", True), ("n1", False), ("n2", True)], got
 
 
 if __name__ == "__main__":

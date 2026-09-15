@@ -269,6 +269,25 @@ def test_uncertain_submit_only_resends_when_probe_is_certain():
         vw._recent_conv_ids = saved
 
 
+def test_guest_session_is_detected_not_credit():
+    """Ảnh 15/09: cookie chết → Dola coi là KHÁCH. Passport phân biệt được (recent_conv thì không); câu từ chối của
+    Dola phải thành GuestRefusedError, KHÔNG phải CreditError (「生成できません」 từng bị hiểu là hết điểm)."""
+    from browser import passport_dead
+    assert passport_dead({"message": "success", "data": {"user_id": 1}}) is False
+    assert passport_dead({"message": "error", "data": {"error_code": 13, "name": "account_info_error",
+                                                       "description": "session expired, please sign in again"}}) is True
+    assert passport_dead({"message": "error", "data": {"error_code": 7}}) is None      # lỗi lạ → chưa kết luận
+    assert passport_dead(None) is None
+    guest = "ゲストは動画と画像を生成できません。作成を開始するにはログインしてください。"
+    assert vw.GUEST_REFUSAL_PATTERN.search(guest)
+    try:
+        _http_poll([guest], set())
+        assert False, "phải ném GuestRefusedError"
+    except vw.GuestRefusedError as e:
+        assert isinstance(e, vw.LoggedOutError) and e.not_charged
+    assert not vw.GUEST_REFUSAL_PATTERN.search("このリクエストは安全チェックの対象外です。直接生成を開始します。")
+
+
 def test_generation_started_is_status_not_refusal():
     """Log 11/9 16:51: '直接生成を開始します' = Dola bắt đầu tạo — từng bị coi là từ chối, job chết sau 20s."""
     assert vw._is_status_text("このリクエストは安全チェックの対象外です。直接生成を開始します。")
@@ -450,4 +469,4 @@ if __name__ == "__main__":
     test_http_error_is_not_risk_control(); test_blocked_reason_says_one_thing()
     test_prompt_marks_are_scaled_to_duration(); test_parse_credit_need_from_dola_message()
     test_credits_used_is_read_from_start_message(); test_download_failure_keeps_job_with_cdn_link()
-    test_submit_timeout_never_resubmits(); test_uncertain_submit_only_resends_when_probe_is_certain(); print("OK")
+    test_submit_timeout_never_resubmits(); test_uncertain_submit_only_resends_when_probe_is_certain(); test_guest_session_is_detected_not_credit(); print("OK")

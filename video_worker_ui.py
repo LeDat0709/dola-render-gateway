@@ -17,7 +17,7 @@ from patchright.async_api import async_playwright
 from gap import find_gap_x
 
 import config
-from browser import (RegionBlockedError, cookie_value, launch_account_context, page_region_blocked,
+from browser import (PASSPORT_INFO_PATH, RegionBlockedError, cookie_value, passport_dead, launch_account_context, page_region_blocked,
                      pin_session_cookies, region_blocked_message)
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
 from video_worker import (POLL_JS, SUBMIT_JS, DownloadError, RateLimitedError, RiskControlError, SubmitDelivered,
@@ -156,6 +156,13 @@ _LOGOUT_TEXTS = (
     "Continue with Google", "Tiếp tục với Google", "Log In to Unlock",
     "Đăng nhập để", "Log in to", "登录以",
 )
+# Câu Dola trả cho nick KHÁCH (cookie chết) — phải bắt TRƯỚC CREDIT_FAIL_PATTERN: 「生成できません」 trong câu này
+# từng bị hiểu là "hết điểm" → ghi nick 0 credit oan, còn cookie chết thì không ai biết.
+GUEST_REFUSAL_PATTERN = re.compile(
+    r"ゲスト.{0,20}(生成|作成|利用).{0,10}(できません|できない)|ログインしてください|请先登录|請先登入|"
+    r"guests? (can ?not|can't|are not allowed)|log ?in to (start|create|generate)", re.IGNORECASE)
+_GUEST_MSG = ("Cookie hết hạn — Dola coi nick là KHÁCH, không tạo được video (không trừ lượt). "
+              "Đăng nhập lại nick này.")
 _LOGOUT_MSG = ("Bị đăng xuất khỏi Dola giữa chừng (mất phiên đăng nhập) — cookie tài khoản đã chết. "
                "Hãy đăng nhập lại / thêm cookie mới cho tài khoản này.")
 
@@ -204,6 +211,12 @@ class LoggedOutError(Exception):
     """Dola invalidated the session server-side; account needs re-login."""
 
 
+class GuestRefusedError(LoggedOutError):
+    """Dola đáp 「ゲストは動画と画像を生成できません」: cookie chết, Dola coi nick là KHÁCH. Khách không có credit nên
+    CHẮC CHẮN không bị trừ lượt dù đã có conversation_id → pool được xoay sang nick khác (not_charged)."""
+    not_charged = True
+
+
 class ContentPolicyViolationError(Exception):
     """Prompt or reference image violated Dola content policy."""
 
@@ -224,12 +237,31 @@ class TransientDolaError(Exception):
     """Dola returned a transient/system error asking to retry (not an account fault)."""
 
 
-async def _is_logged_out(page, context) -> bool:
+PASSPORT_JS = """
+async (path) => {
+  try {
+    const r = await fetch(path, {credentials: "include", headers: {Accept: "application/json"}});
+    return await r.json();
+  } catch (e) { return null; }
+}
+"""
+
+
+async def _is_logged_out(page, context, deep: bool = False) -> bool:
     """True when Dola dropped the session (server-side logout, dead cookie, login wall).
 
     A stale sessionid can survive a server-side logout, so cookie presence alone is not
     proof; the ?from_logout redirect, a vanished sessionid, or login CTA text all count.
+    deep=True (TRƯỚC khi gửi): hỏi thêm passport ngay trong trang — trang KHÁCH không có chữ "đăng nhập để…"
+    nào khớp _LOGOUT_TEXTS (ảnh 15/09 chỉ có nút "Đăng nhập") nên từng lọt tới lúc gửi prompt.
     """
+    if deep:
+        try:
+            data = await asyncio.wait_for(page.evaluate(PASSPORT_JS, PASSPORT_INFO_PATH), timeout=10)
+            if passport_dead(data):
+                return True
+        except Exception:
+            pass
     try:
         if "from_logout" in (page.url or ""):
             return True
@@ -1128,7 +1160,7 @@ async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, dura
                 await page.wait_for_timeout(1000)
                 if "device_id" in captured:
                     break
-            if await _is_logged_out(page, context):
+            if await _is_logged_out(page, context, deep=True):
                 raise LoggedOutError(_LOGOUT_MSG)
             cookies = await context.cookies("https://www.dola.com")
             ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
@@ -1299,6 +1331,8 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
                 if balance is not None and on_balance:
                     on_balance(balance, source)
                 credits_used = _credits_used(text) or credits_used
+                if GUEST_REFUSAL_PATTERN.search(text):
+                    raise GuestRefusedError(f"{_GUEST_MSG}\n↳ Dola: {text[:140]}")
                 if CONTENT_POLICY_PATTERN.search(text) and not _is_duration_capped(text):
                     raise ContentPolicyViolationError(
                         "Dola chặn nội dung (bạo lực / vi phạm chính sách) — đổi prompt nhẹ nhàng hơn.\n↳ Dola: " + text[:170])
@@ -1406,6 +1440,8 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             if balance is not None and on_balance:
                 on_balance(balance, source)
             credits_used = _credits_used(text) or credits_used
+            if GUEST_REFUSAL_PATTERN.search(text):
+                raise GuestRefusedError(f"{_GUEST_MSG}\n↳ Dola: {text[:140]}")
             if CONTENT_POLICY_PATTERN.search(text) and not _is_duration_capped(text):
                 raise ContentPolicyViolationError(
                     "Dola chặn nội dung (bạo lực / vi phạm chính sách) — đổi prompt nhẹ nhàng hơn."
@@ -1713,7 +1749,7 @@ async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duratio
             page = context.pages[0] if context.pages else await context.new_page()
             await _goto_dola(page, "https://www.dola.com/chat", account=account)
             await page.wait_for_timeout(5000)
-            if await _is_logged_out(page, context):
+            if await _is_logged_out(page, context, deep=True):
                 raise LoggedOutError(_LOGOUT_MSG)
             cookies = await context.cookies("https://www.dola.com")
             ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
