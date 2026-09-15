@@ -479,11 +479,23 @@ class BrowserPool:
         cb = a["credit_balance"]
         if cb is not None and cb < need:
             return (f"Nick '{a['name']}' còn {cb} credit, video {duration}s ({model}) cần {need} "
-                    f"— chọn nick khác hoặc giảm thời lượng")
+                    f"— {self._credit_advice(model, duration)}")
         if cb is None and a["used_today"] + need > DAILY_LIMIT:
             return (f"Nick '{a['name']}' đã dùng {a['used_today']}/{DAILY_LIMIT} credit hôm nay, video {duration}s "
-                    f"({model}) cần {need} — chọn nick khác hoặc giảm thời lượng")
+                    f"({model}) cần {need} — {self._credit_advice(model, duration)}")
         return None
+
+    @staticmethod
+    def _credit_advice(model, duration) -> str:
+        """Lời khuyên khi thiếu lượt. Seedance 2.5: 30s = 2 lượt (Khan, RẺ NHẤT), 10s/15s = 4 lượt →
+        video ngắn thiếu lượt phải TĂNG lên 30s chứ không phải giảm (bug 15/09: tool khuyên 'giảm giây')."""
+        try:
+            d = int(duration or 0)
+        except (TypeError, ValueError):
+            d = 0
+        if "2.5" in str(model or "") and d < 30:
+            return "để 30s (rẻ nhất, chỉ 2 lượt) hoặc đổi nick khác"
+        return "đổi nick khác (nick này hết lượt hôm nay)"
 
     def _settle(self, account: str, result, model, duration, balance_seen: bool):
         """Video xong: tính lượt, học giá từ câu "N動画クレジットを使用" và trừ credit đã biết của nick.
@@ -824,8 +836,12 @@ class BrowserPool:
                         last_err = e
                         continue
                     except CreditError as e:
-                        print(f"[pool] {account} out of quota, rotating: {e}", flush=True)
-                        self._claim(account)
+                        # Dola từ chối vì hết điểm/quota → KHÔNG trừ credit (không có video), nhưng phải
+                        # ghi nick về 0 credit: nếu không, cột nick cứ hiện "còn 4" (lấy từ trần ngày) rồi
+                        # lần sau lại chọn đúng nick này → lỗi lại → đốt lượt oan (ảnh 15/09: còn 4 mà báo
+                        # hết điểm). cb=0 → không schedulable nữa, UI hiện "còn 0", tự mở lại sau reset 0h JST.
+                        print(f"[pool] {account} out of quota, mark 0 credit + rotating: {e}", flush=True)
+                        self._set_credit_balance(account, 0, str(e))
                         last_err = e
                         continue
                     except TransientDolaError as e:
