@@ -72,6 +72,7 @@ class TaskStore:
                 ("submitted_at", "REAL"),
                 ("attempts", "INTEGER DEFAULT 0"),
                 ("opened_at", "REAL"),   # lúc job có slot Chrome + nick, bắt đầu mở nick (trước đó = đang chờ lượt)
+                ("client_id", "TEXT"),   # khóa idempotency của client (Studio): gửi lại cùng khóa → trả job cũ, không tạo trùng
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
@@ -156,6 +157,7 @@ class TaskStore:
         daily_limit=0,
         concurrency_limit=0,
         max_pending=0,
+        client_id=None,
     ):
         now = time.time()
         with _LOCK:
@@ -180,11 +182,12 @@ class TaskStore:
                     )
             self._conn.execute(
                 "INSERT INTO tasks ("
-                "id,model,prompt,ratio,duration,status,account,created_at,updated_at,"
+                "client_id,id,model,prompt,ratio,duration,status,account,created_at,updated_at,"
                 "conversation_id,deadline_at,last_poll_at,failure_code,reference_images,"
                 "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit"
-                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?)",
+                ") VALUES (?,?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?)",
                 (
+                    client_id,
                     task_id,
                     model,
                     prompt,
@@ -274,6 +277,22 @@ class TaskStore:
             return self._conn.execute(
                 "SELECT COUNT(*) FROM tasks WHERE status IN ('queued','processing')"
             ).fetchone()[0]
+
+    def live_by_client_id(self, client_id: str, api_key_hash: str | None) -> dict | None:
+        """Job mang khóa idempotency của client (Studio gửi lại sau Dừng / fetch treo / mở lại app) → server trả
+        job CŨ thay vì tạo job mới. Dola trừ lượt lúc gửi nên tạo trùng = mất lượt 2 lần.
+
+        Trả job mới nhất mang khóa BẤT KỂ trạng thái, kể cả đã xong/lỗi: client có thể đã ngừng theo dõi trước khi
+        job kết thúc (Dừng, đóng app, mất mạng) — lúc đó nó vẫn giữ khóa, nên lần Chạy sau phải được nối lại để
+        THẤY kết quả thật, không phải lặng lẽ gửi cái thứ hai. Client xoá khóa khi đã nhìn thấy trạng thái cuối;
+        lần Chạy tiếp theo mang khóa mới = ý định mới, tạo job mới bình thường."""
+        with _LOCK:
+            row = self._conn.execute(
+                "SELECT * FROM tasks WHERE client_id=? AND api_key_hash IS ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (client_id, api_key_hash),
+            ).fetchone()
+        return dict(row) if row else None
 
     def recent_tasks(self, limit: int = 50, api_key_hash: str | None = None) -> list:
         with _LOCK:

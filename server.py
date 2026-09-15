@@ -238,6 +238,8 @@ class VideoGenRequest(BaseModel):
     reference_images: list[str] = Field(default_factory=list)
     # Optional: force a specific nick. None = auto-pick/rotate across the pool.
     account: str | None = None
+    # Khóa idempotency (Studio: 1 khóa/nick tới khi job xong). Gửi lại cùng khóa khi job cũ CHƯA xong → trả job cũ.
+    client_id: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
 
 
 class TaskResponse(BaseModel):
@@ -249,6 +251,7 @@ class TaskResponse(BaseModel):
     video_url: str | None = None
     error: str | None = None
     account: str | None = None   # nick THẬT đã chạy job (khác nick thẻ nếu đã xoay nick) → UI hiện "chạy trên nick Y"
+    charged: bool = False        # lệnh ĐÃ tới Dola (submitted_at) → chạy lại là trừ lượt lần 2; UI phải hỏi trước
     proxy_ip: str | None = None       # IP xoay đang gắn cho nick job này (peek cache, không gọi mạng)
     proxy_isp: str | None = None
     proxy_provider: str | None = None  # tmproxy | proxyxoay | "" (tĩnh/nối thẳng)
@@ -475,6 +478,9 @@ async def lifespan(app: FastAPI):
         _spawn(_run_task(
             row["id"], row["model"], row["prompt"], ratio, row["duration"],
             _task_reference_images(row.get("reference_images")), _task_client(row),
+            # Giữ nick đã GHIM qua lần khởi động lại. Chỉ job của Studio mới ghim nick (luôn kèm client_id); job
+            # API/broker không ghim — nick trong hàng là nick pool vừa thử, tái ghim sẽ khoá job vào đúng nick đó.
+            row.get("account") if row.get("client_id") else None,
         ))
     from browser import mask_proxy as _mask, probe_proxy
     print(f"[gateway] proxy chung: {_mask(config.PROXY) or '(không — nối thẳng)'}", flush=True)
@@ -510,6 +516,15 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
     account = req.account.strip() if req.account else None
     if account and account not in pool.accounts:
         raise HTTPException(422, f"Nick '{account}' không tồn tại trong pool")
+    # Cùng khóa mà job cũ chưa xong (client Dừng→Chạy, POST treo rồi gửi lại, mở lại app) → trả job cũ, KHÔNG tạo
+    # job thứ hai: Dola trừ lượt lúc gửi, tạo trùng = mất lượt 2 lần. Job cũ đã xong/lỗi → tạo mới bình thường.
+    if req.client_id:
+        live = store.live_by_client_id(req.client_id, client["api_key_hash"])
+        if live:
+            return TaskResponse(id=live["id"], status=live["status"], model=live["model"],
+                                prompt=live["prompt"], account=live.get("account"),
+                                video_url=live.get("video_url"), error=live.get("error"),
+                                charged=bool(live.get("submitted_at")))
     # Queue task when accounts are busy; reject only when pool is fully exhausted.
     if not pool.available and pool.all_accounts_limited:
         raise HTTPException(429, "Rate limited: All accounts reached Dola daily video limit, please try again tomorrow")
@@ -526,12 +541,14 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
             req.prompt,
             ratio or "default",
             duration,
+            account=account,   # nick đã ghim ghi ngay từ lúc xếp hàng (trước: NULL tới khi mở nick → UI/khôi phục không thấy)
             reference_images=json.dumps(reference_images, ensure_ascii=False),
             api_key_hash=client["api_key_hash"],
             api_key_name=client["api_key_name"],
             daily_limit=client["daily_limit"],
             concurrency_limit=client["concurrency_limit"],
             max_pending=config.MAX_PENDING_TASKS,
+            client_id=req.client_id,
         )
     except TaskQuotaExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
@@ -553,6 +570,7 @@ async def get_video(task_id: str, authorization: str | None = Header(default=Non
     return TaskResponse(
         id=row["id"], status=row["status"], stage=_task_stage(row), model=row["model"],
         prompt=row["prompt"], video_url=row["video_url"], error=row["error"], account=row.get("account"),
+        charged=bool(row.get("submitted_at")),
         proxy_ip=px["ip"], proxy_isp=px["isp"], proxy_provider=px["provider"],
         proxy_used=px["used"], proxy_per=px["per"], proxy_fresh=px["fresh"], proxy_kind=px["kind"],
     )

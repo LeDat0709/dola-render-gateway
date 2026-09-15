@@ -42,5 +42,26 @@ def test_requeue_roundtrip():
         assert store.get("t1")["attempts"] == MAX_AUTO_REQUEUE  # lần 2 là lần cuối
 
 
+def test_client_id_dedupe():
+    """Studio gửi lại cùng khóa (Dừng→Chạy, POST treo rồi gửi lại, mở lại app): job cũ CHƯA xong → trả job cũ;
+    đã xong/lỗi → không còn 'sống' → được tạo job mới. Khóa của api key khác không nhìn thấy nhau."""
+    with tempfile.TemporaryDirectory() as d:
+        store = TaskStore(str(Path(d) / "t.db"))
+        store.create("t1", "seedance-2.5", "p", "9:16", 30, account="n1", api_key_hash="k1", client_id="key-n1")
+        assert store.live_by_client_id("key-n1", "k1")["id"] == "t1"          # queued → sống
+        store.update("t1", status="processing", started_at=time.time())
+        assert store.live_by_client_id("key-n1", "k1")["id"] == "t1"          # processing → vẫn sống
+        assert store.live_by_client_id("key-n1", "k2") is None               # api key khác → không thấy
+        assert store.live_by_client_id("key-n2", "k1") is None               # khóa khác → không thấy
+        # Đã kết thúc mà client CHƯA thấy (Dừng/đóng app/mất mạng) → vẫn trả job cũ để client nối lại xem kết quả,
+        # KHÔNG lặng lẽ tạo job thứ hai (job trước có thể đã gửi Dola = đã trừ lượt).
+        store.update("t1", status="failed", finished_at=time.time(), submitted_at=time.time())
+        assert store.live_by_client_id("key-n1", "k1")["id"] == "t1"
+        # Client xoá khóa khi đã thấy trạng thái cuối → lần Chạy sau mang khóa MỚI = ý định mới → job mới.
+        store.create("t2", "seedance-2.5", "p", "9:16", 30, account="n1", api_key_hash="k1", client_id="key-n1-moi")
+        assert store.live_by_client_id("key-n1-moi", "k1")["id"] == "t2"
+        assert store.get("t2")["account"] == "n1"                            # nick ghim ghi ngay lúc xếp hàng
+
+
 if __name__ == "__main__":
-    test_decision(); test_stage_shown_in_ui(); test_requeue_roundtrip(); print("OK")
+    test_decision(); test_stage_shown_in_ui(); test_requeue_roundtrip(); test_client_id_dedupe(); print("OK")

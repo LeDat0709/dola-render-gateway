@@ -30,33 +30,43 @@ export async function report() {
 // tạo row) nên gửi lại không tạo job trùng. Việc trừ lượt xảy ra ở _run_task sau này, không ở bước tạo.
 const SUBMIT_TIMEOUT_MS = 10000;   // 1 lần POST chờ tối đa 10s (tạo job cục bộ luôn xong dưới 1s)
 const SUBMIT_RETRIES = 6;          // ~ vài chục giây; gateway bật lại thường < 15s
-export async function submitJob(prompt, body) {
+// Mọi fetch tới gateway đều có HẠN + nhận `signal` ngoài (nút Dừng / chạy lại nick) để hủy ngay. fetch treo vô hạn
+// (15/09: nick bị coi "đang chạy dở" mãi, lệnh mới bị nuốt, thẻ đứng "chờ server nhận job" hàng phút) là gốc rễ
+// của hầu hết cảnh "treo" phía client. Hết hạn → AbortError (fmtError → "Chưa nối được server").
+export function fetchT(url, opts = {}, ms = 20000, signal = null) {
+  const ac = new AbortController();
+  const relay = () => ac.abort();
+  if (signal) { if (signal.aborted) ac.abort(); else signal.addEventListener("abort", relay, { once: true }); }
+  const t = setTimeout(() => ac.abort(), ms);
+  return fetch(url, { ...opts, signal: ac.signal }).finally(() => { clearTimeout(t); signal?.removeEventListener("abort", relay); });
+}
+export const isAbort = (e) => e?.name === "AbortError";
+export async function submitJob(prompt, body, signal = null) {
   let lastErr;
   for (let i = 0; i < SUBMIT_RETRIES; i++) {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), SUBMIT_TIMEOUT_MS);
     try {
-      const r = await fetch(cfg.base + "/v1/videos/generations", {
+      const r = await fetchT(cfg.base + "/v1/videos/generations", {
         method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ ...body, prompt }), signal: ac.signal,
-      });
+        body: JSON.stringify({ ...body, prompt }),
+      }, SUBMIT_TIMEOUT_MS, signal);
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.detail || "HTTP " + r.status);   // server ĐÃ trả lời (hết điểm, nick lỗi…) → ném luôn, không gửi lại
-      return j.id;
+      return j;   // cả prompt/status/charged — client nhận ra khi server trả job CŨ (trùng khóa) thay vì tạo mới
     } catch (e) {
+      if (signal?.aborted) throw e;   // người dùng Dừng / chạy lại nick → thôi, không gửi lại
       // Chỉ gửi lại khi treo/không nối được (gateway đang bật lại). Lỗi có phản hồi HTTP = server sống nhưng từ chối → ném.
-      const down = e?.name === "AbortError" || e?.name === "TypeError" || /failed to fetch|load failed|networkerror|econnrefused/i.test(e?.message || "");
+      const down = isAbort(e) || e?.name === "TypeError" || /failed to fetch|load failed|networkerror|econnrefused/i.test(e?.message || "");
       if (!down) throw e;
       lastErr = e;
       if (i < SUBMIT_RETRIES - 1) await new Promise((res) => setTimeout(res, 2000));   // chờ gateway lên rồi gửi lại
-    } finally { clearTimeout(t); }
+    }
   }
   throw new Error("Chưa nối được server sau nhiều lần thử (gateway đang bật lại?) — chờ vài giây rồi chạy lại. " + (lastErr?.message || ""));
 }
 // Ném Error kèm .status khi server trả lỗi (404 = job không còn) — trước đây trả JSON lỗi về như
 // job bình thường, status undefined → dòng Studio quay vòng "đang chạy" vô tận.
-export async function pollJob(id) {
-  const r = await fetch(cfg.base + "/v1/videos/" + id, { headers: authHeaders(), cache: "no-store" });
+export async function pollJob(id, signal = null) {
+  const r = await fetchT(cfg.base + "/v1/videos/" + id, { headers: authHeaders(), cache: "no-store" }, 15000, signal);
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(j.detail || "HTTP " + r.status); e.status = r.status; throw e; }
   return j;
@@ -211,9 +221,10 @@ export async function adminAccounts() {
 // Ném Error kèm .status và nguyên văn `detail` của FastAPI (409 = nick đang render…).
 async function adminFetch(name, path, method = "POST") {
   await ensureConfig();
-  const r = await fetch(cfg.base + "/api/admin/accounts/" + encodeURIComponent(name) + path, {
+  // /verify mở Chrome kiểm cookie có thể mất ~1 phút → hạn rộng 120s, nhưng KHÔNG vô hạn.
+  const r = await fetchT(cfg.base + "/api/admin/accounts/" + encodeURIComponent(name) + path, {
     method, headers: adminHeaders(),
-  });
+  }, 120000);
   const text = await r.text();
   if (!r.ok) {
     let detail = text;
@@ -225,13 +236,13 @@ async function adminFetch(name, path, method = "POST") {
   try { return JSON.parse(text); } catch { return { ok: true }; }
 }
 
-export async function patchAccount(name, body) {
+export async function patchAccount(name, body, signal = null) {
   await ensureConfig();
-  const r = await fetch(cfg.base + "/api/admin/accounts/" + encodeURIComponent(name), {
+  const r = await fetchT(cfg.base + "/api/admin/accounts/" + encodeURIComponent(name), {
     method: "PATCH",
     headers: { "Content-Type": "application/json", ...adminHeaders() },
     body: JSON.stringify(body),
-  });
+  }, 20000, signal);
   if (!r.ok) {
     const text = await r.text(); let detail = text;
     try { detail = JSON.parse(text).detail || text; } catch { /* không phải JSON */ }
@@ -288,7 +299,7 @@ export const proxyHost = (raw) => {
 export async function recentTasks(limit = 200) {
   await ensureConfig();
   try {
-    const r = await fetch(cfg.base + `/api/admin/tasks?limit=${limit}`, { headers: adminHeaders(), cache: "no-store" });
+    const r = await fetchT(cfg.base + `/api/admin/tasks?limit=${limit}`, { headers: adminHeaders(), cache: "no-store" }, 20000);
     if (!r.ok) return [];
     return (await r.json()).tasks || [];
   } catch { return []; }

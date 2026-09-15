@@ -53,7 +53,25 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     toast(msg, /lỗi|✗/i.test(msg) ? "error" : /^✓|Xong|^Đã /.test(msg) ? "success" : "info");
   };
   const [clock, setClock] = useState(0);
-  const inflight = useRef(new Set());
+  // nick → { ctl: AbortController, id: job id | null }. Trước là Set: nick kẹt trong fetch treo (gateway bật lại) bị coi
+  // "đang chạy" mãi → mọi lệnh Chạy sau bị nuốt trong im lặng, thẻ đứng "chờ server nhận job" hàng phút (15/09).
+  const inflight = useRef(new Map());
+  // Khóa idempotency mỗi nick, giữ trong localStorage tới khi job KẾT THÚC (kể cả khi Dừng / đóng app): gửi lại cùng
+  // khóa → server trả job cũ còn sống, không tạo trùng. Chốt chặn trừ lượt 2 lần nằm ở server (live_by_client_id).
+  const KEY = (n) => "dolaJobKey:" + n;
+  const keyMem = useRef(new Map());   // dự phòng khi localStorage bị chặn: khóa vẫn ổn định trong phiên
+  const jobKey = (n) => {
+    let k = keyMem.current.get(n) || null;
+    if (!k) { try { k = localStorage.getItem(KEY(n)); } catch {} }
+    if (!k) { k = globalThis.crypto?.randomUUID?.() || (Math.random().toString(36).slice(2) + Date.now().toString(36)); try { localStorage.setItem(KEY(n), k); } catch {} }
+    keyMem.current.set(n, k);
+    return k;
+  };
+  const clearJobKey = (n) => { keyMem.current.delete(n); try { localStorage.removeItem(KEY(n)); } catch {} };
+  const nickOfKey = (k) => {   // thẻ chủ của một job theo khóa — đúng cả khi server đã XOAY job sang nick khác
+    try { for (let i = 0; i < localStorage.length; i++) { const kk = localStorage.key(i); if (kk?.startsWith("dolaJobKey:") && localStorage.getItem(kk) === k) return kk.slice(11); } } catch {}
+    return null;
+  };
   const [conc, setConc] = useState({ send: "", login: "", gmin: "", gmax: "" });   // gmin/gmax: chờ ngẫu nhiên giữa lần gửi
   // Bỏ qua bước "kiểm tra nick" trước khi chạy (deadNicks): chạy thẳng, nick cookie chết sẽ lỗi lúc gửi rồi tự xoay.
   const [skipVerify, setSkipVerify] = useState(() => { try { return localStorage.getItem("dolaSkipVerify") === "1"; } catch { return false; } });
@@ -66,13 +84,14 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   useEffect(() => {
     (async () => {
       for (const t of await inflightTasks()) {
-        const n = t.account;
+        const n = (t.client_id && nickOfKey(t.client_id)) || t.account;   // theo khóa trước (đúng cả khi đã xoay nick), rồi mới theo nick
         if (!n || inflight.current.has(n)) continue;
-        inflight.current.add(n);
+        const me = { ctl: new AbortController(), id: t.id };
+        inflight.current.set(n, me);
         setRow(n, { prompt: t.prompt || "", phase: "running", stage: t.status === "queued" ? "queued" : "rendering",
                     startedAt: (t.started_at || t.created_at || Date.now() / 1000) * 1000, errorRaw: "", videoUrl: "" });
-        watchJob(n, t.id).catch((e) => setRow(n, { phase: "error", errorRaw: "Không theo dõi được job: " + (e?.message || e) }))
-          .finally(() => inflight.current.delete(n));
+        watchJob(n, t.id, me).catch((e) => { if (inflight.current.get(n) === me) setRow(n, { phase: "error", errorRaw: "Không theo dõi được job: " + (e?.message || e) }); })
+          .finally(() => { if (inflight.current.get(n) === me) inflight.current.delete(n); });
       }
     })();
   }, []);
@@ -120,50 +139,74 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
       const need = cost(s.model, s.dur);
       if (acc.remaining < need) { setRow(n, { phase: "error", errorRaw: `Không đủ điểm cho ${s.model} · ${s.dur}s (cần ${need}, còn ${acc.remaining}) — ${cheaperHint(acc.remaining, health?.credit_cost)}.` }); return false; }
     }
-    if (inflight.current.has(n)) return true;   // đã chạy ở nơi khác, không tính là lỗi
-    inflight.current.add(n);
+    const cur = inflight.current.get(n);
+    if (cur) {   // nick đang có lượt chạy chưa xong → KHÔNG tạo lượt thứ hai (tránh trừ lượt 2 lần). Mọi fetch đều có hạn
+                 // (fetchT) nên lượt cũ không thể kẹt vô hạn; chỉ nút Dừng mới hủy. Khóa client_id là lưới thứ hai ở server.
+      setRow(n, { phase: "running" });
+      setGen(`${n}: ${cur.id ? "đang chạy dở từ trước — theo dõi tiếp" : "đang gửi — chờ server nhận"}, không gửi lại.`);   // thẻ đang chạy không hiện status → báo ở dòng chung
+      return true;
+    }
+    const me = { ctl: new AbortController(), id: null };
+    inflight.current.set(n, me);
+    const mine = () => inflight.current.get(n) === me;   // bị Dừng / chạy lại đè lên → lần này im lặng rút lui
     setRow(n, { prompt, phase: "running", stage: "queued", startedAt: Date.now(), stageAt: Date.now(), endedAt: 0, errorRaw: "", videoUrl: "", ranOn: "" });
     try {
       // Người dùng đã chọn đích danh nick này thì "tạm ngưng" không còn là lý do chặn: mở lại giúp rồi
       // gửi luôn (server từ chối job vào nick tạm ngưng). Trước đây thẻ chỉ báo "bấm Bật lịch tất cả rồi chạy lại".
       if (acc && accStateOf(acc) === "off") {
         setRow(n, { status: "đang mở lại nick tạm ngưng…" });
-        await patchAccount(n, { scheduling: true });
+        await patchAccount(n, { scheduling: true }, me.ctl.signal);
         onRefresh();
       }
-      const id = await submitJob(prompt, { model: s.model, duration: parseInt(s.dur, 10), ratio: s.ratio, account: n });
-      return await watchJob(n, id);
+      // client_id: server thấy job CHƯA xong cùng khóa (Dừng→Chạy, POST treo rồi gửi lại, mở lại app) → trả job cũ.
+      const j = await submitJob(prompt, { model: s.model, duration: parseInt(s.dur, 10), ratio: s.ratio, account: n, client_id: jobKey(n) }, me.ctl.signal);
+      me.id = j.id;
+      if (j.prompt && j.prompt !== prompt) {   // server trả job CŨ cùng khóa (Dừng → sửa prompt → Chạy): nói rõ, đừng để tưởng prompt mới đã đi
+        setRow(n, { prompt: j.prompt });
+        setGen(`${n}: bám lại job đang dở (prompt cũ) — prompt mới CHƯA gửi; chờ job xong rồi chạy lại.`);
+      }
+      return await watchJob(n, j.id, me);
     } catch (e) {
+      if (e?.name === "AbortError" && stop.current) return true;   // người dùng Dừng (stopAll đã sơn thẻ + gỡ Map) ≠ lỗi
+      if (!mine()) return false;                 // lần chạy mới đã sơn thẻ, đừng đè lỗi cũ lên
+      if (e?.name === "AbortError") {            // quá hạn (fetchT) → nói rõ thay vì chữ thô của Chromium
+        setRow(n, { phase: "error", errorRaw: "Server không trả lời kịp (quá hạn) — chờ vài giây rồi chạy lại." }); return false;
+      }
       const msg = e?.message || String(e);
       setRow(n, { phase: "error", errorRaw: msg });
       if (/không tồn tại/i.test(msg)) onRefresh();   // bảng đang cũ → nạp lại danh sách nick
       return false;
     }
-    finally { inflight.current.delete(n); }
+    finally { if (mine()) inflight.current.delete(n); }
   }
   // Theo dõi một job đã có id — dùng cho cả job vừa gửi và job đang chạy dở từ lần mở app trước.
-  async function watchJob(n, id) {
+  async function watchJob(n, id, me) {
     let stage = "queued", fails = 0, pip = "";
+    const mine = () => !me || inflight.current.get(n) === me;   // bị Dừng / chạy lại đè lên → rút lui, không sơn thẻ nữa
     while (true) {
       await new Promise((r) => setTimeout(r, 3000));
+      if (!mine()) return true;
       if (stop.current) { setRow(n, { phase: "idle", status: "đã dừng theo dõi" }); return true; }
       let pj;
-      try { pj = await pollJob(id); fails = 0; }
+      try { pj = await pollJob(id, me?.ctl.signal); fails = 0; }
       catch (e) {
+        if (!mine()) return true;
         // Server tắt / khởi động lại giữa chừng: job vẫn nằm trong tasks.db, chờ server lên rồi hỏi tiếp.
         // 404 = server không còn job này (đổi server / DB mới) → báo lỗi thay vì quay vòng vô tận.
         if (e?.status === 404 || ++fails >= 20) {
-          setRow(n, { phase: "error", errorRaw: e?.status === 404 ? "Server không còn job này (đã đổi server hoặc xoá dữ liệu?)" : "Mất kết nối server quá 1 phút: " + (e?.message || e) });
+          if (e?.status === 404) clearJobKey(n);   // job không còn → khóa cũ vô nghĩa, lần sau tạo mới
+          setRow(n, { phase: "error", errorRaw: e?.status === 404 ? "Server không còn job này (đã đổi server hoặc xoá dữ liệu?)" : "Mất kết nối server (nhiều lần liên tiếp): " + (e?.message || e) });
           return false;
         }
         setRow(n, { status: `chờ server trả lời (${fails})` });
         continue;
       }
+      if (!mine()) return true;
       const pk = [pj.proxy_ip, pj.proxy_provider, pj.proxy_used, pj.proxy_per, pj.proxy_fresh, pj.proxy_kind].join("|");   // IP + lượt + NCC + loại → cột Proxy
       if (pk !== pip) { pip = pk; setRow(n, { proxyIp: pj.proxy_ip || "", proxyIsp: pj.proxy_isp || "", proxyProvider: pj.proxy_provider || "", proxyUsed: pj.proxy_used, proxyPer: pj.proxy_per, proxyFresh: pj.proxy_fresh, proxyKind: pj.proxy_kind || "" }); }
       if (pj.account && pj.account !== n) setRow(n, { ranOn: pj.account });   // job đã XOAY sang nick khác → hiện nick thật
-      if (pj.status === "completed") { setRow(n, { phase: "done", stage: "done", videoUrl: pj.video_url, endedAt: Date.now() }); api.saveVideo?.(pj.video_url); return true; }
-      if (pj.status === "failed") { setRow(n, { phase: "error", errorRaw: pj.error || "?", endedAt: Date.now() }); return false; }
+      if (pj.status === "completed") { clearJobKey(n); setRow(n, { phase: "done", stage: "done", videoUrl: pj.video_url, endedAt: Date.now() }); api.saveVideo?.(pj.video_url); return true; }
+      if (pj.status === "failed") { clearJobKey(n); setRow(n, { phase: "error", errorRaw: pj.error || "?", endedAt: Date.now(), charged: !!pj.charged }); return false; }   // charged: lệnh đã tới Dola → chạy lại là trừ lượt lần 2
       if (pj.stage && pj.stage !== stage) { stage = pj.stage; setRow(n, { stage, stageAt: Date.now() }); }
     }
   }
@@ -188,12 +231,19 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     // Phản hồi ngay trên từng thẻ: trước đây bấm Chạy là bảng đứng im tới 12s (chờ verify).
     // Chỉ kiểm tra nick CHƯA được xác nhận gần đây: nick Dola vừa nhận lệnh (< 60 phút) chắc chắn cookie sống → chạy
     // luôn. Bật "Bỏ qua kiểm tra nick" thì không kiểm nick nào (cookie chết sẽ lỗi lúc gửi rồi tự xoay).
-    const toCheck = skipVerify ? [] : ns.filter((n) => cookieInfo(accounts.find((x) => x.account === n)).st !== "fresh");
-    ns.forEach((n) => setRow(n, { phase: "running", stage: toCheck.includes(n) ? "checking" : "queued", startedAt: Date.now(), stageAt: Date.now(), endedAt: 0, errorRaw: "", videoUrl: "" }));
+    // Nick đang có lượt chạy chưa xong: giữ nguyên thẻ, không kiểm cookie, không đưa vào lượt này (runOne cũng từ chối tạo lượt 2).
+    const running = ns.filter((n) => inflight.current.has(n));
+    // Nick lỗi mà lệnh ĐÃ tới Dola (charged = đã trừ lượt): không tự chạy lại trong lô — muốn thật thì bấm ▶ từng thẻ (có hỏi).
+    const chargedErr = ns.filter((n) => !running.includes(n) && rows[n]?.phase === "error" && rows[n]?.charged);
+    const hold = (n) => running.includes(n) || chargedErr.includes(n);
+    const toCheck = skipVerify ? [] : ns.filter((n) => !hold(n) && cookieInfo(accounts.find((x) => x.account === n)).st !== "fresh");
+    ns.forEach((n) => { if (hold(n)) return; setRow(n, { phase: "running", stage: toCheck.includes(n) ? "checking" : "queued", startedAt: Date.now(), stageAt: Date.now(), endedAt: 0, errorRaw: "", videoUrl: "" }); });
     if (toCheck.length) setGen(`Kiểm tra cookie ${toCheck.length} nick` + (ns.length > toCheck.length ? ` (bỏ qua ${ns.length - toCheck.length} nick vừa chạy OK)` : "") + "…");
     const dead = toCheck.length ? await deadNicks(toCheck) : [];
+    if (stop.current) { ns.forEach((n) => setRow(n, { phase: "idle", status: "đã dừng" })); setGen("Đã dừng trước khi gửi."); return; }   // Dừng lúc đang kiểm cookie
     dead.forEach((n) => setRow(n, { phase: "error", errorRaw: "Cookie hết hạn — đăng nhập lại nick này rồi chạy lại." }));
     const blocked = ns.filter((n) => {
+      if (hold(n)) return false;   // đang chạy dở / đã trừ lượt: giữ nguyên thẻ, không sơn "Lỗi" đè lên
       const a = accounts.find((x) => x.account === n);
       const st = a ? accStateOf(a) : "";
       return a && !canRun(a) && st !== "busy" && st !== "off";   // busy = đang chạy; off = runOne tự bật lịch
@@ -205,15 +255,19 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
                  || "nick chưa chạy được";
       setRow(n, { phase: "error", errorRaw: why });
     });
-    const run = ns.filter((n) => !dead.includes(n) && !blocked.includes(n));
+    const run = ns.filter((n) => !dead.includes(n) && !blocked.includes(n) && !hold(n));
+    const skipped = [dead.length ? `${dead.length} cookie chết` : "", blocked.length ? `${blocked.length} nghỉ/hết lượt` : "",
+                     running.length ? `${running.length} đang chạy dở` : "", chargedErr.length ? `${chargedErr.length} đã trừ lượt (bấm ▶ từng thẻ nếu muốn chạy lại)` : ""].filter(Boolean).join(" · ");
     if (!run.length) {
-      setGen(`Không nick nào chạy được: ${dead.length} cookie chết · ${blocked.length} nghỉ/hết lượt.`);
+      setGen(`Không nick nào chạy được: ${skipped || "0 nick được chọn"}.`);
       return;
     }
-    const skipped = [dead.length ? `${dead.length} cookie chết` : "", blocked.length ? `${blocked.length} nghỉ/hết lượt` : ""].filter(Boolean).join(" · ");
     setGen(`Đang chạy ${run.length} nick…` + (skipped ? ` (bỏ ${skipped})` : ""));
-    const res = await Promise.all(run.map(runOne));   // runOne trả true=ok / false=lỗi
+    // KHÔNG `run.map(runOne)`: map truyền (nick, CHỈ SỐ, mảng) → chỉ số thành promptOverride → nick[0] chạy nhầm dòng đầu
+    // khung Prompt, nick[1..] ném TypeError trước khi gửi → chỉ 1 job đi, các thẻ còn lại đứng "Xếp hàng" mãi (fa85bf5, 15/09).
+    const res = await Promise.all(run.map((n) => runOne(n)));   // runOne trả true=ok / false=lỗi
     const bad = run.filter((_, i) => res[i] === false);
+    if (stop.current) { setGen("Đã dừng."); return; }   // người dùng Dừng giữa chừng: không tổng kết "Lỗi", không thông báo desktop
     const summary = bad.length ? `Xong ${run.length - bad.length}/${run.length} nick. Lỗi: ${bad.join(", ")}.` : `Xong ${run.length} nick.`;
     setGen(summary);
     api.notify?.("Dola Studio — chạy xong", summary);   // thông báo desktop (tiện để máy chạy đêm)
@@ -263,8 +317,16 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     return `Không nick nào đủ điểm cho ${def.model} · ${def.dur}s (cần ${needForDur}). ${live.length} nick sẵn sàng còn tối đa ${best} điểm → ${cheaperHint(best, health?.credit_cost)}.`;
   };
   const runReady = () => runBatch(readyNicks(), noReadyMsg());
+  // "Chạy lại lỗi" bỏ qua nick mà lệnh ĐÃ tới Dola (charged): chạy lại = trừ lượt lần 2 — runBatch giữ các nick đó lại và nói rõ.
   const retryFailed = () => runBatch(accounts.map((a) => a.account).filter((n) => rows[n]?.phase === "error"), "Không có nick lỗi.");
-  const stopAll = () => { stop.current = true; setGen("Đã dừng theo dõi (video có thể vẫn hoàn tất trên Dola)."); };
+  // Dừng = hủy CẢ fetch đang treo (POST tạo job / PATCH mở nick), không chỉ vòng theo dõi — rồi xoá dấu để Chạy lại
+  // luôn được (runOne tự hỏi server còn job dở không → bám lại, không tạo trùng).
+  const stopAll = () => {
+    stop.current = true;
+    for (const [n, e] of inflight.current) { e.ctl.abort(); setRow(n, { phase: "idle", status: "đã dừng theo dõi" }); }
+    inflight.current.clear();   // vòng theo dõi cũ thấy mình bị gỡ → rút lui im lặng; thẻ đã sơn ở trên
+    setGen("Đã dừng theo dõi (video có thể vẫn hoàn tất trên Dola).");
+  };
   // AUTO-DRAIN "Chạy hết lượt hôm nay": mỗi nick chạy hết SỐ VIDEO còn làm được hôm nay (còn điểm ÷ điểm/video),
   // lấy prompt round-robin từ khung Prompt. Mỗi nick chạy TUẦN TỰ (xong video này mới video kế), các nick CHẠY SONG
   // SONG; server tự giãn nhịp + giới hạn luồng + xoay nick. Mục tiêu: không để lượt/điểm ngày hết hạn oan.
@@ -364,7 +426,10 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     // prompt THẬT đang dựng trên nick này (job xoay từ nick gốc) → cột Prompt hiện đúng, không còn placeholder.
     rotatedPrompt: rotatedInto[a.account] ? (row(rotatedInto[a.account]).prompt || "") : "",
     onSel: (v) => setSel((p) => ({ ...p, [a.account]: v })), onChange: (patch) => setRow(a.account, patch),
-    onRun: () => { stop.current = false; runOne(a.account); }, onRelogin: () => relogin(a.account), onProxy: () => setProxy(a.account), onDelete: () => del(a.account),
+    onRun: () => {
+      if (row(a.account).charged && !window.confirm(`${a.account}: lệnh trước ĐÃ tới Dola (đã trừ lượt) — xem dola.com có video chưa. Chạy lại sẽ trừ lượt lần 2, vẫn chạy?`)) return;
+      stop.current = false; runOne(a.account);
+    }, onRelogin: () => relogin(a.account), onProxy: () => setProxy(a.account), onDelete: () => del(a.account),
     onPlay, onOpen: () => api.openDownloads?.(), onCopy: copyPath, onRemoveWm: removeWm,
     onNew: () => setRow(a.account, { phase: "idle", videoUrl: "", stage: undefined, status: "", errorRaw: "" }),
   });
@@ -499,7 +564,7 @@ const STAGE_LABEL = {
   submitting: "Gửi prompt tới Dola", rendering: "Dola đang dựng video", processing: "Đang tạo", downloading: "Tải video về",
 };
 const STAGE_HINT = {
-  checking: "xem cookie còn sống không", queued: "chờ server nhận job",
+  checking: "xem cookie còn sống không", queued: "gửi tới server → chờ tới lượt gửi (giãn nhịp theo IP)",
   waiting: "slot Chrome đang bận — máy khỏe thì tăng 'Nick gửi cùng lúc'",
   opening: "mở Chrome + vào Dola (treo quá 5 phút tự cắt, xoay nick)", submitting: "chờ Dola nhận lệnh",
 };
