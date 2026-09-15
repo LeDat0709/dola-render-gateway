@@ -628,6 +628,25 @@ def test_nick_failing_on_many_ips_is_quarantined():
             assert not pool._quarantine and "n1" not in pool._fail_ips, "Bỏ nghỉ = xoá cách ly"
 
 
+# ---------- R28: bằng điểm thì nick lâu chưa dùng chạy trước (rải đều, không dồn vài nick) ----------
+def test_equal_credit_prefers_least_recently_used_nick():
+    import time as _t
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp, ("n1", "n2", "n3"))
+        for n in ("n1", "n2", "n3"):
+            pool._ensure_meta(n)
+        for n, ago in (("n1", 10), ("n2", 3600), ("n3", 600)):
+            pool._conn.execute("UPDATE accounts_meta SET last_used_at=? WHERE name=?", (_t.time() - ago, n))
+        pool._conn.commit()
+        gen = _scripted({n: [("ok",)] for n in ("n1", "n2", "n3")})
+        browser_pool.generate_video = gen
+        r = _run(pool.generate_video("p", "9:16", 10))
+        assert r["account"] == "n2", (r, "n2 lâu chưa dùng nhất phải chạy trước")
+        pool._set_credit_balance("n1", 4, "test"); pool._set_credit_balance("n3", 2, "test"); pool._set_credit_balance("n2", 2, "test")
+        r = _run(pool.generate_video("p", "9:16", 10))
+        assert r["account"] == "n1", (r, "nhiều điểm hơn vẫn ưu tiên trước")
+
+
 if __name__ == "__main__":
     import sys
     tests = [(k, v) for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]

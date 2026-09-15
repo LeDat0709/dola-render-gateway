@@ -49,6 +49,12 @@ SPAM_COOLDOWN_SEC = 6 * 3600
 _NOT_NICK_ERRORS = (AttributeError, NameError, TypeError, KeyError, ImportError, AssertionError, ValueError, sqlite3.Error)
 
 
+def _rotation_order(a: dict) -> tuple:
+    """Thứ tự xoay nick: còn NHIỀU điểm trước (người dùng chọn 15/09); bằng điểm thì nick LÂU CHƯA DÙNG trước — rải đều
+    như vòng tròn của đối thủ v1.0.88 (chon_nick _RR + né nick vừa bận), không dồn liên tục vào vài nick đầu danh sách."""
+    return (-(a.get("remaining") or 0), a.get("last_used_at") or 0)
+
+
 class PreSubmitStallError(RuntimeError):
     """Worker treo TRƯỚC khi gửi lệnh tới Dola (chưa trừ credit) → xoay nick an toàn."""
 
@@ -916,7 +922,7 @@ class BrowserPool:
                     soft_pin = True
                     # Xoay ƯU TIÊN nick còn NHIỀU điểm nhất → rải đều, né dồn 1 nick, tận dụng tối đa lượt/ngày.
                     others = sorted((a for a in self.list_accounts() if a["name"] != account),
-                                    key=lambda a: -(a.get("remaining") or 0))
+                                    key=_rotation_order)
                     candidates = [match] + others
                 else:
                     # GHIM CỨNG (toggle TẮT): nick không chạy được → báo lý do thật, không xoay.
@@ -928,7 +934,7 @@ class BrowserPool:
                     candidates = [match]
             else:
                 # Không ghim: cũng ưu tiên nick còn nhiều điểm nhất trước.
-                candidates = sorted(self.list_accounts(), key=lambda a: -(a.get("remaining") or 0))
+                candidates = sorted(self.list_accounts(), key=_rotation_order)
             for a in candidates:
                 if not config.AUTO_RETRY and last_err is not None:
                     raise last_err   # người dùng tắt xoay nick: nick đầu hỏng là dừng, không thử nick khác
