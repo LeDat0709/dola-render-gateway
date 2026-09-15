@@ -360,6 +360,11 @@ async def _download(url: str, account: str, prompt: str = "") -> Path:
                 last = str(e)[:120]
                 fname.unlink(missing_ok=True)
                 print(f"[{account}] tải video ({'proxy' if lane else 'trực tiếp'}) lỗi {attempt}/{DOWNLOAD_RETRIES}: {last}", flush=True)
+                # Proxy CẮT NGẮN tải (ContentLengthError/"not completed") là lỗi cố định của proxy đó, không phải
+                # rớt mạng tạm thời → retry 3× đều fail rồi mới đi thẳng (phí ~15s/video). Sang lane sau NGAY.
+                low = last.lower()
+                if lane is not None and ("not completed" in low or "content length" in low or "not enough data" in low):
+                    break
                 await asyncio.sleep(DOWNLOAD_RETRY_SEC)
         if saved:
             break
