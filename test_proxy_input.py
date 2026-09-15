@@ -25,6 +25,11 @@ def test_check_proxy_input_normalizes_without_network():
         assert browser.check_proxy_input("proxyvn://PV") == \
             "https://proxyxoay.shop/api/get.php?key=PV&nhamang=random&tinhthanh=0"
         assert browser.check_proxy_input(KEY + "\n") == "tmproxy://" + KEY
+        # dạng tool Seedance AI Studio (1 dấu hai chấm) dán sang được, proxy tĩnh không bị ảnh hưởng
+        assert browser.check_proxy_input("proxyvn:PV") == browser.check_proxy_input("proxyvn://PV")
+        assert browser.check_proxy_input("tmproxy:" + KEY) == "tmproxy://" + KEY
+        assert browser.check_proxy_input("proxy.example.com:3128:u:p") == "proxy.example.com:3128:u:p"
+        assert browser.check_proxy_input("1.2.3.4:8080") == "1.2.3.4:8080"
         assert browser.check_proxy_input(" 1.2.3.4:8080 ") == "1.2.3.4:8080"
         assert browser.check_proxy_input("") == ""
         assert browser.check_proxy_input("https://r.vn/get.php?api_key=ABC")   # kho proxy cũng nhận dạng này

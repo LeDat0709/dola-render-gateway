@@ -160,9 +160,13 @@ def normalize_proxy_input(raw: str) -> str:
     → link get.php đầy đủ (xác thực theo IP máy — nhớ whitelist). Nhà bán get.php khác dán NGUYÊN link. Còn lại giữ nguyên."""
     raw = (raw or "").strip()
     low = raw.lower()
+    # Dạng tool Seedance AI Studio: 'proxyvn:KEY' / 'tmproxy:KEY' (1 dấu hai chấm) = '<nhà bán>://KEY' — dán nguyên dòng
+    # từ tool đó sang được. Không đụng proxy tĩnh: 'host:port' có tên host khác hẳn các tiền tố này.
+    if low.startswith("tmproxy:") and not low.startswith("tmproxy://"):
+        return "tmproxy://" + raw[len("tmproxy:"):].strip()
     for pfx in _ROTATING_RESELLERS:
-        if low.startswith(pfx + "://"):
-            rest = raw[len(pfx) + 3:].strip()
+        if low.startswith(pfx + ":"):
+            rest = raw[len(pfx) + (3 if low.startswith(pfx + "://") else 1):].strip()
             if not rest:
                 return raw
             if "?" in rest:                                # proxyvn://KEY?nhamang=viettel&tinhthanh=5

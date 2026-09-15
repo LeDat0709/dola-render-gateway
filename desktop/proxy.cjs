@@ -63,7 +63,7 @@ function isBareTmproxyKey(raw) { return /^[a-f0-9]{32}$/i.test(String(raw || "")
 function isRotating(raw) {
   const s = String(raw || "").trim().toLowerCase();
   // topproxy:// proxyvn:// proxyxoay:// KEY: server tự chuyển thành link get.php (browser.normalize_proxy_input)
-  return isKeyLink(s) || s.startsWith("tmproxy://") || isBareTmproxyKey(s) || /^(topproxy|proxyvn|proxyxoay):\/\/./.test(s);
+  return isKeyLink(s) || s.startsWith("tmproxy://") || isBareTmproxyKey(s) || /^(topproxy|proxyvn|proxyxoay|tmproxy):(\/\/)?./.test(s);
 }
 // KEY TMProxy trần → tmproxy://KEY để lưu/dùng thống nhất (khớp browser.normalize_proxy_input phía Python).
 function normalizeProxyInput(raw) {
