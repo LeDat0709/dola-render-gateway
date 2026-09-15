@@ -269,6 +269,62 @@ def test_uncertain_submit_only_resends_when_probe_is_certain():
         vw._recent_conv_ids = saved
 
 
+def _fake_net(dead_proxy):
+    """aiohttp giả: đi qua `dead_proxy` thì lỗi mạng; đường khác đọc được hội thoại có video. Trả (Session, danh sách proxy đã đi)."""
+    import json as _j
+    used = []
+    video_page = {"downlink_body": {"pull_singe_chain_downlink_body": {"messages": [{"content": _j.dumps([
+        {"block_type": 2074, "content": {"creation_block": {"creations": [{"type": 2, "video": {"download_url": "https://x/v.mp4", "video_model": ""}}]}}}])}]}}}
+
+    class Resp:
+        status = 200
+        async def json(self, **_): return video_page
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+
+    class Session:
+        def post(self, *a, proxy=None, **k):
+            used.append(proxy)
+            if proxy == dead_proxy:
+                raise OSError("Cannot connect to host (proxy chết)")
+            return Resp()
+        async def close(self): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+    return Session, used
+
+
+def test_dead_proxy_mid_render_switches_route_not_lose_video():
+    """Đối thủ v1.0.88 "IP đứt giữa lúc chờ dựng → đổi IP rồi dò tiếp". IP proxy của nick chết SAU khi gửi (đã trừ lượt):
+    trước đây quay vòng tới hết giờ rồi báo quá giờ, video mất. Giờ sau POLL_NET_FAILS lỗi liên tiếp đổi đường đọc."""
+    import browser
+    dead = "http://u:p@9.9.9.9:1"
+    saved = (vw.aiohttp.ClientSession, browser.account_proxy_url, vw.config.PROXY)
+    try:
+        browser.account_proxy_url = lambda acc: dead
+        vw.config.PROXY = ""
+        # 1) theo dõi HTTP: đi proxy nick chết 3 lần → chuyển đi thẳng → ra video
+        Session, used = _fake_net(dead)
+        vw.aiohttp.ClientSession = Session
+        out = asyncio.run(vw.poll_conversation_http("acc1", "c=1", "", "", "77", 60, answered=set()))
+        assert out.get("local_path") and used[:vw.POLL_NET_FAILS] == [dead] * vw.POLL_NET_FAILS and used[-1] is None, used
+        # 2) theo dõi TRONG Chrome: mạng trong trang chết → đọc qua HTTP (IP nick lấy lại vẫn chết → đi thẳng) → ra video
+        Session, used = _fake_net(dead)
+        vw.aiohttp.ClientSession = Session
+
+        class Page:
+            url = "https://www.dola.com/chat/77"
+            async def evaluate(self, *a, **k): raise Exception("net::ERR_TUNNEL_CONNECTION_FAILED")
+
+        class Ctx:
+            async def cookies(self, *a): return [{"name": "sessionid", "value": "s"}]
+        out = asyncio.run(vw.poll_conversation("acc1", Page(), Ctx(), "77", timeout=60, answered=set()))
+        assert out.get("local_path") and out["conversation_id"] == "77", out
+        assert used[:vw.POLL_NET_FAILS] == [dead] * vw.POLL_NET_FAILS and used[-1] is None, used
+    finally:
+        vw.aiohttp.ClientSession, browser.account_proxy_url, vw.config.PROXY = saved
+
+
 def test_guest_session_is_detected_not_credit():
     """Ảnh 15/09: cookie chết → Dola coi là KHÁCH. Passport phân biệt được (recent_conv thì không); câu từ chối của
     Dola phải thành GuestRefusedError, KHÔNG phải CreditError (「生成できません」 từng bị hiểu là hết điểm)."""
@@ -469,4 +525,4 @@ if __name__ == "__main__":
     test_http_error_is_not_risk_control(); test_blocked_reason_says_one_thing()
     test_prompt_marks_are_scaled_to_duration(); test_parse_credit_need_from_dola_message()
     test_credits_used_is_read_from_start_message(); test_download_failure_keeps_job_with_cdn_link()
-    test_submit_timeout_never_resubmits(); test_uncertain_submit_only_resends_when_probe_is_certain(); test_guest_session_is_detected_not_credit(); print("OK")
+    test_submit_timeout_never_resubmits(); test_uncertain_submit_only_resends_when_probe_is_certain(); test_guest_session_is_detected_not_credit(); test_dead_proxy_mid_render_switches_route_not_lose_video(); print("OK")

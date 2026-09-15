@@ -1269,6 +1269,60 @@ def _parse_single(data: dict) -> dict:
     return {"texts": texts, "videos": videos, "videoModels": video_models, "images": images}
 
 
+# Lỗi mạng LIÊN TIẾP khi theo dõi → coi như IP proxy chết giữa lúc Dola dựng (đã trừ lượt) → đổi đường đọc hội thoại.
+POLL_NET_FAILS = 3
+
+
+def _single_request(cookie: str, ms_token: str, fp: str, conversation_id: str) -> tuple[dict, dict, dict]:
+    """(headers, params, body) cho /im/chain/single — đọc hội thoại bằng cookie, không cần ký."""
+    headers = {"Content-Type": "application/json; encoding=utf-8", "agw-js-conv": "str",
+               "Accept": "*/*", "cookie": cookie, "Referer": f"https://www.dola.com/chat/{conversation_id}"}
+    params = dict(_SINGLE_PARAMS)
+    if ms_token:
+        params["msToken"] = ms_token
+    if fp:
+        params["fp"] = fp
+    params["web_tab_id"] = str(uuid.uuid4())
+    body = {"cmd": 3100, "uplink_body": {"pull_singe_chain_uplink_body": {
+        "conversation_id": conversation_id, "anchor_index": 9007199254740991,
+        "conversation_type": 3, "direction": 1, "limit": 20, "ext": {},
+        "filter": {"index_list": []}, "evaluate_ab_params": "", "evaluate_common_params": ""}},
+        "sequence_id": str(uuid.uuid4()), "channel": 2, "version": "1"}
+    return headers, params, body
+
+
+async def _fetch_single(session, cookie: str, ms_token: str, fp: str, conversation_id: str, proxy) -> dict | None:
+    """Đọc hội thoại 1 lần qua HTTP (đi `proxy`) → dict như POLL_JS (texts/videos/images/videoModels); lỗi mạng/HTTP → None."""
+    headers, params, body = _single_request(cookie, ms_token, fp, conversation_id)
+    try:
+        async with session.post(_SINGLE_URL, params=params, data=json.dumps(body), headers=headers,
+                                proxy=proxy, timeout=aiohttp.ClientTimeout(total=30)) as r:
+            if r.status != 200:
+                print(f"  Polling http: HTTP {r.status}", flush=True)
+                return None
+            return _parse_single(await r.json(content_type=None))
+    except Exception as e:  # noqa: BLE001
+        print(f"  Polling exception (http): {str(e)[:120]}", flush=True)
+        return None
+
+
+def _next_poll_proxy(account: str, current):
+    """Đường đọc hội thoại kế tiếp khi đường hiện tại lỗi liên tiếp: IP proxy của nick lấy lại (nhà bán có thể đã cấp IP
+    mới) → proxy chung → đi thẳng. Poll chỉ ĐỌC bằng cookie nên không cần đúng IP lúc gửi (đối thủ v1.0.88 cũng
+    "đổi IP rồi dò tiếp"); bỏ cuộc = mất video đã trừ lượt."""
+    from browser import account_proxy_url
+    try:
+        fresh = account_proxy_url(account) or None
+    except Exception:  # noqa: BLE001
+        fresh = None
+    for cand in (fresh, config.PROXY or None, None):
+        if cand != current:
+            shown = re.sub(r"//[^@/]+@", "//***@", cand) if cand else "đi thẳng (không proxy)"
+            print(f"[{account}] theo dõi lỗi mạng {POLL_NET_FAILS} lần liên tiếp → đổi đường đọc hội thoại: {shown}", flush=True)
+            return cand
+    return current
+
+
 async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: str,
                                  conversation_id: str, timeout: int, on_poll=None, on_balance=None,
                                  answered: set | None = None, prompt: str = "") -> dict:
@@ -1279,13 +1333,6 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
     render (up to 30 min for 30s). Duration-confirm prompts can't be answered here (rare, since
     10/15/30 are all supported) — they surface as a clear error.
     """
-    headers = {"Content-Type": "application/json; encoding=utf-8", "agw-js-conv": "str",
-               "Accept": "*/*", "cookie": cookie, "Referer": f"https://www.dola.com/chat/{conversation_id}"}
-    base = dict(_SINGLE_PARAMS)
-    if ms_token:
-        base["msToken"] = ms_token
-    if fp:
-        base["fp"] = fp
     start = time.time()
     last_cb = 0.0
     last_msg = ""
@@ -1301,29 +1348,21 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
         # thấy lỗi proxy sẽ bấm chạy lại = trừ lượt 2 lần. Poll chỉ đọc hội thoại → đi proxy chung/thẳng.
         print(f"[{account}] không lấy được proxy riêng để theo dõi, dùng proxy chung/thẳng: {e}", flush=True)
         poll_proxy = config.PROXY or None
+    net_fails = 0
     async with aiohttp.ClientSession() as session:
         while time.time() - start < timeout:
             await asyncio.sleep(5)
-            body = {"cmd": 3100, "uplink_body": {"pull_singe_chain_uplink_body": {
-                "conversation_id": conversation_id, "anchor_index": 9007199254740991,
-                "conversation_type": 3, "direction": 1, "limit": 20, "ext": {},
-                "filter": {"index_list": []}, "evaluate_ab_params": "", "evaluate_common_params": ""}},
-                "sequence_id": str(uuid.uuid4()), "channel": 2, "version": "1"}
-            params = {**base, "web_tab_id": str(uuid.uuid4())}
-            try:
-                async with session.post(_SINGLE_URL, params=params, data=json.dumps(body), headers=headers,
-                                        proxy=poll_proxy, timeout=aiohttp.ClientTimeout(total=30)) as r:
-                    if r.status != 200:
-                        continue
-                    data = await r.json(content_type=None)
-            except Exception as e:
-                print(f"  Polling exception (http): {e}", flush=True)
+            poll = await _fetch_single(session, cookie, ms_token, fp, conversation_id, poll_proxy)
+            if poll is None:
+                net_fails += 1
+                if net_fails >= POLL_NET_FAILS:
+                    poll_proxy, net_fails = _next_poll_proxy(account, poll_proxy), 0
                 continue
+            net_fails = 0
             now = time.time()
             if on_poll and now - last_cb >= 30:
                 on_poll(now)
                 last_cb = now
-            poll = _parse_single(data)
             for text in poll["texts"]:
                 if _is_own_message(text):
                     continue
@@ -1415,121 +1454,150 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     last_msg = ""            # latest substantive Dola reply (user messages are not text blocks, see POLL_JS)
     stale_msg, stale_n = "", 0
     credits_used = None      # giá Dola báo lúc bắt đầu dựng → pool học giá + trừ credit nick
-    while time.time() - start < timeout:
-        await asyncio.sleep(5)
-        try:
-            poll = await asyncio.wait_for(page.evaluate(
-                POLL_JS, {"conversationId": conversation_id, "msToken": ms_token, "fp": fp}), timeout=30)
-        except Exception as e:
-            if "has been closed" in str(e) or "Target closed" in str(e):
-                raise RuntimeError(
-                    "Trình duyệt của nick bị đóng giữa lúc theo dõi (Chrome tắt/crash) — chạy lại nick này."
-                ) from e
-            print(f"  Polling exception: {e}", flush=True)
-            continue
-        if not poll.get("ok") and await _is_logged_out(page, context):
-            raise LoggedOutError(_LOGOUT_MSG)
-        now = time.time()
-        if on_poll and now - last_callback >= 30:
-            on_poll(now)
-            last_callback = now
-        for text in poll.get("texts", []):
-            if _is_own_message(text):
-                continue
-            balance, _, source = _parse_balance_texts([text])
-            if balance is not None and on_balance:
-                on_balance(balance, source)
-            credits_used = _credits_used(text) or credits_used
-            if GUEST_REFUSAL_PATTERN.search(text):
-                raise GuestRefusedError(f"{_GUEST_MSG}\n↳ Dola: {text[:140]}")
-            if CONTENT_POLICY_PATTERN.search(text) and not _is_duration_capped(text):
-                raise ContentPolicyViolationError(
-                    "Dola chặn nội dung (bạo lực / vi phạm chính sách) — đổi prompt nhẹ nhàng hơn."
-                    f"\n↳ Dola: {text[:170]}")
-            if PORTRAIT_PROTECTION_PATTERN.search(text):
-                raise PortraitProtectionError(
-                    "Dola chặn (bảo vệ chân dung): model này chỉ tạo video với ảnh MẶT CỦA CHÍNH BẠN. "
-                    "Ảnh người khác đôi khi bị chặn (cả 2.0 lẫn 2.5). Không mất lượt — thử lại hoặc đổi ảnh/model."
-                    f"\n↳ Dola: {text[:160]}")
-            if PARAMETER_CHANGE_PATTERN.search(text):
-                raise _param_change_error(text)
-            if DAILY_LIMIT_PATTERN.search(text):
-                raise AccountLimitedError(f"Hết lượt tạo video hôm nay. Dola: {text[:140]}")
-            if PROMPT_UNCLEAR_PATTERN.search(text):
-                raise PromptUnclearError(
-                    "Dola không hiểu prompt — viết mô tả cảnh quay cụ thể (không mất lượt).\n↳ Dola: " + text[:140])
-            if CREDIT_FAIL_PATTERN.search(text):
-                raise CreditError(f"Không đủ điểm/quota. Dola: {text[:120]}")
-            if _is_transient_error(text):
-                raise TransientDolaError(
-                    "Dola gặp lỗi tạm thời (hệ thống Dola báo lỗi, cần thử lại). Tự thử lại / xoay nick."
-                    f"\n↳ Dola: {text[:140]}")
-            key = _answer_key(text)
-            # Dola nói "chỉ tới 15s": job 30s hạ xuống 15s; job 10s GIỮ 10s (không nâng lên 15s)
-            if _is_duration_capped(text) or _is_duration_confirm(text):
-                want_duration = _effective_duration(want_duration, _capped_seconds(text))
-            # Câu có menu A/B thì bỏ qua 2 nhánh 'はい', xuống nhánh menu đáp chữ cái
-            yes_ok = not _lists_options(text)
-            if yes_ok and _is_duration_capped(text) and key not in answered_specs:
-                # Dola chặn thời lượng dài (30s): job >= mức tối đa thì nhận (はい); job ngắn hơn thì nói rõ số giây
-                ans = _capped_reply(text, ratio, want_duration)
-                sent = await _reply_yes(page) if ans == "はい" else await _reply_text(page, ans)
-                if sent:
+    net_fails, alt_fails, alt_proxy, alt_session = 0, 0, None, None   # đường dự phòng khi mạng trong Chrome chết (IP proxy nick chết)
+    try:
+        while time.time() - start < timeout:
+            await asyncio.sleep(5)
+            try:
+                poll = await asyncio.wait_for(page.evaluate(
+                    POLL_JS, {"conversationId": conversation_id, "msToken": ms_token, "fp": fp}), timeout=30)
+            except Exception as e:
+                if "has been closed" in str(e) or "Target closed" in str(e):
+                    raise RuntimeError(
+                        "Trình duyệt của nick bị đóng giữa lúc theo dõi (Chrome tắt/crash) — chạy lại nick này."
+                    ) from e
+                print(f"  Polling exception: {e}", flush=True)
+                poll = {"ok": False}
+            if not poll.get("ok"):
+                try:   # trang treo thì evaluate trong _is_logged_out cũng treo → có trần
+                    logged_out = await asyncio.wait_for(_is_logged_out(page, context), timeout=15)
+                except asyncio.TimeoutError:
+                    logged_out = False
+                if logged_out:
+                    raise LoggedOutError(_LOGOUT_MSG)
+                net_fails += 1
+                if net_fails < POLL_NET_FAILS:
+                    continue
+                # Chrome đi IP proxy của nick mà IP đó chết GIỮA lúc Dola dựng: trước đây quay vòng tới hết giờ rồi báo
+                # quá giờ dù video vẫn ra trên Dola (đã trừ lượt). Đọc hội thoại bằng HTTP qua đường khác, không gửi lại gì.
+                if alt_session is None:
+                    alt_session = aiohttp.ClientSession()
+                    alt_proxy = _next_poll_proxy(account, "__chrome__")
+                fresh = await context.cookies("https://www.dola.com")
+                cookie_header = "; ".join(f"{c['name']}={c['value']}" for c in fresh if c.get("name") and c.get("value"))
+                poll = await _fetch_single(alt_session, cookie_header, ms_token, fp, conversation_id, alt_proxy)
+                if poll is None:
+                    alt_fails += 1
+                    if alt_fails >= POLL_NET_FAILS:
+                        alt_proxy, alt_fails = _next_poll_proxy(account, alt_proxy), 0
+                    continue
+                alt_fails = 0
+            else:
+                net_fails = 0
+            now = time.time()
+            if on_poll and now - last_callback >= 30:
+                on_poll(now)
+                last_callback = now
+            for text in poll.get("texts", []):
+                if _is_own_message(text):
+                    continue
+                balance, _, source = _parse_balance_texts([text])
+                if balance is not None and on_balance:
+                    on_balance(balance, source)
+                credits_used = _credits_used(text) or credits_used
+                if GUEST_REFUSAL_PATTERN.search(text):
+                    raise GuestRefusedError(f"{_GUEST_MSG}\n↳ Dola: {text[:140]}")
+                if CONTENT_POLICY_PATTERN.search(text) and not _is_duration_capped(text):
+                    raise ContentPolicyViolationError(
+                        "Dola chặn nội dung (bạo lực / vi phạm chính sách) — đổi prompt nhẹ nhàng hơn."
+                        f"\n↳ Dola: {text[:170]}")
+                if PORTRAIT_PROTECTION_PATTERN.search(text):
+                    raise PortraitProtectionError(
+                        "Dola chặn (bảo vệ chân dung): model này chỉ tạo video với ảnh MẶT CỦA CHÍNH BẠN. "
+                        "Ảnh người khác đôi khi bị chặn (cả 2.0 lẫn 2.5). Không mất lượt — thử lại hoặc đổi ảnh/model."
+                        f"\n↳ Dola: {text[:160]}")
+                if PARAMETER_CHANGE_PATTERN.search(text):
+                    raise _param_change_error(text)
+                if DAILY_LIMIT_PATTERN.search(text):
+                    raise AccountLimitedError(f"Hết lượt tạo video hôm nay. Dola: {text[:140]}")
+                if PROMPT_UNCLEAR_PATTERN.search(text):
+                    raise PromptUnclearError(
+                        "Dola không hiểu prompt — viết mô tả cảnh quay cụ thể (không mất lượt).\n↳ Dola: " + text[:140])
+                if CREDIT_FAIL_PATTERN.search(text):
+                    raise CreditError(f"Không đủ điểm/quota. Dola: {text[:120]}")
+                if _is_transient_error(text):
+                    raise TransientDolaError(
+                        "Dola gặp lỗi tạm thời (hệ thống Dola báo lỗi, cần thử lại). Tự thử lại / xoay nick."
+                        f"\n↳ Dola: {text[:140]}")
+                key = _answer_key(text)
+                # Dola nói "chỉ tới 15s": job 30s hạ xuống 15s; job 10s GIỮ 10s (không nâng lên 15s)
+                if _is_duration_capped(text) or _is_duration_confirm(text):
+                    want_duration = _effective_duration(want_duration, _capped_seconds(text))
+                # Câu có menu A/B thì bỏ qua 2 nhánh 'はい', xuống nhánh menu đáp chữ cái
+                yes_ok = not _lists_options(text)
+                if yes_ok and _is_duration_capped(text) and key not in answered_specs:
+                    # Dola chặn thời lượng dài (30s): job >= mức tối đa thì nhận (はい); job ngắn hơn thì nói rõ số giây
+                    ans = _capped_reply(text, ratio, want_duration)
+                    sent = await _reply_yes(page) if ans == "はい" else await _reply_text(page, ans)
+                    if sent:
+                        answered_specs.add(key)
+                        stale_msg, stale_n = "", 0
+                        last_answer_at = time.time()
+                        how = "chấp nhận mức tối đa (はい)" if ans == "はい" else f"giữ {want_duration}s, trả lời '{ans}'"
+                        print(f"[{account}] Dola chặn thời lượng dài → {how}: {text[:80]}", flush=True)
+                    continue
+                if yes_ok and _is_duration_confirm(text) and key not in answered_specs:
                     answered_specs.add(key)
-                    stale_msg, stale_n = "", 0
                     last_answer_at = time.time()
-                    how = "chấp nhận mức tối đa (はい)" if ans == "はい" else f"giữ {want_duration}s, trả lời '{ans}'"
-                    print(f"[{account}] Dola chặn thời lượng dài → {how}: {text[:80]}", flush=True)
-                continue
-            if yes_ok and _is_duration_confirm(text) and key not in answered_specs:
-                answered_specs.add(key)
-                last_answer_at = time.time()
-                if await _reply_yes(page):
-                    print(f"[{account}] Dola hỏi thời lượng → tự trả lời Có: {text[:80]}", flush=True)
-                continue
-            if _is_spec_menu(text) and key not in answered_specs and len(answered_specs) < 3:
-                ans = _spec_menu_answer(text, ratio, want_duration)
-                if await _reply_text(page, ans):
-                    answered_specs.add(key)
-                    stale_msg, stale_n = "", 0
-                    last_answer_at = time.time()
-                    print(f"[{account}] Dola hỏi thông số → tự chọn '{ans}': {text[:70]}", flush=True)
-                continue
-            tt = (text or "").strip()
-            if len(tt) > 8 and not _is_status_text(tt) and not tt.startswith("生成された"):
-                last_msg = tt
-        # Dola rendered an IMAGE instead of a video (usually reference-image runs).
-        if poll.get("images") and not poll.get("videos"):
-            image_polls += 1
-            if image_polls >= IMAGE_ONLY_POLLS:
-                extra = f"\n↳ Dola: {last_msg[:140]}" if last_msg else ""
-                raise RuntimeError(
-                    "Dola tạo ẢNH thay vì video (thường do ảnh tham chiếu). "
-                    "Thử lại, hoặc giảm bớt ảnh tham chiếu." + extra)
-        else:
-            image_polls = 0
-        if poll.get("videos"):
-            video_models = poll.get("videoModels", [])
-            url = extract_unwatermarked_url(
-                video_models[0] if video_models else "", poll["videos"][0])
-            print(f"[{account}] Completed! Downloading (unwatermarked priority)...", flush=True)
-            local, dl_err = await _download_or_link(url, account, prompt)
-            return {"video_url": url, "local_path": local, "download_error": dl_err,
-                    "conversation_id": conversation_id, "account": account, "credits_used": credits_used}
-        # A substantive reply that sticks around without a video is Dola's way of saying no.
-        if last_msg and not _is_duration_confirm(last_msg) and not _is_spec_menu(last_msg):
-            stale_msg, stale_n = (stale_msg, stale_n + 1) if last_msg == stale_msg else (last_msg, 1)
-            if stale_n >= STALE_POLLS:
-                raise RuntimeError(f"Dola báo: {last_msg[:200]}")
-        else:
-            stale_msg, stale_n = "", 0
-        now = time.time()
-        quiet_needed = HANDOFF_QUIET_SEC if last_answer_at == start else HANDOFF_QUIET_AFTER_QA_SEC
-        if (handoff_after is not None and now - start >= handoff_after
-                and now - last_answer_at >= quiet_needed):
-            print(f"[{account}] Dola hết hỏi lại → nhả trình duyệt, theo dõi tiếp bằng HTTP", flush=True)
-            return {"handoff": True, "conversation_id": conversation_id, "account": account}
-        print(f"  ...Generating ({int(time.time() - start)}s)", flush=True)
+                    if await _reply_yes(page):
+                        print(f"[{account}] Dola hỏi thời lượng → tự trả lời Có: {text[:80]}", flush=True)
+                    continue
+                if _is_spec_menu(text) and key not in answered_specs and len(answered_specs) < 3:
+                    ans = _spec_menu_answer(text, ratio, want_duration)
+                    if await _reply_text(page, ans):
+                        answered_specs.add(key)
+                        stale_msg, stale_n = "", 0
+                        last_answer_at = time.time()
+                        print(f"[{account}] Dola hỏi thông số → tự chọn '{ans}': {text[:70]}", flush=True)
+                    continue
+                tt = (text or "").strip()
+                if len(tt) > 8 and not _is_status_text(tt) and not tt.startswith("生成された"):
+                    last_msg = tt
+            # Dola rendered an IMAGE instead of a video (usually reference-image runs).
+            if poll.get("images") and not poll.get("videos"):
+                image_polls += 1
+                if image_polls >= IMAGE_ONLY_POLLS:
+                    extra = f"\n↳ Dola: {last_msg[:140]}" if last_msg else ""
+                    raise RuntimeError(
+                        "Dola tạo ẢNH thay vì video (thường do ảnh tham chiếu). "
+                        "Thử lại, hoặc giảm bớt ảnh tham chiếu." + extra)
+            else:
+                image_polls = 0
+            if poll.get("videos"):
+                video_models = poll.get("videoModels", [])
+                url = extract_unwatermarked_url(
+                    video_models[0] if video_models else "", poll["videos"][0])
+                print(f"[{account}] Completed! Downloading (unwatermarked priority)...", flush=True)
+                local, dl_err = await _download_or_link(url, account, prompt)
+                return {"video_url": url, "local_path": local, "download_error": dl_err,
+                        "conversation_id": conversation_id, "account": account, "credits_used": credits_used}
+            # A substantive reply that sticks around without a video is Dola's way of saying no.
+            if last_msg and not _is_duration_confirm(last_msg) and not _is_spec_menu(last_msg):
+                stale_msg, stale_n = (stale_msg, stale_n + 1) if last_msg == stale_msg else (last_msg, 1)
+                if stale_n >= STALE_POLLS:
+                    raise RuntimeError(f"Dola báo: {last_msg[:200]}")
+            else:
+                stale_msg, stale_n = "", 0
+            now = time.time()
+            quiet_needed = HANDOFF_QUIET_SEC if last_answer_at == start else HANDOFF_QUIET_AFTER_QA_SEC
+            if (handoff_after is not None and now - start >= handoff_after
+                    and now - last_answer_at >= quiet_needed):
+                print(f"[{account}] Dola hết hỏi lại → nhả trình duyệt, theo dõi tiếp bằng HTTP", flush=True)
+                return {"handoff": True, "conversation_id": conversation_id, "account": account}
+            print(f"  ...Generating ({int(time.time() - start)}s)", flush=True)
+    finally:
+        if alt_session is not None:
+            await alt_session.close()
     tail = f" Dola báo: {last_msg[:160]}" if last_msg else " (Dola không phản hồi gì thêm)"
     raise TimeoutError(f"Hết {timeout}s chưa ra video (conversation_id={conversation_id})." + tail)
 
