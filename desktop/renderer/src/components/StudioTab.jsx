@@ -168,6 +168,17 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const readyNicks = () => accounts.filter(canRun).map((a) => a.account);
   async function runBatch(ns, empty) {
     if (!ns.length) { setGen(empty); return; }
+    // Tránh hiểu lầm "13 video giống nhau": nick nào ô prompt RIÊNG còn trống thì khi chạy sẽ lấy DÒNG ĐẦU của
+    // khung Prompt. Nếu khung đang có NHIỀU dòng, người dùng thường định "mỗi dòng 1 nick" nhưng quên bấm →
+    // chạy luôn thì mọi nick trống dùng chung dòng đầu. Chặn lại, bảo chia trước cho rõ.
+    const promptLines = bulk.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+    const noPrompt = ns.filter((n) => !(row(n).prompt || "").trim());
+    if (noPrompt.length && promptLines.length > 1) {
+      setGen(`${noPrompt.length} nick chưa có prompt riêng mà khung Prompt đang có ${promptLines.length} dòng — bấm ` +
+        `"Mỗi dòng 1 nick" (chia mỗi nick 1 dòng) hoặc "Điền tất cả" (mọi nick chung 1 prompt) rồi chạy lại. ` +
+        `Chạy luôn sẽ khiến các nick trống dùng CHUNG dòng đầu.`);
+      return;
+    }
     stop.current = false;
     // Phản hồi ngay trên từng thẻ: trước đây bấm Chạy là bảng đứng im tới 12s (chờ verify).
     ns.forEach((n) => setRow(n, { phase: "running", stage: "checking", startedAt: Date.now(), errorRaw: "", videoUrl: "" }));
