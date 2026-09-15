@@ -1323,6 +1323,83 @@ def _next_poll_proxy(account: str, current):
     return current
 
 
+SCAN_CONCURRENCY = 4   # đọc song song ngần này hội thoại khi quét video nick
+
+
+def _account_cookies(account: str) -> tuple[str, str, str]:
+    """(cookie header, msToken, s_v_web_id) từ accounts/<nick>/cookies.json — đọc Dola bằng HTTP không cần mở Chrome."""
+    f = config.ACCOUNTS_DIR / account / "cookies.json"
+    if not f.exists():
+        raise RuntimeError(f"Nick {account} chưa có cookies.json — đăng nhập lại nick rồi quét.")
+    items = json.loads(f.read_text(encoding="utf-8"))
+    cookie = "; ".join(f"{c['name']}={c['value']}" for c in items if c.get("name") and c.get("value"))
+    pick = lambda n: next((c["value"] for c in items if c.get("name") == n and c.get("value")), "")
+    return cookie, pick("msToken"), pick("s_v_web_id")
+
+
+async def _recent_conversations(session, cookie: str, ms_token: str, fp: str, limit: int, proxy) -> list[dict] | None:
+    """Hội thoại gần đây của nick (HTTP thuần): [{conversation_id, name, created_at}]; lỗi mạng/HTTP → None."""
+    params = {**_SINGLE_PARAMS, "web_tab_id": str(uuid.uuid4())}
+    if ms_token:
+        params["msToken"] = ms_token
+    if fp:
+        params["fp"] = fp
+    body = {"cmd": 3200, "uplink_body": {"pull_recent_conv_chain_uplink_body": {
+        "limit": limit, "message_count_per_conv": 1, "api_version": 1, "conv_version": 0, "direction": 3,
+        "option": {"not_need_message": True, "need_complete_conversation": True}}},
+        "sequence_id": str(uuid.uuid4()), "channel": 2, "version": "1"}
+    headers = {"Content-Type": "application/json; encoding=utf-8", "agw-js-conv": "str", "Accept": "*/*", "cookie": cookie}
+    try:
+        async with session.post("https://www.dola.com/im/chain/recent_conv", params=params, data=json.dumps(body),
+                                headers=headers, proxy=proxy, timeout=aiohttp.ClientTimeout(total=20)) as r:
+            if r.status != 200:
+                return None
+            data = await r.json(content_type=None)
+    except Exception:  # noqa: BLE001
+        return None
+    cells = ((data.get("downlink_body") or {}).get("pull_recent_conv_chain_downlink_body") or {}).get("cells") or []
+    out = []
+    for c in cells:
+        conv = c.get("conversation") or {}
+        cid = str(conv.get("conversation_id") or c.get("id") or "")
+        if cid.isdigit():
+            ts = conv.get("create_time") or 0
+            out.append({"conversation_id": cid, "name": str(conv.get("name") or "")[:120],
+                        "created_at": int(ts) // 1000 if int(ts or 0) > 10**11 else int(ts or 0)})
+    return out
+
+
+async def scan_account_videos(account: str, limit: int = 30) -> list[dict]:
+    """CHECK VIDEO NICK (đối thủ v1.0.88 kho_nick): quét hội thoại gần đây của nick bằng cookie — CHỈ ĐỌC, không gửi tin,
+    không tốn lượt — lấy các video đã dựng xong trên Dola, kể cả của job lỗi / quá giờ / IP chết lúc tải (đã trừ lượt).
+    Trả [{conversation_id, name, created_at, video_url}] mới nhất trước. Proxy nick lỗi → đọc đi thẳng."""
+    cookie, ms_token, fp = _account_cookies(account)
+    from browser import account_proxy_url
+    try:
+        proxy = account_proxy_url(account) or config.PROXY or None
+    except Exception:  # noqa: BLE001 — chỉ đọc hội thoại, không cần đúng IP nick
+        proxy = None
+    async with aiohttp.ClientSession() as session:
+        convs = await _recent_conversations(session, cookie, ms_token, fp, limit, proxy)
+        if convs is None and proxy:
+            proxy = None
+            convs = await _recent_conversations(session, cookie, ms_token, fp, limit, None)
+        if convs is None:
+            raise RuntimeError("Không đọc được danh sách hội thoại của nick (cookie chết hoặc mất mạng).")
+        sem = asyncio.Semaphore(SCAN_CONCURRENCY)
+
+        async def one(conv):
+            async with sem:
+                poll = await _fetch_single(session, cookie, ms_token, fp, conv["conversation_id"], proxy)
+            if not poll or not poll.get("videos"):
+                return None
+            vm = poll.get("videoModels") or []
+            return {**conv, "video_url": extract_unwatermarked_url(vm[0] if vm else "", poll["videos"][0])}
+
+        found = [v for v in await asyncio.gather(*(one(c) for c in convs)) if v]
+    return sorted(found, key=lambda v: v["created_at"], reverse=True)
+
+
 async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: str,
                                  conversation_id: str, timeout: int, on_poll=None, on_balance=None,
                                  answered: set | None = None, prompt: str = "") -> dict:

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RotateCw, Settings, Trash2, FolderOpen, Stethoscope, RefreshCw, Eraser, Search, Cookie, Network, Facebook, Copy, Download, Upload, Square } from "lucide-react";
+import { RotateCw, Settings, Trash2, FolderOpen, Stethoscope, RefreshCw, Eraser, Search, Cookie, Network, Facebook, Copy, Download, Upload, Square, Film } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import { normalizeBundle } from "@/lib/bundle";
 import ProxyAssignDialog from "@/components/ProxyAssignDialog";
+import NickVideosDialog from "@/components/NickVideosDialog";
 
 const POLL_MS = 4000;
 const ORDER = { ready: 0, busy: 1, cooling: 2, quota: 3, off: 4, dead: 5 };
@@ -47,6 +48,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [dlg, setDlg] = useState(false);
+  const [videosOf, setVideosOf] = useState("");   // nick đang mở "Video trên Dola"
   const fileRef = useRef(null);
   const [imp, setImp] = useState(null);   // tiến độ nhập kho: {i,total,name,ok,unverified,bad,done,stopped}
   const stopImp = useRef(false);
@@ -320,6 +322,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
                   </td>
                   <td className={td}><Switch on={!!a.scheduling} disabled={busy} onClick={() => toggleSched(a)} title={a.scheduling ? "Đang cho chạy — bấm để tạm ngưng" : "Đang tạm ngưng — bấm để cho chạy lại"} /></td>
                   <td className={td + " whitespace-nowrap text-right"}>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" title="Quét video trên Dola của nick (lấy lại video job lỗi/quá giờ — không tốn lượt)" onClick={() => setVideosOf(a.name)}><Film className="h-3.5 w-3.5" /></Button>
                     <Button variant="ghost" size="icon" className="h-7 w-7" title="Kiểm tra cookie còn sống" disabled={busy} onClick={() => one(a.name, verifyAccount, "kiểm tra")}><Stethoscope className="h-3.5 w-3.5" /></Button>
                     <Button variant="ghost" size="icon" className="h-7 w-7" title="Đăng nhập lại (lấy cookie mới)" disabled={busy} onClick={() => relogin(a.name)}><RotateCw className="h-3.5 w-3.5" /></Button>
                     <Button variant="ghost" size="icon" className="h-7 w-7" title="Proxy riêng cho nick" disabled={busy} onClick={() => setProxy(a.name)}><Settings className="h-3.5 w-3.5" /></Button>
@@ -337,6 +340,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
         </div>
       </div>
       <ProxyAssignDialog open={dlg} onOpenChange={setDlg} accounts={all} selected={selNames} onDone={done} />
+      <NickVideosDialog name={videosOf} onOpenChange={(o) => { if (!o) setVideosOf(""); }} />
     </div>
   );
 }

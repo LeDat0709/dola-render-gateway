@@ -1127,6 +1127,28 @@ class RedownloadReq(BaseModel):
     prompt: str = ""
 
 
+@app.get("/api/admin/accounts/{name}/videos")
+async def admin_account_videos(name: str, limit: int = 30, x_admin_key: str | None = Header(default=None)):
+    """Check Video Nick: video đã dựng xong trên Dola của nick (đọc lịch sử, không tốn lượt) + job tương ứng trong tool
+    (đã về máy / chỉ trên Dola / job báo lỗi dù video đã ra) để cứu video của job lỗi, quá giờ, IP chết lúc tải."""
+    _admin_auth(x_admin_key)
+    if name not in pool.accounts:
+        raise HTTPException(404, "account not found")
+    from video_worker_ui import scan_account_videos
+    try:
+        videos = await scan_account_videos(name, max(1, min(limit, 50)))
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    by_conv = {t["conversation_id"]: t for t in store.recent_tasks(2000) if t.get("conversation_id")}
+    for v in videos:
+        t = by_conv.get(v["conversation_id"]) or {}
+        local = "/videos/" in str(t.get("video_url") or "")
+        v.update(task_id=t.get("id", ""), task_status=t.get("status", ""), prompt=t.get("prompt", ""),
+                 local_url=t.get("video_url") if local else "",
+                 state="local" if local else "failed_but_made" if t.get("status") == "failed" else "remote")
+    return {"ok": True, "account": name, "videos": videos}
+
+
 @app.post("/api/admin/redownload")
 async def admin_redownload(body: RedownloadReq, x_admin_key: str | None = Header(default=None)):
     """Tải LẠI video đã xong (còn trên Dola) về máy — cho video 'chỉ trên Dola' (tải lúc chạy bị proxy rớt).
@@ -1140,7 +1162,13 @@ async def admin_redownload(body: RedownloadReq, x_admin_key: str | None = Header
     except DownloadError as e:
         raise HTTPException(502, f"Tải lại thất bại: {str(e)[:160]}")
     new_url = _public_video_url({"local_path": str(local), "video_url": body.url})
-    store.update(body.task_id, video_url=new_url)
+    task = store.get(body.task_id) if body.task_id else None
+    if task and task.get("status") == "failed":
+        # Check Video Nick cứu video của job bị báo lỗi (quá giờ / IP chết) mà Dola vẫn dựng xong → job thật ra đã xong.
+        store.update(body.task_id, video_url=new_url, status="completed", error=None, failure_code=None,
+                     finished_at=task.get("finished_at") or time.time())
+    elif body.task_id:
+        store.update(body.task_id, video_url=new_url)
     print(f"[gateway] tải lại về máy: {Path(local).name}", flush=True)
     return {"ok": True, "url": new_url, "file": Path(local).name}
 

@@ -275,6 +275,14 @@ export async function recentTasks(limit = 200) {
 // Video "đã về máy" = video_url trỏ về /videos/ của gateway (đã tải); còn link CDN = "chỉ trên Dola".
 export const isLocalVideo = (u) => /\/videos\//.test(String(u || ""));
 // Tải lại video đã xong (còn trên Dola) về máy — cho video chưa có file (proxy rớt lúc chạy).
+// Check Video Nick: video đã dựng xong trên Dola của nick (server đọc lịch sử hội thoại, không tốn lượt).
+export async function scanNickVideos(name, limit = 30) {
+  await ensureConfig();
+  const r = await fetch(cfg.base + `/api/admin/accounts/${encodeURIComponent(name)}/videos?limit=${limit}`, { headers: adminHeaders(), cache: "no-store" });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || (r.status === 401 ? "sai admin key" : "HTTP " + r.status));
+  return j;
+}
 export async function redownloadVideo(taskId, url, account = "", prompt = "") {
   await ensureConfig();
   const r = await fetch(cfg.base + "/api/admin/redownload", {

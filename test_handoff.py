@@ -325,6 +325,55 @@ def test_dead_proxy_mid_render_switches_route_not_lose_video():
         vw.aiohttp.ClientSession, browser.account_proxy_url, vw.config.PROXY = saved
 
 
+def test_scan_account_videos_reads_history_only():
+    """Check Video Nick: quét hội thoại gần đây bằng cookie (chỉ đọc) → chỉ trả hội thoại có video, mới nhất trước;
+    proxy nick lỗi thì đọc đi thẳng."""
+    import json as _j
+    import browser
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "n1").mkdir()
+    (tmp / "n1" / "cookies.json").write_text(_j.dumps([{"name": "sessionid", "value": "s"}, {"name": "msToken", "value": "m"}]), encoding="utf-8")
+    cells = {"downlink_body": {"pull_recent_conv_chain_downlink_body": {"cells": [
+        {"conversation": {"conversation_id": "111", "name": "cũ", "create_time": 1_700_000_000_000}},
+        {"conversation": {"conversation_id": "222", "name": "chỉ chữ", "create_time": 1_700_000_500}},
+        {"conversation": {"conversation_id": "333", "name": "mới", "create_time": 1_700_000_900}}]}}}
+    def single(video):
+        blocks = [{"content": {"text_block": {"text": "xin chào"}}}]
+        if video:
+            blocks.append({"block_type": 2074, "content": {"creation_block": {"creations": [{"type": 2, "video": {"download_url": video, "video_model": ""}}]}}})
+        return {"downlink_body": {"pull_singe_chain_downlink_body": {"messages": [{"content": _j.dumps(blocks)}]}}}
+    sent = []
+
+    class Resp:
+        status = 200
+        def __init__(self, d): self.d = d
+        async def json(self, **_): return self.d
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+
+    class Session:
+        def post(self, url, data=None, **k):
+            body = _j.loads(data)
+            sent.append(body["cmd"])
+            if "recent_conv" in url:
+                return Resp(cells)
+            cid = body["uplink_body"]["pull_singe_chain_uplink_body"]["conversation_id"]
+            return Resp(single({"111": "https://x/a.mp4", "333": "https://x/c.mp4"}.get(cid)))
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+
+    def boom(acc): raise RuntimeError("proxy nick lỗi")
+    saved = (vw.aiohttp.ClientSession, vw.config.ACCOUNTS_DIR, browser.account_proxy_url)
+    try:
+        vw.aiohttp.ClientSession, vw.config.ACCOUNTS_DIR, browser.account_proxy_url = Session, tmp, boom
+        vids = asyncio.run(vw.scan_account_videos("n1", 10))
+        assert [v["conversation_id"] for v in vids] == ["333", "111"], vids        # mới nhất trước, bỏ hội thoại không có video
+        assert vids[1]["created_at"] == 1_700_000_000 and vids[0]["video_url"] == "https://x/c.mp4", vids   # ms → giây
+        assert set(sent) == {3200, 3100}, "chỉ lệnh ĐỌC (recent_conv + single), không gửi tin"
+    finally:
+        vw.aiohttp.ClientSession, vw.config.ACCOUNTS_DIR, browser.account_proxy_url = saved
+
+
 def test_guest_session_is_detected_not_credit():
     """Ảnh 15/09: cookie chết → Dola coi là KHÁCH. Passport phân biệt được (recent_conv thì không); câu từ chối của
     Dola phải thành GuestRefusedError, KHÔNG phải CreditError (「生成できません」 từng bị hiểu là hết điểm)."""
@@ -525,4 +574,4 @@ if __name__ == "__main__":
     test_http_error_is_not_risk_control(); test_blocked_reason_says_one_thing()
     test_prompt_marks_are_scaled_to_duration(); test_parse_credit_need_from_dola_message()
     test_credits_used_is_read_from_start_message(); test_download_failure_keeps_job_with_cdn_link()
-    test_submit_timeout_never_resubmits(); test_uncertain_submit_only_resends_when_probe_is_certain(); test_guest_session_is_detected_not_credit(); test_dead_proxy_mid_render_switches_route_not_lose_video(); print("OK")
+    test_submit_timeout_never_resubmits(); test_uncertain_submit_only_resends_when_probe_is_certain(); test_guest_session_is_detected_not_credit(); test_dead_proxy_mid_render_switches_route_not_lose_video(); test_scan_account_videos_reads_history_only(); print("OK")
