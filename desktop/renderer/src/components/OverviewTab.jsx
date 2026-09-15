@@ -153,30 +153,30 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
       <Insights today={today} failed={failed} groups={groups} accs={accs} queued={queued} resetAt={resetAt} onGo={onGo} />
 
       {/* Địa chỉ gateway / proxy chung đã có ở dải trạng thái trên cùng và tab Cài đặt — ở đây chỉ còn dòng chảy job + hàng chờ. */}
-      <div className="grid gap-3 lg:grid-cols-12">
-        <div className="lg:col-span-7">
-          <StagePipeline groups={groups} done={done.length} failed={failed.length} conc={conc} stats={[
-            ["Dựng trung vị", median ? fmtSec(median) : "—"], ["P90", p90 ? fmtSec(p90) : "—", "text-warn"],
-            ["Nhanh nhất", fastest ? fmtSec(fastest) : "—", "text-tertiary"], ["Mẫu", renders.length],
-            ["Tự thử lại", health ? (health.auto_retry ? "bật" : "tắt") : "—", health?.auto_retry ? "text-tertiary" : "text-warn"]]} />
-        </div>
-        <div className="flex flex-col gap-3 rounded-xl bg-surface-low p-4 lg:col-span-5">
+      <StagePipeline groups={groups} done={done.length} failed={failed.length} conc={conc} stats={[
+        ["Dựng trung vị", median ? fmtSec(median) : "—"], ["P90", p90 ? fmtSec(p90) : "—", "text-warn"],
+        ["Nhanh nhất", fastest ? fmtSec(fastest) : "—", "text-tertiary"], ["Mẫu", renders.length],
+        ["Hàng chờ", queued.length, queued.length ? "text-warn" : "text-tertiary"],
+        ["Tự thử lại", health ? (health.auto_retry ? "bật" : "tắt") : "—", health?.auto_retry ? "text-tertiary" : "text-warn"]]} />
+
+      {/* Hàng chờ chỉ hiện khi CÓ job chờ — không thì thôi (khỏi card trống to đùng). */}
+      {queued.length > 0 && (
+        <div className="flex flex-col gap-2 rounded-xl bg-surface-low p-4">
           <div className="flex items-center gap-2"><span className="flex items-center gap-2 text-[15px] font-medium"><Timer className="h-4 w-4 text-info" />Hàng chờ</span>
-            <Badge variant={queued.length ? "default" : "secondary"}>{queued.length} tác vụ</Badge><span className="ml-auto" />
-            <span className="font-mono text-[11px] text-muted-foreground">{eta ? <>cả đợt xong lúc <b className="text-tertiary">~{new Date(Date.now() + eta * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</b></> : "hàng chờ trống"}</span></div>
-          <div className="flex flex-col gap-1.5 font-mono text-[12px]">
-            {queued.slice(0, 4).map((t, i) => (
+            <Badge variant="default">{queued.length} tác vụ</Badge><span className="ml-auto" />
+            <span className="font-mono text-[11px] text-muted-foreground">{eta ? <>cả đợt xong lúc <b className="text-tertiary">~{new Date(Date.now() + eta * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</b></> : ""}</span></div>
+          <div className="grid gap-x-4 gap-y-1 font-mono text-[12px] sm:grid-cols-2">
+            {queued.slice(0, 8).map((t, i) => (
               <div key={t.id} className="flex items-center gap-2">
                 <span className="text-muted-foreground">#{String(t.id).slice(0, 8)}</span><span>{t.account || "—"}</span>
                 <span className="min-w-0 flex-1 truncate text-muted-foreground" title={t.prompt}>{t.prompt}</span>
                 <span className="text-muted-foreground">{median ? `~${new Date(Date.now() + Math.ceil((i + 1) / conc) * median * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}` : "chờ slot"}</span>
               </div>
             ))}
-            {queued.length > 4 && <div className="text-[11px] text-muted-foreground">+{queued.length - 4} tác vụ nữa</div>}
-            {!queued.length && <div className="text-[11px] text-muted-foreground">Không có tác vụ nào chờ — {median > 0 ? `mỗi video mất ~${fmtSec(median)}` : "gửi prompt ở tab Studio"}.</div>}
+            {queued.length > 8 && <div className="text-[11px] text-muted-foreground">+{queued.length - 8} tác vụ nữa</div>}
           </div>
         </div>
-      </div>
+      )}
 
       <div>
         <div className="mb-1.5 flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -199,7 +199,7 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
         <div className="mt-2"><NickGrid accs={accs} today={today} running={running} onGo={onGo} /></div>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-12">
+      <div className="grid items-start gap-3 lg:grid-cols-12">
         <div className="flex flex-col gap-3 lg:col-span-7">
           <div className="flex flex-col items-center gap-4 rounded-xl bg-surface-low p-4 sm:flex-row">
             <Donut center={today.length} sub="đã gửi" segments={[
