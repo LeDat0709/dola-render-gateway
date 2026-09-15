@@ -240,6 +240,16 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const stopAll = () => { stop.current = true; setGen("Đã dừng theo dõi (video có thể vẫn hoàn tất trên Dola)."); };
   const fillAll = () => { const p = firstLine(bulk); accounts.forEach((a) => setRow(a.account, { prompt: p })); setGen("Đã điền prompt cho tất cả nick."); };
   const fillLines = () => { const ps = bulk.split(/\r?\n/).map((x) => x.trim()).filter(Boolean); accounts.forEach((a, i) => ps[i] && setRow(a.account, { prompt: ps[i] })); setGen(`Đã chia ${Math.min(ps.length, accounts.length)} prompt.`); };
+  // Xóa prompt cũ hàng loạt (Hoài Nam xin): trả các nick về trạng thái trắng như per-row "Làm mới" — bỏ prompt +
+  // reset lỗi/tiến trình, KHÔNG đụng video đã tạo (video nằm ở thư viện). Nick đang chạy thì bỏ qua cho an toàn.
+  const clearPrompts = (nicks, label) => {
+    const targets = nicks.filter((n) => rows[n]?.phase !== "running");
+    if (!targets.length) { setGen("Không có prompt để xóa (nick đang chạy được giữ nguyên)."); return; }
+    targets.forEach((n) => setRow(n, { prompt: "", phase: "idle", stage: undefined, status: "", errorRaw: "", videoUrl: "" }));
+    setGen(`Đã xóa prompt ${targets.length} nick ${label}.`);
+  };
+  const clearAllPrompts = () => { if (!window.confirm("Xóa hết prompt đã điền ở tất cả nick? (video đã tạo vẫn còn trong thư viện)")) return; clearPrompts(accounts.map((a) => a.account), "(tất cả)"); };
+  const clearSelectedPrompts = () => clearPrompts(selected, "(đã chọn)");
   const syncDef = () => { accounts.forEach((a) => setRow(a.account, { model: def.model, ratio: def.ratio, dur: def.dur })); setGen("Đã đồng bộ mặc định."); };
   const selectWhere = (pred, label) => { const o = {}; accounts.forEach((a) => { if (pred(a)) o[a.account] = true; }); setSel(o); setGen(`Đã chọn ${Object.keys(o).length} nick ${label}.`); };
   async function verifyAll() { setGen("Đang kiểm tra phiên các nick…"); try { const r = await api.verifyAll?.(); if (r?.ok) { const dead = (r.results || []).filter((x) => !x.ok).map((x) => x.name); onRefresh(); setGen(dead.length ? `Cookie chết: ${dead.join(", ")}` : "Tất cả nick còn đăng nhập tốt."); } else setGen("Lỗi kiểm tra: " + (r?.error || "?")); } catch (e) { setGen("Lỗi: " + e.message); } }
@@ -300,6 +310,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" onClick={fillAll} disabled={!lines.length}><ArrowDown className="h-3.5 w-3.5" />Điền tất cả</Button>
           <Button variant="outline" size="sm" onClick={fillLines} disabled={!lines.length}><ListOrdered className="h-3.5 w-3.5" />Mỗi dòng 1 nick</Button>
+          <Button variant="outline" size="sm" className="border-error/40 text-error hover:text-error" onClick={clearAllPrompts} title="Xóa hết prompt đã điền ở tất cả nick (video đã tạo vẫn còn)"><Eraser className="h-3.5 w-3.5" />Xóa prompt tất cả</Button>
           <span className="font-mono text-[11px] text-muted-foreground">{lines.length} dòng · {bulk.length} ký tự</span>
           {risky && <Badge variant="warn" title="Dola duyệt nội dung cảnh quay, không duyệt từ khoá">Có từ dễ bị chặn: {risky}</Badge>}
           <span className="flex-1" />
@@ -334,6 +345,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => selectWhere((a) => a.remaining != null && a.remaining >= creditCost(def.dur) && canRun(a), `còn đủ credit cho ${def.dur}s`)}>Còn đủ credit</button>
         <span className="text-outline-variant">·</span>
         <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => selectWhere(() => !allSel, allSel ? "" : "tất cả")}>{allSel ? "Bỏ chọn" : "Chọn tất cả"}</button>
+        {selected.length > 0 && <><span className="text-outline-variant">·</span><button type="button" className="text-xs font-medium text-error hover:underline" onClick={clearSelectedPrompts}>Xóa prompt đã chọn ({selected.length})</button></>}
         <span className="flex-1" />
         <Button variant="outline" size="sm" onClick={runReady}><Play className="h-3.5 w-3.5" />Chạy sẵn sàng</Button>
         <Button variant="outline" size="sm" onClick={retryFailed}><RefreshCw className="h-3.5 w-3.5" />Chạy lại lỗi</Button>

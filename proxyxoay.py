@@ -23,6 +23,7 @@ import urllib.request
 
 _lock = threading.Lock()
 _cache: dict[str, dict] = {}   # link -> {server, username, password, ip, network, location, expiration, next_ok, message}
+_last_err: dict[str, str] = {}  # link -> lý do lấy IP hỏng gần nhất (whitelist/hết hạn/không tới được) để đưa lên UI
 _PROXY_FIELDS = ("proxyhttp", "proxyHttp", "proxy_http", "http", "proxy", "https")
 _NET_FIELDS = ("Nha Mang", "nha_mang", "nhamang", "network", "isp", "carrier")
 _LOC_FIELDS = ("Vi Tri", "vi_tri", "location", "tinhthanh", "region", "city")
@@ -146,12 +147,20 @@ def cached_ip(link: str) -> dict:
 
 def resolve_dict(raw: str) -> dict | None:
     """Link → dict proxy cho patchright {server, username?, password?}; lỗi → None (đã log)."""
+    link = raw.strip()
     try:
-        ent = current(raw.strip())
+        ent = current(link)
     except ProxyXoayError as exc:
+        _last_err[link] = str(exc)
         print(f"[proxyxoay] {mask(raw)}: {exc}", flush=True)
         return None
+    _last_err.pop(link, None)
     return {k: ent[k] for k in ("server", "username", "password") if ent.get(k)}
+
+
+def last_error(raw: str | None) -> str:
+    """Lý do lấy IP hỏng gần nhất của link (rỗng nếu chưa hỏng lần nào) — để nick báo lỗi rõ, không chung chung."""
+    return _last_err.get((raw or "").strip(), "")
 
 
 def lane_info(raw: str) -> dict:

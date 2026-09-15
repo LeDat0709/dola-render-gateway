@@ -348,8 +348,11 @@ def account_proxy(account: str) -> dict | None:
             if is_rotating_proxy(raw):
                 # Proxy XOAY riêng (tmproxy://KEY, key trần, hoặc link get.php) không lấy được IP: KHÔNG lặng lẽ
                 # rơi về proxy chung/IP máy — nick sẽ lộ IP thật và bị Dola gom chung. Báo lỗi rõ để sửa.
+                import proxyxoay
+                reason = proxyxoay.last_error(raw) if proxyxoay.is_key_link(raw) else ""
+                detail = f": {reason}" if reason else ""   # lý do thật (whitelist/hết hạn/không tới được) → team khỏi đoán
                 raise RuntimeError(
-                    f"Proxy xoay riêng của nick {account} không lấy được IP ({mask_proxy(raw)}) — kiểm tra "
+                    f"Proxy xoay riêng của nick {account} không lấy được IP ({mask_proxy(raw)}){detail} — kiểm tra "
                     "key/link, hạn dùng và whitelist IP trên trang nhà bán.")
     except OSError:
         pass
