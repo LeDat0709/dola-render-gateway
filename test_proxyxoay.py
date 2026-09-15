@@ -77,6 +77,7 @@ def main():
     ent = proxyxoay.rotate(LINK)
     assert ent["next_ok"] - ent["fetched_at"] == 59 and ent["ttl"] == 600, ent
     test_auto_whitelist_and_status()
+    test_shoplike()
     print("OK")
 
 
@@ -111,6 +112,35 @@ def test_auto_whitelist_and_status():
     assert info["key_tail"] == "" and info["provider"] == "proxyxoay", info            # key ngắn (<8) → không hiện đuôi
     assert browser.rotating_status("proxyvn://ABCDEFGH1234")["key_tail"] == "1234"
     assert proxyxoay._whitelist_url("https://other.vn/get.php?key=K", 0) == ("https://other.vn/get.php?key=K", ""), "chỉ proxyxoay.shop"
+
+
+def test_shoplike():
+    """shoplike:TOKEN@location=hn → getNewProxy; current() dùng getCurrentProxy (KHÔNG đổi IP), rotate() mới getNewProxy;
+    đọc data.proxy / nextChange / proxyTimeout; token rỗng bị từ chối; không lộ token."""
+    link = browser.check_proxy_input("shoplike:TOK123456789@location=hn")
+    assert link == "https://proxy.shoplike.vn/Api/getNewProxy?access_token=TOK123456789&location=hn", link
+    assert browser.is_rotating_proxy(link) and browser.provider_label(link) == "shoplike"
+    assert "TOK123456789" not in proxyxoay.mask(link) and "TOK123456789" not in browser.mask_proxy(link)
+    try:
+        browser.check_proxy_input("shoplike:")
+        raise AssertionError("token rỗng phải bị từ chối")
+    except ValueError:
+        pass
+    urls = []
+    replies = {"getCurrentProxy": '{"status":"success","data":{"proxy":"1.2.3.4:8080","location":"hn","nextChange":45,"proxyTimeout":1800}}',
+               "getNewProxy": '{"status":"success","data":{"proxy":"5.6.7.8:9090","location":"hn","nextChange":60,"proxyTimeout":1790}}'}
+    proxyxoay._get = lambda url: (urls.append(url), replies["getCurrentProxy" if "getCurrentProxy" in url else "getNewProxy"])[1]
+    proxyxoay._cache.clear()
+    ent = proxyxoay.current(link)
+    assert "getCurrentProxy" in urls[-1] and ent["ip"] == "1.2.3.4:8080" and ent["location"] == "hn", (urls, ent)
+    assert ent["next_ok"] - ent["fetched_at"] == 45 and ent["ttl"] == 1770 and link in proxyxoay._cache, ent
+    assert browser.rotating_status(link)["key_tail"] == "6789" and 1790 <= browser.rotating_status(link)["expires_in"] <= 1800
+    proxyxoay._cache[link]["next_ok"] = 0
+    assert proxyxoay.rotate(link)["ip"] == "5.6.7.8:9090" and "getNewProxy" in urls[-1], urls
+    # chưa có IP hiện hành → getCurrentProxy báo lỗi → tự xin IP mới
+    proxyxoay._cache.clear()
+    replies["getCurrentProxy"] = '{"status":"error","mess":"Chua co proxy"}'
+    assert proxyxoay.current(link)["ip"] == "5.6.7.8:9090" and "getNewProxy" in urls[-1], urls
 
 
 if __name__ == "__main__":

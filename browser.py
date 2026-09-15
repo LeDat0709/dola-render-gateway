@@ -164,6 +164,15 @@ def normalize_proxy_input(raw: str) -> str:
     low = raw.lower()
     # Dạng tool Seedance AI Studio: 'proxyvn:KEY' / 'tmproxy:KEY' (1 dấu hai chấm) = '<nhà bán>://KEY' — dán nguyên dòng
     # từ tool đó sang được. Không đụng proxy tĩnh: 'host:port' có tên host khác hẳn các tiền tố này.
+    if low.startswith("shoplike:"):   # shoplike:TOKEN[@location=hn] → link getNewProxy (xem proxyxoay: current dùng getCurrentProxy)
+        rest = raw[len("shoplike:"):].lstrip("/").strip()
+        token, _, tail = rest.partition("@")
+        if not token.strip():
+            return raw
+        q = "".join(f"&{k.strip()}={v.strip()}" for k, _, v in (part.partition("=") for part in re.split(r"[,&;\s]+", tail))
+                    if k.strip() and v.strip())
+        import proxyxoay
+        return f"{proxyxoay.SHOPLIKE_BASE}getNewProxy?access_token={token.strip()}{q}"
     if low.startswith("tmproxy:") and not low.startswith("tmproxy://"):
         return "tmproxy://" + raw[len("tmproxy:"):].strip()
     for pfx in _ROTATING_RESELLERS:
@@ -197,8 +206,10 @@ def check_proxy_input(raw: str) -> str:
     if v.lower().startswith("tmproxy://"):
         import tmproxy
         ok = bool(tmproxy.key_of(v))
+    elif re.match(r"(?i)^(shoplike|topproxy|proxyvn|proxyxoay):", v):
+        ok = False   # còn nguyên tiền tố nhà bán = không có key/token (chuẩn hoá đã bỏ qua) — đừng để parse thành host:port
     elif is_rotating_proxy(v):
-        ok = not re.search(r"[?&]key=(?:&|$)", v)   # chỉ chặn key RỖNG; api_key=/token= vẫn nhận như kho proxy
+        ok = not re.search(r"[?&](?:key|access_token)=(?:&|$)", v)   # chỉ chặn key RỖNG; api_key=/token= vẫn nhận như kho proxy
     else:
         ok = parse_proxy(v) is not None               # proxy tĩnh: parse_proxy chỉ tách chuỗi
     if not ok:
@@ -235,6 +246,8 @@ def provider_label(raw: str) -> str:
         return "tmproxy"
     if "topproxy" in s:
         return "topproxy"
+    if "shoplike" in s:
+        return "shoplike"
     import proxyxoay
     return "proxyxoay" if proxyxoay.is_key_link(s) else ""
 
@@ -284,7 +297,7 @@ def rotating_status(raw: str) -> dict:
         import proxyxoay
         if not proxyxoay.is_key_link(s):
             return {}
-        m = re.search(r"[?&]key=([^&\s]+)", s)
+        m = re.search(r"[?&](?:key|access_token)=([^&\s]+)", s)
         key = m.group(1) if m else ""
         st = proxyxoay.status(s)
     return {**st, "provider": provider_label(s), "key_tail": key[-4:] if len(key) >= 8 else "",

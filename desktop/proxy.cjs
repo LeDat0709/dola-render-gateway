@@ -56,14 +56,14 @@ function parseProxy(raw) {
 // nhận diện để: (1) không báo "sai định dạng" khi lưu, (2) cửa sổ Electron nối thẳng thay vì kẹt lỗi.
 function isKeyLink(raw) {
   const s = String(raw || "").trim().toLowerCase();
-  return /^https?:\/\//.test(s) && (s.includes("get.php") || s.includes("key="));
+  return /^https?:\/\//.test(s) && (s.includes("get.php") || s.includes("key=") || s.includes("access_token="));
 }
 function isBareTmproxyKey(raw) { return /^[a-f0-9]{32}$/i.test(String(raw || "").trim()); }
 // Proxy XOAY (server tự gọi nhà bán lấy IP): link get.php?key=, tmproxy://KEY, hoặc KEY TMProxy trần (32 hex).
 function isRotating(raw) {
   const s = String(raw || "").trim().toLowerCase();
   // topproxy:// proxyvn:// proxyxoay:// KEY: server tự chuyển thành link get.php (browser.normalize_proxy_input)
-  return isKeyLink(s) || s.startsWith("tmproxy://") || isBareTmproxyKey(s) || /^(topproxy|proxyvn|proxyxoay|tmproxy):(\/\/)?./.test(s);
+  return isKeyLink(s) || s.startsWith("tmproxy://") || isBareTmproxyKey(s) || /^(topproxy|proxyvn|proxyxoay|tmproxy|shoplike):(\/\/)?./.test(s);
 }
 // KEY TMProxy trần → tmproxy://KEY để lưu/dùng thống nhất (khớp browser.normalize_proxy_input phía Python).
 function normalizeProxyInput(raw) {

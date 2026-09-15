@@ -29,7 +29,8 @@ _PROXY_FIELDS = ("proxyhttp", "proxyHttp", "proxy_http", "http", "proxy", "https
 _NET_FIELDS = ("Nha Mang", "nha_mang", "nhamang", "network", "isp", "carrier")
 _LOC_FIELDS = ("Vi Tri", "vi_tri", "location", "tinhthanh", "region", "city")
 _EXP_FIELDS = ("Token expiration date", "expired_at", "expiration", "expire", "expiredAt")
-_WAIT_FIELDS = ("nextRequest", "next_request", "nextrequest", "timeout", "ttl")
+_WAIT_FIELDS = ("nextRequest", "next_request", "nextrequest", "nextChange", "timeout", "ttl")
+_LIFE_FIELDS = ("proxyTimeout", "proxy_timeout")   # shoplike: IP còn sống bao nhiêu giây
 # Sàn hạn cache current(): phải LỚN hơn thời lượng render 1 video để IP không đổi giữa chừng (submit/poll/tải
 # cùng IP), nhưng đủ ngắn để bản cache chết được làm mới thay vì phục vụ mãi. 10 phút > video 30s (~2–3 phút).
 _CACHE_TTL_FLOOR = 600
@@ -82,12 +83,26 @@ def _whitelist_url(link: str, now: float) -> tuple[str, str]:
 
 def is_key_link(raw: str | None) -> bool:
     s = (raw or "").strip().lower()
-    return s.startswith(("http://", "https://")) and ("get.php" in s or "key=" in s)
+    return s.startswith(("http://", "https://")) and ("get.php" in s or "key=" in s or "access_token=" in s)
+
+
+# proxy.shoplike.vn (theo code mẫu công khai + chuỗi tool Seedance v1.0.88, CHƯA thử token thật): getCurrentProxy /
+# getNewProxy?access_token=TOKEN[&location=..] → {"data": {"proxy": "ip:port", "nextChange": s, "proxyTimeout": s, "location"}}.
+# Khác get.php: gọi getNewProxy = XIN IP MỚI → current() phải dùng getCurrentProxy, chỉ rotate() mới gọi getNewProxy.
+SHOPLIKE_BASE = "https://proxy.shoplike.vn/Api/"
+
+
+def _is_shoplike(link: str) -> bool:
+    return "proxy.shoplike.vn" in (link or "").lower()
+
+
+def _shoplike_current(link: str) -> str:
+    return re.sub(r"getNewProxy", "getCurrentProxy", link, flags=re.I)
 
 
 def mask(raw: str | None) -> str:
     """Che giá trị key trong link để hiện ra giao diện."""
-    return re.sub(r"(key=)[^&\s]+", lambda m: m.group(1) + "••••", (raw or "").strip(), flags=re.I)
+    return re.sub(r"((?:key|access_token)=)[^&\s]+", lambda m: m.group(1) + "••••", (raw or "").strip(), flags=re.I)
 
 
 def _find(d: dict, keys) -> str:
@@ -128,8 +143,18 @@ def _wait_seconds(data: dict, message: str) -> int:
     return int(m.group(1)) if m else 0
 
 
-def _fetch(link: str, now: float) -> dict:
+def _fetch(link: str, now: float, fresh: bool = True) -> dict:
+    """Gọi nhà bán lấy proxy. fresh=False (current) với shoplike → getCurrentProxy (không đổi IP); chưa có IP thì getNewProxy."""
+    if _is_shoplike(link) and not fresh:
+        try:
+            return _fetch_url(link, _shoplike_current(link), now)
+        except ProxyXoayError:
+            pass   # chưa có IP hiện hành → xin IP mới
     url, wl_ip = _whitelist_url(link, now)
+    return _fetch_url(link, url, now, wl_ip)
+
+
+def _fetch_url(link: str, url: str, now: float, wl_ip: str = "") -> dict:
     body = _get(url).strip()
     try:
         j = json.loads(body)
@@ -146,18 +171,21 @@ def _fetch(link: str, now: float) -> dict:
     if not proxy and not data:   # phản hồi text thuần "ip:port[:user:pass]"
         m = re.search(r"\d+\.\d+\.\d+\.\d+:\d+(?::[^\s]+)?", body)
         proxy = _parse_proxy_value(m.group(0)) if m else None
-    message = _find(src, ("message", "msg", "Message")) or body[:120]
+    message = _find(src, ("message", "msg", "Message", "mess")) or body[:120]
     if not proxy:
         raise ProxyXoayError(message or "phản hồi không có proxy")
     ip = proxy["server"].split("://", 1)[1]
     wait = _wait_seconds(src, message)
+    life_m = _LIFE_RE.search(message)
+    life_f = _find(src, _LIFE_FIELDS)
+    life = int(life_m.group(1)) if life_m else (int(life_f) if life_f.isdigit() else 0)   # tuổi thọ IP (giây), 0 = không rõ
     prev = _cache.get(link) or {}
     day = time.strftime("%Y-%m-%d", time.localtime(now))
     changes = (prev.get("changes", 0) if prev.get("day") == day else 0) + (prev.get("ip") != ip)   # lần ĐỔI IP trong ngày
     ent = {**proxy, "ip": ip, "network": _find(src, _NET_FIELDS), "location": _find(src, _LOC_FIELDS),
            "expiration": _find(src, _EXP_FIELDS), "message": message,
-           "next_ok": now + wait, "fetched_at": now, "day": day, "changes": changes,
-           "ttl": max(int(life.group(1)) - _LIFE_MARGIN_SEC, 0) if (life := _LIFE_RE.search(message)) else max(wait, _CACHE_TTL_FLOOR)}
+           "next_ok": now + wait, "fetched_at": now, "day": day, "changes": changes, "life": life,
+           "ttl": max(life - _LIFE_MARGIN_SEC, 0) if life else max(wait, _CACHE_TTL_FLOOR)}
     _cache[link] = ent
     if wl_ip:
         _wl_sent[link] = wl_ip   # khai OK (có proxy trả về) → IP máy chưa đổi thì lần sau khỏi gắn lại
@@ -174,7 +202,7 @@ def current(link: str) -> dict:
         ent = _cache.get(link)
         if ent and now - ent["fetched_at"] < ent["ttl"]:
             return ent
-        return _fetch(link, now)
+        return _fetch(link, now, fresh=False)
 
 
 def rotate(link: str) -> dict:
@@ -202,8 +230,7 @@ def status(link: str) -> dict:
     if not ent:
         return {}
     now = time.time()
-    life = _LIFE_RE.search(ent.get("message", ""))
-    dies_at = ent["fetched_at"] + (int(life.group(1)) if life else ent["ttl"])
+    dies_at = ent["fetched_at"] + (ent.get("life") or ent["ttl"])
     return {"endpoint": ent.get("ip", ""), "network": ent.get("network", ""), "location": ent.get("location", ""),
             "age": int(now - ent["fetched_at"]), "expires_in": int(dies_at - now),
             "rotate_in": max(0, int(ent["next_ok"] - now)), "changes": ent.get("changes", 1),
