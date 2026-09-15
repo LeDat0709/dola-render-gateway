@@ -284,6 +284,14 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   }
   const fillAll = () => { const p = firstLine(bulk); accounts.forEach((a) => setRow(a.account, { prompt: p })); setGen("Đã điền prompt cho tất cả nick."); };
   const fillLines = () => { const ps = bulk.split(/\r?\n/).map((x) => x.trim()).filter(Boolean); accounts.forEach((a, i) => ps[i] && setRow(a.account, { prompt: ps[i] })); setGen(`Đã chia ${Math.min(ps.length, accounts.length)} prompt.`); };
+  // MỖI KHỐI 1 NICK: kịch bản nhiều dòng (镜头1…mô tả…音频…) là 1 prompt, các kịch bản CÁCH NHAU DÒNG TRỐNG.
+  // Giữ NGUYÊN cả khối (không ngắt từng dòng) → khối[i] cho nick[i]. Dùng khi prompt là kịch bản nhiều dòng.
+  const fillBlocks = () => {
+    const blocks = bulk.split(/\r?\n\s*\r?\n/).map((b) => b.trim()).filter(Boolean);
+    accounts.forEach((a, i) => blocks[i] && setRow(a.account, { prompt: blocks[i] }));
+    setGen(`Đã chia ${Math.min(blocks.length, accounts.length)} kịch bản (giữ nguyên cả khối, không ngắt dòng).`);
+  };
+  const fillAllWhole = () => { const p = bulk.trim(); if (!p) return; accounts.forEach((a) => setRow(a.account, { prompt: p })); setGen("Đã điền CẢ khối prompt cho tất cả nick (không ngắt)."); };
   // Xóa prompt cũ hàng loạt (Hoài Nam xin): trả các nick về trạng thái trắng như per-row "Làm mới" — bỏ prompt +
   // reset lỗi/tiến trình, KHÔNG đụng video đã tạo (video nằm ở thư viện). Nick đang chạy thì bỏ qua cho an toàn.
   const clearPrompts = (nicks, label) => {
@@ -358,6 +366,8 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" onClick={fillAll} disabled={!lines.length}><ArrowDown className="h-3.5 w-3.5" />Điền tất cả</Button>
           <Button variant="outline" size="sm" onClick={fillLines} disabled={!lines.length}><ListOrdered className="h-3.5 w-3.5" />Mỗi dòng 1 nick</Button>
+          <Button variant="outline" size="sm" onClick={fillBlocks} disabled={!lines.length} title="Kịch bản nhiều dòng = 1 prompt, các kịch bản cách nhau DÒNG TRỐNG. Giữ nguyên cả khối, không ngắt từng dòng."><ListOrdered className="h-3.5 w-3.5" />Mỗi khối 1 nick</Button>
+          <Button variant="outline" size="sm" onClick={fillAllWhole} disabled={!lines.length} title="Điền NGUYÊN cả khối prompt (nhiều dòng, không ngắt) cho MỌI nick">Cả khối cho tất cả</Button>
           <Button variant="outline" size="sm" className="border-error/40 text-error hover:text-error" onClick={clearAllPrompts} title="Xóa hết prompt đã điền ở tất cả nick (video đã tạo vẫn còn)"><Eraser className="h-3.5 w-3.5" />Xóa prompt tất cả</Button>
           <span className="font-mono text-[11px] text-muted-foreground">{lines.length} dòng · {bulk.length} ký tự</span>
           {risky && <Badge variant="warn" title="Dola duyệt nội dung cảnh quay, không duyệt từ khoá">Có từ dễ bị chặn: {risky}</Badge>}
