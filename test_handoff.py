@@ -42,7 +42,7 @@ def setup_module(_=None):
     async def fast(_s): await real_sleep(0)
     asyncio.sleep = fast                      # bỏ 5s chờ mỗi vòng poll
     tmp = Path(tempfile.mkdtemp()) / "v.mp4"; tmp.write_bytes(b"0" * 10)
-    async def fake_download(url, account): return tmp
+    async def fake_download(url, account, prompt=""): return tmp   # prompt: khớp _download(url, account, prompt) mới
     vw._download = fake_download
 
 

@@ -1109,7 +1109,7 @@ async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, dura
                     on_browser_free()
                 try:
                     return await poll_conversation_http(account, cookie_header, ms_token, fp, conv_id,
-                                                        remaining, on_poll, on_balance, answered=answered)
+                                                        remaining, on_poll, on_balance, answered=answered, prompt=prompt)
                 except _NeedsBrowser as ask:
                     if _answer_key(ask.full) in answered:
                         # Đã trả lời câu này rồi mà Dola vẫn lặp lại → mở nick nữa cũng vô ích.
@@ -1186,7 +1186,7 @@ def _parse_single(data: dict) -> dict:
 
 async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: str,
                                  conversation_id: str, timeout: int, on_poll=None, on_balance=None,
-                                 answered: set | None = None) -> dict:
+                                 answered: set | None = None, prompt: str = "") -> dict:
     """Poll /im/chain/single over PLAIN HTTP (no browser) until a video appears, then download.
 
     The browser is only needed for the signed submission; polling + download work with cookies
@@ -1481,7 +1481,7 @@ async def resume_video(account: str, conversation_id: str, timeout: int,
     try:
         return await poll_conversation_http(account, cookie_header, ms_token, fp, conversation_id,
                                             max(30, int(deadline - time.time())), on_poll, on_balance,
-                                            answered=answered)
+                                            answered=answered, prompt=prompt)
     except _NeedsBrowser as ask:
         if _answer_key(ask.full) in answered:
             raise RuntimeError(
