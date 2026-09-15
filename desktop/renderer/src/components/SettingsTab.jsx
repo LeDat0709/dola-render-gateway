@@ -30,7 +30,7 @@ export default function SettingsTab({ active = true }) {
   const [lane, setLane] = useState(null); const [laneBusy, setLaneBusy] = useState(false);
   const [rb, setRb] = useState(""); const [rk, setRk] = useState(""); const [ra, setRa] = useState(""); const [rMsg, setRMsg] = useState("");
   const [autoRetry, setAutoRetry] = useState(true); const [arMsg, setArMsg] = useState("");
-  const [oneNick, setOneNick] = useState(false); const [onMsg, setOnMsg] = useState(""); const [nicksPerIp, setNicksPerIp] = useState(2);
+  const [oneNick, setOneNick] = useState(false); const [onMsg, setOnMsg] = useState(""); const [nicksPerIp, setNicksPerIp] = useState(2); const [parallelPerIp, setParallelPerIp] = useState(1);
   const [srv, setSrv] = useState(null);     // cấu hình server đang chạy (/api/admin/config) hoặc null khi server tắt
   const [up, setUp] = useState(false);
   const [ver, setVer] = useState(null);
@@ -47,7 +47,7 @@ export default function SettingsTab({ active = true }) {
     loadLane();
     api.getRemote?.().then((r) => { setRb(r?.base || ""); setRk(r?.apiKey || ""); setRa(r?.adminKey || ""); }).catch(() => {});
     api.getAutoRetry?.().then((r) => setAutoRetry(r?.on !== false)).catch(() => {});
-    api.getOneNick?.().then((r) => { setOneNick(r?.on === true); if (r?.nicksPerIp) setNicksPerIp(r.nicksPerIp); }).catch(() => {});
+    api.getOneNick?.().then((r) => { setOneNick(r?.on === true); if (r?.nicksPerIp) setNicksPerIp(r.nicksPerIp); if (r?.parallelPerIp) setParallelPerIp(r.parallelPerIp); }).catch(() => {});
     api.getVersion?.().then(setVer).catch(() => {});
     refreshHealth();
     adminConfig().then(setSrv).catch(() => setSrv(null));
@@ -79,15 +79,21 @@ export default function SettingsTab({ active = true }) {
   const toggleOneNick = async (e) => {
     const on = e.target.checked;
     setOneNick(on);
-    const r = await api.setOneNick?.(on, nicksPerIp);
+    const r = await api.setOneNick?.(on, nicksPerIp, parallelPerIp);
     if (!r?.ok) { setOneNick(!on); setOnMsg("✗ " + (r?.error || "Bật server rồi thử lại")); return; }
-    setOnMsg(`✓ Đã ${on ? "BẬT" : "TẮT"} MỖI LẦN MỘT NICK — áp dụng ngay. ${on ? `Mỗi IP dùng cho ${nicksPerIp} nick rồi xoay (chỉ khi proxy chung là link/key xoay).` : ""}`);
+    setOnMsg(`✓ Đã ${on ? "BẬT" : "TẮT"} xoay IP theo lô — áp dụng ngay. ${on ? `Mỗi IP chạy ${nicksPerIp} job (tối đa ${parallelPerIp} cùng lúc) rồi xoay (chỉ khi proxy chung là link/key xoay).` : ""}`);
   };
   const saveNicksPerIp = async (v) => {
     const n = Math.max(1, Math.min(50, parseInt(v, 10) || 1));
     setNicksPerIp(n);
-    const r = await api.setOneNick?.(oneNick, n);
-    setOnMsg(r?.ok ? `✓ Mỗi IP dùng cho ${n} nick rồi xoay.` : "✗ " + (r?.error || "Bật server rồi thử lại"));
+    const r = await api.setOneNick?.(oneNick, n, parallelPerIp);
+    setOnMsg(r?.ok ? `✓ Mỗi IP dùng cho ${n} job rồi xoay.` : "✗ " + (r?.error || "Bật server rồi thử lại"));
+  };
+  const saveParallelPerIp = async (v) => {
+    const k = Math.max(1, Math.min(16, parseInt(v, 10) || 1));
+    setParallelPerIp(k);
+    const r = await api.setOneNick?.(oneNick, nicksPerIp, k);
+    setOnMsg(r?.ok ? `✓ Tối đa ${k} job chạy cùng lúc trên 1 IP${k > 1 ? " — nhanh hơn, nhưng nhiều nick cùng IP dễ dính 710022002 hơn" : " (tuần tự)"}.` : "✗ " + (r?.error || "Bật server rồi thử lại"));
   };
   const testProxy = async () => {
     setGpMsg("⏳ đang thử vào dola.com…");
@@ -211,8 +217,8 @@ export default function SettingsTab({ active = true }) {
           <Msg text={arMsg} />
           <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">
             <input type="checkbox" className="mt-1" checked={oneNick} onChange={toggleOneNick} />
-            <span><span className="font-medium">Chạy tuần tự + xoay IP theo lô (1 key proxy xoay cho nhiều nick)</span>
-              <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật: chạy tuần tự từng nick trọn job, mỗi IP dùng cho <b>N nick</b> rồi mới xoay — dùng khi 1 key/link proxy xoay gánh nhiều nick, tránh "nhiều nick một IP" (710022002). N=1 = mỗi nick một IP (an toàn nhất, chậm nhất); N lớn = ít xoay hơn, nhanh hơn. Chỉ có tác dụng khi Proxy chung là link/key xoay; proxy tĩnh/nối thẳng bỏ qua.</span></span>
+            <span><span className="font-medium">Xoay IP theo lô (1 key proxy xoay cho nhiều nick)</span>
+              <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật: mỗi IP chạy <b>N job</b> (tối đa <b>K job cùng lúc</b>, K=1 = tuần tự) rồi mới xoay; IP đủ lô thì job kế chờ các job còn chạy trên IP xong mới đổi IP — dùng khi 1 key/link proxy xoay gánh nhiều nick, tránh "nhiều nick một IP" (710022002). N=1 = mỗi nick một IP (an toàn nhất, chậm nhất); N lớn = ít xoay hơn, nhanh hơn. Chỉ có tác dụng khi Proxy chung là link/key xoay; proxy tĩnh/nối thẳng bỏ qua.</span></span>
           </label>
           <div className={"flex items-center gap-2 pl-7 text-[12px] " + (oneNick ? "" : "opacity-50")}>
             <span className="text-muted-foreground">Số nick mỗi IP rồi xoay:</span>
@@ -220,6 +226,11 @@ export default function SettingsTab({ active = true }) {
               className="h-7 w-16 text-center" onChange={(e) => setNicksPerIp(e.target.value)}
               onBlur={(e) => saveNicksPerIp(e.target.value)} />
             <span className="text-muted-foreground">nick / IP</span>
+            <span className="ml-3 text-muted-foreground">Chạy cùng lúc tối đa:</span>
+            <Input type="number" min={1} max={16} value={parallelPerIp} disabled={!oneNick}
+              className="h-7 w-16 text-center" onChange={(e) => setParallelPerIp(e.target.value)}
+              onBlur={(e) => saveParallelPerIp(e.target.value)} />
+            <span className="text-muted-foreground">job / IP{parallelPerIp > 1 ? " (đối thủ mặc định ≤6)" : " (tuần tự)"}</span>
           </div>
           {oneNick && !isRotating && (
             <div className="rounded-md border border-warn/40 bg-warn/10 px-2.5 py-1.5 text-[12px] text-warn">

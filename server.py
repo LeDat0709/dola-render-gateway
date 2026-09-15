@@ -590,6 +590,7 @@ async def health():
         "auto_retry": config.AUTO_RETRY,
         "one_nick": config.ONE_NICK,
         "nicks_per_ip": config.NICKS_PER_IP,
+        "parallel_per_ip": config.PARALLEL_PER_IP,
         "rotating_ip": _rotating_ip_cached(),          # IP xoay đang dùng (đọc cache, không gọi mạng)
         "ip_used": getattr(pool, "_ip_used", 0),       # số nick đã dùng IP hiện tại (lượt k/N)
         "submit_gap_min": config.SUBMIT_GAP_SEC,                                  # chờ ngẫu nhiên tối thiểu giữa lần gửi
@@ -993,6 +994,7 @@ async def admin_retry(body: AutoRetryUpdate, x_admin_key: str | None = Header(de
 class OneNickUpdate(BaseModel):
     one_nick: bool
     nicks_per_ip: int | None = Field(None, ge=1, le=50)   # số nick mỗi IP trước khi xoay (None = giữ nguyên)
+    parallel_per_ip: int | None = Field(None, ge=1, le=16)   # số job CHẠY SONG SONG trên 1 IP chung (None = giữ nguyên)
 
 
 @app.post("/api/admin/one-nick")
@@ -1003,8 +1005,11 @@ async def admin_one_nick(body: OneNickUpdate, x_admin_key: str | None = Header(d
     config.ONE_NICK = body.one_nick
     if body.nicks_per_ip is not None:
         config.NICKS_PER_IP = max(1, body.nicks_per_ip)
-    print(f"[gateway] MỖI LẦN MỘT NICK: {'BẬT' if config.ONE_NICK else 'TẮT'} · {config.NICKS_PER_IP} nick/IP", flush=True)
-    return {"ok": True, "one_nick": config.ONE_NICK, "nicks_per_ip": config.NICKS_PER_IP}
+    if body.parallel_per_ip is not None:
+        config.PARALLEL_PER_IP = max(1, body.parallel_per_ip)
+    print(f"[gateway] XOAY IP THEO LÔ: {'BẬT' if config.ONE_NICK else 'TẮT'} · {config.NICKS_PER_IP} job/IP · "
+          f"{config.PARALLEL_PER_IP} song song", flush=True)
+    return {"ok": True, "one_nick": config.ONE_NICK, "nicks_per_ip": config.NICKS_PER_IP, "parallel_per_ip": config.PARALLEL_PER_IP}
 
 
 class SubmitGapUpdate(BaseModel):

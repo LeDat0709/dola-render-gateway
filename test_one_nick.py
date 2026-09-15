@@ -73,9 +73,29 @@ async def _run(tmp, one_nick, proxy, fail_first=None, nicks_per_ip=1):
             "results": results, "one_nick_val": pool._one_nick._value}
 
 
+async def _run_parallel(tmp):
+    config.ONE_NICK, config.PROXY, config.NICKS_PER_IP, config.PARALLEL_PER_IP = True, ROT, 2, 2
+    browser_pool.IP_DRAIN_POLL_SEC = 0.05
+    nicks = ("acc1", "acc2", "acc3", "acc4")
+    pool = _pool(tmp, nicks)
+    pool.set_max_concurrency(4)
+    rotated = {"ips": [], "failed": set()}
+    peak, leases = [], []
+    _install_fakes(rotated, peak)
+    key = browser.normalize_proxy_input(ROT)
+
+    def fake_rotate(account):
+        leases.append(browser._proxy_leases.get(key, 0))
+        rotated["ips"].append(account)
+    browser.rotate_effective_proxy = fake_rotate
+    results = await asyncio.wait_for(asyncio.gather(*(pool.generate_video(f"p{i}") for i in range(4)), return_exceptions=True), timeout=20)
+    return {"peak": max(peak), "rotated": rotated["ips"], "leases_at_rotate": leases, "results": results,
+            "one_nick_val": pool._one_nick._value, "sem_val": pool.semaphore._value}
+
+
 def main():
     orig = (browser_pool.generate_video, browser_pool._pace, browser.rotate_effective_proxy,
-            config.ONE_NICK, config.PROXY, config.NICKS_PER_IP, config.AUTO_RETRY)
+            config.ONE_NICK, config.PROXY, config.NICKS_PER_IP, config.AUTO_RETRY, config.PARALLEL_PER_IP)
     config.AUTO_RETRY = True   # ép BẬT: kịch bản 4 kiểm retry+xoay, không phụ thuộc DOLA_AUTO_RETRY của .env.local
     try:
         # N=1: mỗi nick 1 IP → 2 nick đổi IP 2 lần, tuần tự
@@ -106,10 +126,20 @@ def main():
         assert r["peak"] == 1, f"vẫn 1 nick/lần khi có lỗi, gặp {r['peak']}"
         assert len([x for x in r["results"] if isinstance(x, dict)]) == 2, r["results"]
 
+        # K=2 song song trên IP chung, N=2 job/IP, 4 job: tối đa 2 job cùng lúc; đổi IP 2 lần (đầu lô 1, đầu lô 2) và
+        # CHỈ đổi khi không còn job nào chạy trên IP (sổ giữ chỗ = 0) — đổi lúc đang chạy = cắt IP của job đó.
+        with tempfile.TemporaryDirectory() as tmp:
+            r = asyncio.run(_run_parallel(tmp))
+        assert r["peak"] == 2, f"K=2 phải chạy 2 job song song, gặp {r['peak']}"
+        assert len(r["rotated"]) == 2, f"4 job, 2 job/IP → đổi IP 2 lần, gặp {r['rotated']}"
+        assert r["leases_at_rotate"] == [0, 0], f"đổi IP lúc còn job chạy trên IP: {r['leases_at_rotate']}"
+        assert all(isinstance(x, dict) for x in r["results"]), r["results"]
+        assert r["one_nick_val"] == 2 and r["sem_val"] == 4, (r["one_nick_val"], r["sem_val"])
+
         print("test_one_nick: OK")
     finally:
         (browser_pool.generate_video, browser_pool._pace, browser.rotate_effective_proxy,
-         config.ONE_NICK, config.PROXY, config.NICKS_PER_IP, config.AUTO_RETRY) = orig
+         config.ONE_NICK, config.PROXY, config.NICKS_PER_IP, config.AUTO_RETRY, config.PARALLEL_PER_IP) = orig
 
 
 if __name__ == "__main__":

@@ -119,6 +119,9 @@ ONE_NICK = os.getenv("DOLA_ONE_NICK", "0").strip().lower() in ("1", "true", "yes
 # Khi bật MỖI LẦN MỘT NICK: mỗi IP proxy xoay dùng cho ĐÚNG N nick rồi mới đổi IP (điểm giữa: N=1 = 1 nick/IP
 # an toàn nhất nhưng chậm; N lớn = ít xoay hơn, nhanh hơn nhưng nhiều nick chung 1 IP). Mặc định 2 nick/IP.
 NICKS_PER_IP = max(1, int(os.getenv("DOLA_NICKS_PER_IP", "2")))
+# Trong lô đó, tối đa K job CHẠY SONG SONG trên cùng 1 IP (đối thủ v1.0.88 "IP chung mẻ": ≤6 job/IP). 1 = tuần tự như cũ.
+# IP đủ N job thì job kế CHỜ các job còn chạy trên IP xong mới đổi IP (đổi lúc đang chạy = cắt IP của chúng).
+PARALLEL_PER_IP = max(1, int(os.getenv("DOLA_PARALLEL_PER_IP", "1")))
 
 # Tự xóa watermark "Dola AI" ngay khi tải video xong (BẬT mặc định; DOLA_AUTO_REMOVE_WM=0 để tắt)
 AUTO_REMOVE_WM = os.getenv("DOLA_AUTO_REMOVE_WM", "1").strip().lower() not in ("0", "false", "no", "off", "")

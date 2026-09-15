@@ -40,6 +40,7 @@ PRESUBMIT_FAIL_COOLDOWN_SEC = 600
 # ngay (đối thủ v1.0.88: job CHỜ tài nguyên, không gửi bừa). Một video 30s dựng 9–35 phút.
 PINNED_BUSY_WAIT_SEC = int(os.getenv("DOLA_PINNED_BUSY_WAIT", "2700"))
 PINNED_BUSY_POLL_SEC = 3.0
+IP_DRAIN_POLL_SEC = 2.0   # nhịp kiểm "IP chung đã hết job chạy chưa" trước khi đổi IP lô mới
 # Cách ly nick (đối thủ v1.0.88: SPAM_SO_IP → "ACC SPAM CHỜ XỬ LÝ"): lỗi trước khi gửi trên ngần này IP KHÁC NHAU trong
 # SPAM_WINDOW_SEC → lỗi ở NICK (cookie/nick bị hạn chế), không phải proxy → nghỉ dài, khỏi đốt lượt mở Chrome/đổi IP.
 SPAM_IP_COUNT = int(os.getenv("DOLA_SPAM_IP_COUNT", "3"))
@@ -205,7 +206,9 @@ class BrowserPool:
         self.accounts_dir = Path(accounts_dir)
         self.max_concurrency = max(1, max_concurrency)
         self.semaphore = asyncio.Semaphore(self.max_concurrency)
-        self._one_nick = asyncio.Semaphore(1)   # MỖI LẦN MỘT NICK: 1 nick chạy trọn job tại một thời điểm
+        self._one_nick = asyncio.Semaphore(1)   # XOAY IP THEO LÔ: tối đa K job (config.PARALLEL_PER_IP) cùng lúc trên IP chung
+        self._one_nick_size = 1
+        self._ip_lock = asyncio.Lock()           # quyết định "lô IP" (đếm/đổi IP) từng job một
         self._ip_used = 0                        # số nick đã dùng IP proxy xoay hiện tại (đổi IP sau mỗi N nick)
         self._fail_ips: dict[str, dict[str, float]] = {}   # nick -> {đường ra (IP proxy/host/"direct"): lúc lỗi gần nhất}
         self._quarantine: dict[str, str] = {}            # nick -> lý do cách ly (hiện ở blocked_reason)
@@ -797,6 +800,18 @@ class BrowserPool:
         finally:
             _release_browser()
 
+    @staticmethod
+    async def _wait_ip_drained(account: str) -> None:
+        """Chờ tới khi không còn job nào chạy trên proxy xoay của nick (sổ giữ chỗ = 0) — để đổi IP lô mới an toàn."""
+        from browser import _effective_rotating, _proxy_leases
+        key = _effective_rotating(account)
+        waited = False
+        while key and _proxy_leases.get(key, 0) > 0:
+            if not waited:
+                print(f"[pool] {account}: IP chung đủ lô — chờ {_proxy_leases.get(key, 0)} job đang chạy trên IP này xong rồi đổi IP", flush=True)
+                waited = True
+            await asyncio.sleep(IP_DRAIN_POLL_SEC)
+
     async def _wait_pinned_nick(self, account: str, model, duration) -> None:
         """Nick được chọn đang bận (job khác đang dựng trên nó). Bật tự xoay mà có nick KHÁC rảnh + đủ điểm → đi luôn
         (vòng xoay bỏ qua nick bận, chạy trên nick rảnh). Không thì CHỜ nick rảnh, không giữ slot Chrome/cổng lúc chờ."""
@@ -836,6 +851,10 @@ class BrowserPool:
             await self._wait_pinned_nick(account, model, duration)   # TRƯỚC khi giữ cổng/slot Chrome
         one_nick_on = config.ONE_NICK and is_rotating_proxy(config.PROXY)
         if one_nick_on:
+            want = max(1, config.PARALLEL_PER_IP)
+            if want != self._one_nick_size:   # đổi K lúc đang chạy: job đang chạy không bị đụng, trần mới áp cho job sau
+                resize_semaphore(self._one_nick, want - self._one_nick_size)
+                self._one_nick_size = want
             await self._one_nick.acquire()
         # Semaphore = số Chrome chạy cùng lúc (RAM), KHÔNG phải số video cùng lúc: khi bật
         # DOLA_HTTP_POLL worker gọi on_browser_free ngay sau khi gửi xong (~20s) nên slot được trả
@@ -961,16 +980,24 @@ class BrowserPool:
                     # rồi mới xoay → không phí nhịp xoay, vẫn hạn chế trùng IP. N=1 = 1 nick/IP (an toàn nhất).
                     if one_nick_on:
                         n = max(1, config.NICKS_PER_IP)
-                        if self._ip_used >= n:
-                            self._ip_used = 0                       # IP hiện tại đã đủ N nick → lô mới, xoay IP
-                        if self._ip_used == 0:
-                            try:
-                                await asyncio.to_thread(rotate_effective_proxy, account)   # xin IP mới cho lô N nick
-                            except Exception as _e:  # noqa: BLE001 — đổi IP lỗi thì chạy tiếp IP cũ
-                                print(f"[pool] N nick/IP: đổi IP lỗi (chạy tiếp IP cũ): {_e}", flush=True)
-                        self._ip_used += 1
-                        print(f"[pool] {account}: dùng IP proxy xoay — lượt {self._ip_used}/{n} của IP này", flush=True)
-                        self._stamp_proxy(account, used=self._ip_used, per=n, fresh=(self._ip_used == 1))
+                        async with self._ip_lock:
+                            if self._ip_used >= n:
+                                # IP hiện tại đã đủ N job → lô mới. Còn job chạy trên IP này (K > 1) thì CHỜ chúng xong rồi mới
+                                # đổi IP; nhả slot Chrome trong lúc chờ để job đang chạy xin lại được (không khoá chéo).
+                                _release_browser()
+                                await self._wait_ip_drained(account)
+                                await _hold_browser()
+                                self._ip_used = 0
+                            if self._ip_used == 0:
+                                try:
+                                    await asyncio.to_thread(rotate_effective_proxy, account)   # xin IP mới cho lô N nick
+                                except Exception as _e:  # noqa: BLE001 — đổi IP lỗi thì chạy tiếp IP cũ
+                                    print(f"[pool] N nick/IP: đổi IP lỗi (chạy tiếp IP cũ): {_e}", flush=True)
+                            self._ip_used += 1
+                            used = self._ip_used
+                        print(f"[pool] {account}: dùng IP proxy xoay — lượt {used}/{n} của IP này "
+                              f"(tối đa {self._one_nick_size} job song song)", flush=True)
+                        self._stamp_proxy(account, used=used, per=n, fresh=(used == 1))
                     else:
                         self._stamp_proxy(account)   # không bật N nick/IP: vẫn hiện IP + nhà cung cấp (không có lượt)
                     try:

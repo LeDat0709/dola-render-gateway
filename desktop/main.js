@@ -939,16 +939,18 @@ ipcMain.handle("config:getOneNick", async () => {
   try {
     const r = await fetch(config().base + "/health", { cache: "no-store" });
     const j = await r.json();
-    return { ok: true, on: j.one_nick === true, nicksPerIp: j.nicks_per_ip || 2 };
+    return { ok: true, on: j.one_nick === true, nicksPerIp: j.nicks_per_ip || 2, parallelPerIp: j.parallel_per_ip || 1 };
   } catch (e) { return { ok: false, on: false, error: String(e).slice(0, 80) }; }
 });
-ipcMain.handle("config:setOneNick", async (_e, { on, nicksPerIp }) => {
+ipcMain.handle("config:setOneNick", async (_e, { on, nicksPerIp, parallelPerIp }) => {
   const c = config();
   const headers = { "Content-Type": "application/json" };
   if (c.adminKey) headers["x-admin-key"] = c.adminKey;
   const body = { one_nick: !!on };
   const n = parseInt(nicksPerIp, 10);
   if (Number.isFinite(n) && n >= 1) body.nicks_per_ip = n;
+  const k = parseInt(parallelPerIp, 10);
+  if (Number.isFinite(k) && k >= 1) body.parallel_per_ip = Math.min(16, k);
   try {
     const r = await fetch(c.base + "/api/admin/one-nick", { method: "POST", headers, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
@@ -956,8 +958,9 @@ ipcMain.handle("config:setOneNick", async (_e, { on, nicksPerIp }) => {
     if (!c.remote) {
       upsertEnvLocal("DOLA_ONE_NICK", on ? "1" : "0");
       if (body.nicks_per_ip) upsertEnvLocal("DOLA_NICKS_PER_IP", String(body.nicks_per_ip));
+      if (body.parallel_per_ip) upsertEnvLocal("DOLA_PARALLEL_PER_IP", String(body.parallel_per_ip));
     }
-    return { ok: true, on: !!on, nicksPerIp: j.nicks_per_ip, remote: c.remote };
+    return { ok: true, on: !!on, nicksPerIp: j.nicks_per_ip, parallelPerIp: j.parallel_per_ip, remote: c.remote };
   } catch (e) { return { ok: false, error: "Server chưa chạy? " + String(e).slice(0, 80) }; }
 });
 ipcMain.handle("proxy:setGlobal", async (_e, { proxy }) => {
