@@ -490,28 +490,44 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
 
 // TIẾN TRÌNH: MỘT thanh liên tục (%) + tên bước + thời gian, thay 5 vạch rời khó đọc. Bước "Dola dựng" tăng dần theo
 // thời gian dựng thường lệ (30s ~15p, 10/15s ~8p) để thấy còn lâu không; quá 1.5× thì chuyển vàng "đừng chạy lại".
-// [nhãn, % khi vào bước, màu chữ]
-const STAGE_META = {
-  checking: ["Kiểm tra cookie nick", 3, "text-info"], queued: ["Xếp hàng gửi", 5, "text-muted-foreground"],
-  waiting: ["Chờ slot Chrome", 8, "text-muted-foreground"], opening: ["Mở nick", 14, "text-info"],
-  submitting: ["Gửi prompt tới Dola", 22, "text-warn"], rendering: ["Dola đang dựng video", 25, "text-primary"],
-  processing: ["Đang tạo", 25, "text-primary"], downloading: ["Tải video về", 95, "text-tertiary"],
+// 3 chặng: Gửi → Dựng → Tải. Mỗi stage server báo ánh xạ về chặng nào; chặng "Dựng" tự đầy theo thời gian dựng
+// thường lệ (30s ~15p, 10/15s ~8p) để biết còn lâu không.
+const STEPS = ["Gửi", "Dựng", "Tải"];
+const STAGE_STEP = { checking: 0, queued: 0, waiting: 0, opening: 0, submitting: 0, rendering: 1, processing: 1, downloading: 2 };
+const STAGE_LABEL = {
+  checking: "Kiểm tra nick", queued: "Xếp hàng", waiting: "Chờ slot Chrome", opening: "Mở nick",
+  submitting: "Gửi prompt tới Dola", rendering: "Dola đang dựng video", processing: "Đang tạo", downloading: "Tải video về",
 };
 const STAGE_HINT = {
   checking: "xem cookie còn sống không", queued: "chờ server nhận job",
   waiting: "slot Chrome đang bận — máy khỏe thì tăng 'Nick gửi cùng lúc'",
   opening: "mở Chrome + vào Dola (treo quá 5 phút tự cắt, xoay nick)", submitting: "chờ Dola nhận lệnh",
 };
-const MILESTONES = [["Gửi", 14], ["Dựng", 25], ["Tải", 95]];
 const renderSec = (dur) => (parseInt(dur, 10) >= 30 ? 900 : 480);
 const fmtMs = (ms) => { const x = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(x / 60)}p ${String(x % 60).padStart(2, "0")}s`; };
 
 function progressOf(s) {
-  const [label, base, tone] = STAGE_META[s.stage] || STAGE_META.processing;
-  if (s.phase === "done") return { pct: 100, label: "Xong", tone: "text-tertiary" };
-  if (s.phase !== "running" || base !== 25) return { pct: base, label, tone };
-  const t = (Date.now() - (s.stageAt || s.startedAt)) / 1000, exp = renderSec(s.dur);
-  return { pct: Math.min(95, base + 70 * (t / exp)), label, tone, left: exp - t, slow: t > exp * 1.5 };
+  if (s.phase === "done") return { step: 3, label: "Hoàn tất", sub: 1 };
+  const step = STAGE_STEP[s.stage] ?? 1;
+  const label = STAGE_LABEL[s.stage] || "Đang tạo";
+  if (s.phase === "running" && step === 1) {   // chặng Dựng: đầy dần theo thời gian
+    const t = (Date.now() - (s.stageAt || s.startedAt)) / 1000, exp = renderSec(s.dur);
+    return { step, label, sub: Math.min(0.97, t / exp), left: exp - t, slow: t > exp * 1.5 };
+  }
+  return { step, label, sub: null };   // sub=null → chặng đang chạy dạng "đang xử lý" (sọc chạy), không đo %
+}
+
+// Một chặng trong thanh: xong = đầy màu; đang chạy = đầy theo sub (hoặc sọc chạy khi sub=null); chưa tới = rỗng.
+function Seg({ state, sub, tone, err }) {
+  const base = "relative h-1.5 flex-1 overflow-hidden rounded-full bg-surface-highest";
+  if (state === "done") return <div className={base}><div className={"absolute inset-0 rounded-full " + tone} /></div>;
+  if (state !== "cur") return <div className={base} />;
+  const fill = err ? "bg-error" : tone;
+  if (sub == null) return (   // đang xử lý, không đo được % → sọc chạy
+    <div className={base}><div className={"absolute inset-y-0 w-2/5 animate-[pulse_1.2s_ease-in-out_infinite] rounded-full " + fill} /></div>
+  );
+  return <div className={base}><div className={"absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 " + fill}
+    style={{ width: Math.max(6, sub * 100) + "%" }} /></div>;
 }
 
 function Progress({ s, a, compact = false, onRun, rotatedFrom }) {
@@ -519,25 +535,33 @@ function Progress({ s, a, compact = false, onRun, rotatedFrom }) {
   const run = s.phase === "running", done = s.phase === "done", err = s.phase === "error";
   const idle = !run && !done && !err;
   const took = s.startedAt ? fmtMs((s.endedAt || Date.now()) - s.startedAt) : "";
-  const fill = err ? "bg-error" : done ? "bg-tertiary" : p.slow ? "bg-warn" : "bg-gradient-to-r from-primary to-info shadow-[0_0_8px] shadow-primary/40";
+  const tone = done ? "bg-tertiary" : p.slow ? "bg-warn" : "bg-primary";
+  const toneText = done ? "text-tertiary" : p.slow ? "text-warn" : err ? "text-error" : run ? "text-primary" : "text-muted-foreground";
+  // err: tô đỏ đúng chặng đang dở; idle: 3 chặng rỗng.
+  const curStep = err ? (STAGE_STEP[s.stage] ?? 1) : p.step;
   return (
-    <div className="flex w-full min-w-0 flex-col gap-1">
-      {(run || done) && (
+    <div className="flex w-full min-w-0 flex-col gap-1.5">
+      {(run || done || err) && (
         <div className="flex items-center gap-1.5 text-[12px] leading-none">
-          {run
-            ? <span className="relative flex h-2 w-2 flex-none"><span className="absolute h-full w-full animate-ping rounded-full bg-primary/60" /><span className="relative h-2 w-2 rounded-full bg-primary" /></span>
-            : <CheckCircle2 className="h-3.5 w-3.5 flex-none text-tertiary" />}
-          <span className={"truncate font-medium " + p.tone}>{p.label}</span>
-          <span className="ml-auto flex-none font-mono text-[10.5px] tabular-nums text-muted-foreground">{took}{run ? ` · ${Math.round(p.pct)}%` : ""}</span>
+          {run ? <span className="relative flex h-2 w-2 flex-none"><span className="absolute h-full w-full animate-ping rounded-full bg-primary/60" /><span className="relative h-2 w-2 rounded-full bg-primary" /></span>
+            : done ? <CheckCircle2 className="h-3.5 w-3.5 flex-none text-tertiary" />
+              : <span className="h-2 w-2 flex-none rounded-full bg-error" />}
+          <span className={"truncate font-medium " + toneText}>{err ? fmtError(s.errorRaw || "").short : p.label}</span>
+          <span className="ml-auto flex-none font-mono text-[10.5px] tabular-nums text-muted-foreground">
+            {done ? took : run ? (p.sub != null ? `${Math.round(p.sub * 100)}% · ${took}` : took) : ""}
+          </span>
         </div>
       )}
-      <div className="relative h-2 overflow-hidden rounded-full bg-surface-highest" title={run ? `${p.label} · ${Math.round(p.pct)}%` : undefined}>
-        {!idle && <div className={"h-full rounded-full transition-[width] duration-700 " + fill} style={{ width: (err ? Math.max(p.pct, 6) : p.pct) + "%" }} />}
-        {MILESTONES.map(([n, x]) => <span key={n} className="absolute top-0 h-full w-0.5 bg-surface-lowest/80" style={{ left: x + "%" }} />)}
+      <div className="flex items-center gap-1" title={run ? `${p.label}${p.sub != null ? " · " + Math.round(p.sub * 100) + "%" : ""}` : undefined}>
+        {STEPS.map((_, i) => (
+          <Seg key={i} tone={tone} err={err && i === curStep}
+            sub={i === curStep ? p.sub : null}
+            state={idle ? "todo" : done || i < curStep ? "done" : i === curStep ? "cur" : "todo"} />
+        ))}
       </div>
       {!compact && (
-        <div className="relative h-3 font-mono text-[9.5px] text-muted-foreground">
-          {MILESTONES.map(([n, x]) => <span key={n} className={"absolute -translate-x-1/2 " + (!idle && p.pct >= x ? (err ? "text-error" : "text-foreground/80") : "")} style={{ left: x + "%" }}>{n}</span>)}
+        <div className="flex justify-between font-mono text-[9.5px] text-muted-foreground">
+          {STEPS.map((n, i) => <span key={n} className={!idle && (done || i < curStep) ? "text-foreground/70" : i === curStep && !idle ? toneText : ""}>{n}</span>)}
         </div>
       )}
       {run && (
