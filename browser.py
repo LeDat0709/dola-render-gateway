@@ -147,22 +147,28 @@ def _is_bare_tmproxy_key(raw: str) -> bool:
     return len(raw) == 32 and all(c in "0123456789abcdefABCDEF" for c in raw)
 
 
-_TOPPROXY_BASE = "https://proxyxoay.shop/api/get.php"   # topproxy.vn xoay qua backend proxyxoay.shop
+_PROXYXOAY_BASE = "https://proxyxoay.shop/api/get.php"   # backend chung
+_TOPPROXY_BASE = _PROXYXOAY_BASE                          # giữ tên cũ cho chỗ khác import
+# Các nhà bán đều XOAY qua backend proxyxoay.shop/get.php (cùng key/tham số/JSON) → '<reseller>://KEY' expand y hệt.
+# Xác thực THEO IP máy (whitelist) — nhớ whitelist IP ở trang nhà bán, khác TMProxy (xác thực bằng KEY).
+_ROTATING_RESELLERS = ("topproxy", "proxyvn", "proxyxoay")
 
 
 def normalize_proxy_input(raw: str) -> str:
     """Chuẩn hoá đầu vào proxy trước khi phân tích/lưu. KEY TMProxy trần (32 hex) → 'tmproxy://KEY' để dán
-    mỗi key là chạy (TMProxy xác thực bằng KEY, không whitelist IP). 'topproxy://KEY' → link get.php đầy đủ
-    (topproxy xác thực theo IP máy — nhớ whitelist). proxyxoay/nhà bán get.php khác dán NGUYÊN link. Còn lại giữ nguyên."""
+    mỗi key là chạy (TMProxy xác thực bằng KEY, không whitelist IP). '<reseller>://KEY' (topproxy/proxyvn/proxyxoay)
+    → link get.php đầy đủ (xác thực theo IP máy — nhớ whitelist). Nhà bán get.php khác dán NGUYÊN link. Còn lại giữ nguyên."""
     raw = (raw or "").strip()
-    if raw.lower().startswith("topproxy://"):
-        rest = raw[len("topproxy://"):].strip()
-        if not rest:
-            return raw
-        if "?" in rest:                                    # topproxy://KEY?nhamang=viettel&tinhthanh=5
-            key, qs = rest.split("?", 1)
-            return f"{_TOPPROXY_BASE}?key={key}&{qs}"
-        return f"{_TOPPROXY_BASE}?key={rest}&nhamang=random&tinhthanh=0"
+    low = raw.lower()
+    for pfx in _ROTATING_RESELLERS:
+        if low.startswith(pfx + "://"):
+            rest = raw[len(pfx) + 3:].strip()
+            if not rest:
+                return raw
+            if "?" in rest:                                # proxyvn://KEY?nhamang=viettel&tinhthanh=5
+                key, qs = rest.split("?", 1)
+                return f"{_PROXYXOAY_BASE}?key={key}&{qs}"
+            return f"{_PROXYXOAY_BASE}?key={rest}&nhamang=random&tinhthanh=0"
     return f"tmproxy://{raw}" if _is_bare_tmproxy_key(raw) else raw
 
 

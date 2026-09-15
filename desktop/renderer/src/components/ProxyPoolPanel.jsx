@@ -68,6 +68,7 @@ export default function ProxyPoolPanel({ onAssigned }) {
       <Textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} className="bg-background font-mono text-xs"
         placeholder={provider === "tmproxy" ? "Mỗi dòng một KEY TMProxy trần:\nabc123...   (tool tự lấy IP + tự đổi IP)"
           : provider === "topproxy" ? "Mỗi dòng một KEY TopProxy trần:\nWvsxrBXBy...   (nhớ whitelist IP máy trên topproxy.vn)"
+          : provider === "proxyvn" ? "Mỗi dòng một KEY Proxy.vn trần:\nabc123...   (cùng backend proxyxoay.shop — NHỚ whitelist IP máy trên proxy.vn)"
           : "Mỗi dòng một proxy:\n103.1.2.3:8080:user:pass\nhttp://user:pass@1.2.3.4:8080\nsocks5://1.2.3.4:1080\ntmproxy://API_KEY\nhttps://proxyxoay.shop/api/get.php?key=...   (link topproxy/proxyxoay)"} />
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-muted-foreground">Loại</span>
@@ -75,6 +76,7 @@ export default function ProxyPoolPanel({ onAssigned }) {
           <option value="">Tự động (link / host:port)</option>
           <option value="tmproxy">TMProxy — dán key trần</option>
           <option value="topproxy">TopProxy — dán key trần</option>
+          <option value="proxyvn">Proxy.vn — dán key trần</option>
         </SelectNative>
         <Button size="sm" onClick={add} disabled={!!busy || !text.trim()}><Plus className="h-4 w-4" />Thêm vào kho</Button>
         <span className="mx-1 h-4 w-px bg-surface-high" />
