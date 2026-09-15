@@ -84,6 +84,9 @@ VIDEO_TIMEOUT_30S = int(os.getenv("DOLA_VIDEO_TIMEOUT_30S", "2400"))
 # Tự thử lại 1 lần khi Dola lỗi tạm thời (tạo thêm 1 cuộc trò chuyện) và xoay sang nick khác cho job
 # không ghim nick. Tắt (DOLA_AUTO_RETRY=0) = lỗi là dừng ngay. Đổi được lúc chạy qua POST /api/admin/retry.
 AUTO_RETRY = os.getenv("DOLA_AUTO_RETRY", "1").strip().lower() not in ("0", "false", "no", "off")
+# ĐỐT NICK (nick dùng 1 lần, như tool Seedance): nick dùng HẾT lượt/điểm thì tắt lịch + ghi chú "[ĐÃ ĐỐT …]" để không chạy
+# lại mai (team dùng nick FB 1 lần rồi bỏ). Mặc định TẮT. Đổi lúc chạy qua POST /api/admin/burn-nicks.
+BURN_NICKS = os.getenv("DOLA_BURN_NICKS", "0").strip().lower() in ("1", "true", "yes", "on")
 
 # Giãn nhịp giữa các lần gửi lệnh lên Dola (toàn server, mọi nick): cố định + ngẫu nhiên 0..JITTER giây.
 # Học từ DomixHub ("Nghỉ giữa các job" + jitter 2–5s). Bắn 10 nick trong cùng 1 giây là dấu hiệu bot rõ nhất

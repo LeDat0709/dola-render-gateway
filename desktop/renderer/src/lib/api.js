@@ -275,6 +275,14 @@ export async function recentTasks(limit = 200) {
 // Video "đã về máy" = video_url trỏ về /videos/ của gateway (đã tải); còn link CDN = "chỉ trên Dola".
 export const isLocalVideo = (u) => /\/videos\//.test(String(u || ""));
 // Tải lại video đã xong (còn trên Dola) về máy — cho video chưa có file (proxy rớt lúc chạy).
+// Đốt nick (nick dùng 1 lần): server tự nhớ vào .env.local, chạy cả khi nối máy chủ từ xa.
+export async function setBurnNicks(on) {
+  await ensureConfig();
+  const r = await fetch(cfg.base + "/api/admin/burn-nicks", { method: "POST", headers: { ...adminHeaders(), "Content-Type": "application/json" }, body: JSON.stringify({ burn_nicks: !!on }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
+  return j;
+}
 // Check Video Nick: video đã dựng xong trên Dola của nick (server đọc lịch sử hội thoại, không tốn lượt).
 export async function scanNickVideos(name, limit = 30) {
   await ensureConfig();

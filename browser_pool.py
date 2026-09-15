@@ -398,6 +398,21 @@ class BrowserPool:
             (self._next_limit_reset(), reason[:300], time.time(), account),
         )
         self._conn.commit()
+        self._burn_if_enabled(account, "hết điểm")
+
+    def _burn_if_enabled(self, account: str, reason: str) -> None:
+        """ĐỐT NICK (bật config.BURN_NICKS): nick dùng hết lượt/điểm → tắt lịch + ghi chú "[ĐÃ ĐỐT dd/mm HH:MM: lý do]" (giữ
+        ghi chú cũ), để mai không tự chạy lại. Chạy đích danh trong Studio vẫn tự mở lại (người dùng quyết)."""
+        if not config.BURN_NICKS:
+            return
+        m = self._meta(account)
+        if not m or "[ĐÃ ĐỐT" in (m["note"] or ""):
+            return
+        tag = f"[ĐÃ ĐỐT {time.strftime('%d/%m %H:%M')}: {reason[:40]}]"
+        self._conn.execute("UPDATE accounts_meta SET scheduling=0, note=? WHERE name=?",
+                           (f"{tag} {m['note'] or ''}".strip(), account))
+        self._conn.commit()
+        print(f"[pool] {account}: {tag} — tắt lịch (chế độ đốt nick)", flush=True)
 
     def _mark_daily_limit(self, account: str, reason: str = ""):
         """Marks account as reaching daily limit until next reset."""
@@ -411,6 +426,7 @@ class BrowserPool:
             (time.time(), self._next_limit_reset(), reason[:300], account),
         )
         self._conn.commit()
+        self._burn_if_enabled(account, "hết lượt ngày")
 
     def list_accounts(self) -> list:
         """Dashboard view: combines metadata, quota, and busy status."""
@@ -634,6 +650,8 @@ class BrowserPool:
             self._set_credit_balance(account, cb - cost, "after-job")
         self._conn.execute("UPDATE accounts_meta SET last_used_at=? WHERE name=?", (time.time(), account))
         self._conn.commit()
+        if cb is None and self.used_today(account) >= DAILY_LIMIT:
+            self._burn_if_enabled(account, "dùng hết lượt ngày")
 
     def _set_credit_balance(self, account: str, balance: int, source: str = ""):
         self._conn.execute(
@@ -646,6 +664,8 @@ class BrowserPool:
                 (self._next_limit_reset(), source[:300] or "Insufficient credits", account),
             )
         self._conn.commit()
+        if balance < 1:
+            self._burn_if_enabled(account, "hết điểm")
 
     def _credit_available(self, account: str, required: int = 2) -> bool:
         row = self._meta(account)

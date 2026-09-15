@@ -3,7 +3,7 @@ import { FolderOpen, Folder, Server, Network, SlidersHorizontal, HardDrive } fro
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api, cfg, loadConfig, adminConfig, health as fetchHealth } from "@/lib/api";
+import { api, cfg, loadConfig, adminConfig, health as fetchHealth, setBurnNicks } from "@/lib/api";
 
 // Mỗi khối lưu riêng; mục nào cần Tắt rồi Bật server thì ghi ngay dưới nút Lưu.
 // Chỉ hiện những gì backend thật có: máy chủ từ xa, proxy chung, tự thử lại, thư mục (IPC main.js) và
@@ -30,6 +30,7 @@ export default function SettingsTab({ active = true }) {
   const [lane, setLane] = useState(null); const [laneBusy, setLaneBusy] = useState(false);
   const [rb, setRb] = useState(""); const [rk, setRk] = useState(""); const [ra, setRa] = useState(""); const [rMsg, setRMsg] = useState("");
   const [autoRetry, setAutoRetry] = useState(true); const [arMsg, setArMsg] = useState("");
+  const [burn, setBurn] = useState(false); const [burnMsg, setBurnMsg] = useState("");
   const [oneNick, setOneNick] = useState(false); const [onMsg, setOnMsg] = useState(""); const [nicksPerIp, setNicksPerIp] = useState(2); const [parallelPerIp, setParallelPerIp] = useState(1);
   const [srv, setSrv] = useState(null);     // cấu hình server đang chạy (/api/admin/config) hoặc null khi server tắt
   const [up, setUp] = useState(false);
@@ -47,6 +48,7 @@ export default function SettingsTab({ active = true }) {
     loadLane();
     api.getRemote?.().then((r) => { setRb(r?.base || ""); setRk(r?.apiKey || ""); setRa(r?.adminKey || ""); }).catch(() => {});
     api.getAutoRetry?.().then((r) => setAutoRetry(r?.on !== false)).catch(() => {});
+    fetchHealth().then((h) => setBurn(h?.burn_nicks === true)).catch(() => {});
     api.getOneNick?.().then((r) => { setOneNick(r?.on === true); if (r?.nicksPerIp) setNicksPerIp(r.nicksPerIp); if (r?.parallelPerIp) setParallelPerIp(r.parallelPerIp); }).catch(() => {});
     api.getVersion?.().then(setVer).catch(() => {});
     refreshHealth();
@@ -75,6 +77,14 @@ export default function SettingsTab({ active = true }) {
     const r = await api.setAutoRetry?.(on);
     if (!r?.ok) { setAutoRetry(!on); setArMsg("✗ " + (r?.error || "Bật server rồi thử lại")); return; }
     setArMsg(`✓ Đã ${on ? "BẬT" : "TẮT"} tự thử lại / xoay nick — áp dụng ngay cho server đang chạy.`);
+  };
+  const toggleBurn = async (e) => {
+    const on = e.target.checked;
+    setBurn(on);
+    try {
+      await setBurnNicks(on);
+      setBurnMsg(on ? "✓ Đã BẬT đốt nick — nick dùng hết lượt/điểm sẽ bị tắt lịch + ghi chú [ĐÃ ĐỐT]. Lọc 'Đã đốt' ở Kho tài khoản để xoá." : "✓ Đã TẮT đốt nick.");
+    } catch (err) { setBurn(!on); setBurnMsg("✗ " + (err?.message || "Bật server rồi thử lại")); }
   };
   const toggleOneNick = async (e) => {
     const on = e.target.checked;
@@ -215,6 +225,12 @@ export default function SettingsTab({ active = true }) {
               <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật: Dola báo lỗi tạm thời thì gửi lại 1 lần trên chính nick đó (không tốn lượt); nếu nick của thẻ HẾT LƯỢT/CHẾT/bị chặn thì TỰ XOAY sang nick khác còn chạy được (nick của thẻ đang bận mà còn nick khác rảnh thì chạy luôn trên nick rảnh). Tắt: lỗi là dừng ngay, chỉ chạy đúng nick của thẻ (nick đang bận thì job CHỜ nick rảnh, tối đa 45 phút).</span></span>
           </label>
           <Msg text={arMsg} />
+          <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">
+            <input type="checkbox" className="mt-1" checked={burn} onChange={toggleBurn} />
+            <span><span className="font-medium">Đốt nick khi dùng hết lượt/điểm (nick dùng 1 lần)</span>
+              <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật: nick hết lượt ngày hoặc hết điểm thì tự TẮT LỊCH và gắn ghi chú <code className="font-mono">[ĐÃ ĐỐT dd/mm: lý do]</code> — mai không tự chạy lại. Dùng khi team xài nick Facebook 1 lần rồi bỏ; lọc "Đã đốt" ở Kho tài khoản để xoá hàng loạt. Chạy đích danh nick trong Studio vẫn tự mở lại. Tắt (mặc định): nick hết lượt tự mở lại sau 0h giờ Nhật.</span></span>
+          </label>
+          <Msg text={burnMsg} />
           <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">
             <input type="checkbox" className="mt-1" checked={oneNick} onChange={toggleOneNick} />
             <span><span className="font-medium">Xoay IP theo lô (1 key proxy xoay cho nhiều nick)</span>

@@ -15,7 +15,7 @@ import NickVideosDialog from "@/components/NickVideosDialog";
 
 const POLL_MS = 4000;
 const ORDER = { ready: 0, busy: 1, cooling: 2, quota: 3, off: 4, dead: 5 };
-const FILTERS = [["", "Tất cả trạng thái"], ["ready", "Sẵn sàng"], ["busy", "Đang chạy"], ["quota", "Hết credit / hết lượt"], ["cooling", "Đang nghỉ"], ["off", "Tạm ngưng"], ["dead", "Chưa đăng nhập"]];
+const FILTERS = [["", "Tất cả trạng thái"], ["ready", "Sẵn sàng"], ["busy", "Đang chạy"], ["quota", "Hết credit / hết lượt"], ["cooling", "Đang nghỉ"], ["off", "Tạm ngưng"], ["dead", "Chưa đăng nhập"], ["burned", "Đã đốt (dùng hết)"]];
 const SORTS = [["status", "Xếp: Trạng thái"], ["name", "Xếp: Tên"], ["remaining", "Xếp: Credit còn"], ["last", "Xếp: Dùng gần nhất"]];
 const msgOf = (e) => String((e && e.message) || e).slice(0, 140);
 
@@ -88,7 +88,7 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
     const kw = q.trim().toLowerCase();
     const out = all
       .map((a) => ({ ...a, st: accState(a) }))
-      .filter((a) => !filter || a.st === filter)
+      .filter((a) => !filter || (filter === "burned" ? String(a.note || "").includes("[ĐÃ ĐỐT") : a.st === filter))
       .filter((a) => !kw || [a.name, a.email, a.note, a.proxy].some((v) => String(v || "").toLowerCase().includes(kw)));
     return [...out].sort((x, y) =>
       sort === "remaining" ? (y.remaining ?? 0) - (x.remaining ?? 0)

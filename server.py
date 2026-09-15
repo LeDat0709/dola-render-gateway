@@ -588,6 +588,7 @@ async def health():
         "max_login_slots": MAX_LOGIN_SLOTS,
         "http_poll": config.HTTP_POLL,
         "auto_retry": config.AUTO_RETRY,
+        "burn_nicks": config.BURN_NICKS,
         "one_nick": config.ONE_NICK,
         "nicks_per_ip": config.NICKS_PER_IP,
         "parallel_per_ip": config.PARALLEL_PER_IP,
@@ -976,6 +977,20 @@ async def admin_account_open(name: str, x_admin_key: str | None = Header(default
     import subprocess
     subprocess.Popen([_sys.executable, str(Path(__file__).resolve().with_name("login_profile.py")), name])   # `sys` chỉ được import là _sys → NameError 500
     return {"ok": True, "message": f"Opening browser for {name}..."}
+
+
+class BurnNicksUpdate(BaseModel):
+    burn_nicks: bool
+
+
+@app.post("/api/admin/burn-nicks")
+async def admin_burn_nicks(body: BurnNicksUpdate, x_admin_key: str | None = Header(default=None)):
+    """Bật/tắt ĐỐT NICK (nick dùng hết lượt/điểm → tắt lịch + ghi chú [ĐÃ ĐỐT]) ngay lúc chạy, nhớ vào .env.local."""
+    _admin_auth(x_admin_key)
+    config.BURN_NICKS = body.burn_nicks
+    config.upsert_env_local("DOLA_BURN_NICKS", "1" if body.burn_nicks else "0")
+    print(f"[gateway] đốt nick khi hết lượt/điểm: {'BẬT' if config.BURN_NICKS else 'TẮT'}", flush=True)
+    return {"ok": True, "burn_nicks": config.BURN_NICKS}
 
 
 class AutoRetryUpdate(BaseModel):

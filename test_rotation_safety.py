@@ -674,6 +674,32 @@ def test_dirty_ip_rotated_before_next_nick():
         _b._dirty_ips.clear()
 
 
+# ---------- R30: đốt nick (tuỳ chọn): nick dùng hết điểm → tắt lịch + ghi chú [ĐÃ ĐỐT], giữ ghi chú cũ; tắt thì không đụng ----------
+def test_burn_nick_when_exhausted_only_if_enabled():
+    old = browser_pool.config.BURN_NICKS
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            pool = _pool(tmp)
+            for n in ("n1", "n2"):
+                pool._ensure_meta(n)
+            pool.set_note("n1", "nick Hoài Nam")
+            browser_pool.config.BURN_NICKS = False
+            pool._set_credit_balance("n2", 0, "Không đủ điểm")
+            assert pool._meta("n2")["scheduling"] == 1 and "[ĐÃ ĐỐT" not in (pool._meta("n2")["note"] or ""), "tắt → không đốt"
+            browser_pool.config.BURN_NICKS = True
+            pool._set_credit_balance("n1", 3, "còn điểm")
+            assert pool._meta("n1")["scheduling"] == 1, "còn điểm → không đốt"
+            pool._set_credit_balance("n1", 0, "Không đủ điểm")
+            m = pool._meta("n1")
+            assert m["scheduling"] == 0 and m["note"].startswith("[ĐÃ ĐỐT") and m["note"].endswith("nick Hoài Nam"), dict(m)
+            pool._mark_daily_limit("n1", "上限")
+            assert pool._meta("n1")["note"].count("[ĐÃ ĐỐT") == 1, "đốt 1 lần, không gắn thẻ chồng"
+            pool._mark_daily_limit("n2", "上限")
+            assert pool._meta("n2")["scheduling"] == 0 and "hết lượt ngày" in pool._meta("n2")["note"]
+    finally:
+        browser_pool.config.BURN_NICKS = old
+
+
 if __name__ == "__main__":
     import sys
     tests = [(k, v) for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]
