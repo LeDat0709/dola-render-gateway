@@ -84,7 +84,9 @@ function VideoCard({ v, onPlay }) {
 }
 
 export default function OverviewTab({ health, onPlay, onGo, active = true }) {
-  const [accs, setAccs] = useState([]);
+  const [accsRaw, setAccs] = useState([]);
+  // adminAccounts (cần admin key) lỗi/chưa nạp → lấy tạm nick từ /health (giống dải trên cùng) để Tổng quan không hiện "0 nick".
+  const accs = accsRaw.length ? accsRaw : (health?.accounts || []).map((x) => ({ ...x, name: x.name || x.account }));
   const [tasks, setTasks] = useState([]);
   const [rep, setRep] = useState(null);
   const [gproxy, setGproxy] = useState("");
