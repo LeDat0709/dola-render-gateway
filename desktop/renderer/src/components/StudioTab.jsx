@@ -58,6 +58,9 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const [clock, setClock] = useState(0);
   const inflight = useRef(new Set());
   const [conc, setConc] = useState({ send: "", login: "", gmin: "", gmax: "" });   // gmin/gmax: chờ ngẫu nhiên giữa lần gửi
+  // Bỏ qua bước "kiểm tra nick" trước khi chạy (deadNicks): chạy thẳng, nick cookie chết sẽ lỗi lúc gửi rồi tự xoay.
+  const [skipVerify, setSkipVerify] = useState(() => { try { return localStorage.getItem("dolaSkipVerify") === "1"; } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem("dolaSkipVerify", skipVerify ? "1" : "0"); } catch {} }, [skipVerify]);
   const stop = useRef(false);
   const vidDir = useRef("");
 
@@ -185,9 +188,10 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     }
     stop.current = false;
     // Phản hồi ngay trên từng thẻ: trước đây bấm Chạy là bảng đứng im tới 12s (chờ verify).
-    ns.forEach((n) => setRow(n, { phase: "running", stage: "checking", startedAt: Date.now(), errorRaw: "", videoUrl: "" }));
-    setGen("Kiểm tra phiên đăng nhập trước khi chạy…");
-    const dead = await deadNicks(ns);
+    ns.forEach((n) => setRow(n, { phase: "running", stage: skipVerify ? "queued" : "checking", startedAt: Date.now(), errorRaw: "", videoUrl: "" }));
+    // Bỏ qua kiểm tra nick: chạy thẳng, khỏi mở Chrome kiểm phiên (nick cookie chết sẽ lỗi lúc gửi rồi tự xoay).
+    const dead = skipVerify ? [] : await deadNicks(ns);
+    if (!skipVerify) setGen("Kiểm tra phiên đăng nhập trước khi chạy…");
     dead.forEach((n) => setRow(n, { phase: "error", errorRaw: "Cookie hết hạn — đăng nhập lại nick này rồi chạy lại." }));
     const blocked = ns.filter((n) => {
       const a = accounts.find((x) => x.account === n);
@@ -423,6 +427,10 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <span>Đăng nhập cùng lúc</span>
         <Input className="h-7 w-14 font-mono text-[11px]" type="number" min={1} max={health?.max_login_slots || 12} value={conc.login} onChange={(e) => setConc({ ...conc, login: e.target.value })} />
         <Button variant="outline" size="sm" className="h-7" onClick={applyConc}>Áp dụng</Button>
+        <label className="ml-2 flex cursor-pointer items-center gap-1.5" title="Bỏ bước 'đang kiểm tra nick' trước khi chạy: chạy thẳng cho nhanh. Nick cookie chết sẽ lỗi lúc gửi rồi tự xoay.">
+          <input type="checkbox" checked={skipVerify} onChange={(e) => setSkipVerify(e.target.checked)} />
+          <span>Bỏ qua kiểm tra nick</span>
+        </label>
         <span className="ml-2" title="Giãn nhịp ngẫu nhiên giữa mỗi lần gửi (theo từng proxy) để tránh Dola chặn 710022002 'gửi quá dày'">Chờ ngẫu nhiên</span>
         <Input className="h-7 w-12 font-mono text-[11px]" type="number" min={0} max={60} value={conc.gmin} onChange={(e) => setConc({ ...conc, gmin: e.target.value })} />
         <span>–</span>
