@@ -41,7 +41,18 @@ export async function pollJob(id) {
   return j;
 }
 
-export const creditCost = (dur) => (parseInt(dur, 10) >= 30 ? 2 : 1);
+// Điểm/video — khớp pool (_cost_for/_default_cost). `table` = health.credit_cost (giá server đã học); server cũ chưa
+// gửi thì dùng giá đo 13/09: Seedance 2.5 → 30s = 2, 10/15s = 4 (ĐẮT hơn 30s); Seedance 2.0 = 1.
+export const creditCost = (dur, model, table) => {
+  const d = parseInt(dur, 10) || 10;
+  return table?.[model]?.[String(d)] || (/2\.5/.test(String(model)) ? (d >= 30 ? 2 : 4) : 1);
+};
+// Gợi ý khi nick còn `rem` điểm mà không đủ: lựa chọn rẻ hơn thật sự vừa túi.
+export const cheaperHint = (rem, table) => {
+  if (rem >= creditCost(30, "seedance-2.5", table)) return `để Seedance 2.5 · 30s (${creditCost(30, "seedance-2.5", table)} điểm) hoặc đổi nick`;
+  if (rem >= creditCost(10, "seedance-2.0", table)) return `chọn Seedance 2.0 (${creditCost(10, "seedance-2.0", table)} điểm/video) hoặc đổi nick`;
+  return "đổi nick khác hoặc chờ reset 22h (0h giờ Nhật)";
+};
 export const firstLine = (v) => String(v || "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean)[0] || "";
 export const fnameFromUrl = (u) => String(u || "").split("?")[0].split("#")[0].split("/").pop();
 export const sttFromUrl = (u) => (String(fnameFromUrl(u)).match(/^(\d+)_/) || [])[1];
@@ -66,7 +77,7 @@ export function fmtError(raw) {
   if (/không chạy được|không sẵn sàng/i.test(r)) return A("🚫", "Nick chưa chạy được", r.split(":").pop().trim().slice(0, 60));
   if (/no available accounts|no accounts|không có nick/i.test(r)) return T("🚦", "Hết nick chạy được", "Chờ nick rảnh, hoặc bật lịch thêm nick.");
   if (/hết lượt tạo video hôm nay|daily limit|本日は|上限/i.test(r)) return A("📅", "Hết lượt hôm nay", "Mai chạy lại, hoặc dùng nick khác.");
-  if (/không đủ lượt|hết điểm|insufficient|đủ điểm|quota|クレジット|残り|lượt cho video|giảm thời lượng|credit hôm nay|còn \d+ credit/i.test(r)) return A("💳", "Không đủ lượt/điểm", "Để 30s là rẻ nhất (chỉ 2 lượt), hoặc đổi nick khác.");
+  if (/không đủ lượt|hết điểm|insufficient|đủ điểm|quota|クレジット|残り|lượt cho video|giảm thời lượng|credit hôm nay|còn \d+ credit/i.test(r)) return A("💳", "Không đủ lượt/điểm", "2.5: 30s rẻ nhất (2 điểm) · Seedance 2.0 chỉ 1 điểm · hoặc đổi nick.");
   if (/không hiểu prompt|意味不明|内容が不明|内容が不足|not a valid prompt/i.test(r)) return T("✍️", "Dola không hiểu prompt", "Viết mô tả cảnh quay cụ thể (không mất lượt).");
   if (/chặn nội dung|content policy|bản quyền|ポリシー|著作/i.test(r)) return A("🚫", "Bị chặn nội dung", "Đổi prompt nhẹ hơn (không mất lượt).");
   if (/chân dung|portrait|顔/i.test(r)) return A("🧑", "Chặn bảo vệ chân dung", "Dùng ảnh mặt của chính bạn.");

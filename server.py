@@ -594,6 +594,10 @@ async def health():
         "ip_used": getattr(pool, "_ip_used", 0),       # số nick đã dùng IP hiện tại (lượt k/N)
         "submit_gap_min": config.SUBMIT_GAP_SEC,                                  # chờ ngẫu nhiên tối thiểu giữa lần gửi
         "submit_gap_max": config.SUBMIT_GAP_SEC + config.SUBMIT_JITTER_SEC,       # …tối đa (min + jitter)
+        # Điểm/video theo model × giây — ĐÚNG giá pool dùng (học từ Dola, chưa có thì giá đo 13/09). UI tự đoán
+        # "10/15s = 1 điểm" cho mọi model → loại nhầm/nhận nhầm nick, bấm chạy mà không gửi job (15/09).
+        "credit_cost": {m: {str(d): pool._cost_for(m, d) or pool._default_cost(m, d) for d in SUPPORTED_DURATIONS}
+                        for m in ("seedance-2.0", "seedance-2.5")},
     }
 
 
@@ -1112,7 +1116,8 @@ async def admin_jobs(x_admin_key: str | None = Header(default=None)):
 @app.get("/api/admin/tasks")
 async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"tasks": store.recent_tasks(min(max(limit, 1), 2000))}   # kho video cần xem xa hơn 200 job
+    # kho video cần xem xa hơn 200 job; kèm stage để Tổng quan vẽ dòng chảy job (chờ slot → mở nick → gửi → dựng)
+    return {"tasks": [{**t, "stage": _task_stage(t)} for t in store.recent_tasks(min(max(limit, 1), 2000))]}
 
 
 class RedownloadReq(BaseModel):

@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { SelectNative } from "@/components/ui/select-native";
 import { ViewToggle, useView } from "@/components/ui/view-toggle";
-import { api, submitJob, pollJob, fmtError, creditCost, firstLine, fnameFromUrl, sttFromUrl, accState, accChip, canRunAccount, deleteAccount, STAGE_TEXT, riskyPrompt, durationMismatch, deadNicks, setConcurrency, patchAccount, wakeAccount, inflightTasks, accState as accStateOf } from "@/lib/api";
+import { api, submitJob, pollJob, fmtError, creditCost, cheaperHint, firstLine, fnameFromUrl, sttFromUrl, accState, accChip, canRunAccount, deleteAccount, STAGE_TEXT, riskyPrompt, durationMismatch, deadNicks, setConcurrency, patchAccount, wakeAccount, inflightTasks, accState as accStateOf } from "@/lib/api";
 
 const MODELS = ["seedance-2.0", "seedance-2.5"];
 const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"];
@@ -103,7 +103,8 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const elapsed = (ms) => { const s = Math.max(0, Math.floor((Date.now() - ms) / 1000)); return `${Math.floor(s / 60)}p ${String(s % 60).padStart(2, "0")}s`; };
   // Nick còn điểm NHƯNG không đủ cho thời lượng đang chọn (vd còn 1 mà 30s cần 2) = coi như HẾT ĐIỂM hôm nay:
   // cho "nghỉ" (không đưa vào Chạy sẵn sàng), đẩy xuống cuối + làm mờ. Điểm tự reset 0h JST nên không đụng lịch.
-  const needForDur = creditCost(def.dur) || 1;
+  const cost = (model, dur) => creditCost(dur, model, health?.credit_cost);   // giá THẬT theo model (2.5 · 15s = 4 điểm)
+  const needForDur = cost(def.model, def.dur);
   const lowCredit = (a) => a.remaining != null && a.remaining < needForDur;
 
   async function runOne(n, promptOverride) {
@@ -119,8 +120,8 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     const over = durationMismatch(prompt, s.dur);
     if (over) setRow(n, { status: `prompt ~${over}s → tự co về ${s.dur}s` });
     if (acc && acc.remaining != null) {
-      const need = creditCost(s.dur);
-      if (acc.remaining < need) { setRow(n, { phase: "error", errorRaw: `Không đủ điểm cho ${s.dur}s (cần ${need}, còn ${acc.remaining}). Giảm còn 10–15s hoặc đổi nick.` }); return false; }
+      const need = cost(s.model, s.dur);
+      if (acc.remaining < need) { setRow(n, { phase: "error", errorRaw: `Không đủ điểm cho ${s.model} · ${s.dur}s (cần ${need}, còn ${acc.remaining}) — ${cheaperHint(acc.remaining, health?.credit_cost)}.` }); return false; }
     }
     if (inflight.current.has(n)) return true;   // đã chạy ở nơi khác, không tính là lỗi
     inflight.current.add(n);
@@ -254,7 +255,15 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   }
   const selected = Object.keys(sel).filter((n) => sel[n] && accounts.some((a) => a.account === n));
   const runSelected = () => runBatch(selected, "Chọn ít nhất 1 nick.");
-  const runReady = () => runBatch(readyNicks(), "Không có nick sẵn sàng.");
+  // Không nick nào đủ điểm cho model/giây đang chọn: NÓI RÕ thay vì "Không có nick sẵn sàng" (chip vẫn xanh → tưởng tool
+  // không gửi job, 15/09: 9 nick còn 1 điểm mà đang chọn 2.5 · 30s cần 2).
+  const noReadyMsg = () => {
+    const live = accounts.filter(canRun);
+    if (!live.length) return "Không có nick sẵn sàng (hết lượt / nghỉ / cookie chết) — xem Kho tài khoản.";
+    const best = Math.max(0, ...live.map((a) => a.remaining ?? 0));
+    return `Không nick nào đủ điểm cho ${def.model} · ${def.dur}s (cần ${needForDur}). ${live.length} nick sẵn sàng còn tối đa ${best} điểm → ${cheaperHint(best, health?.credit_cost)}.`;
+  };
+  const runReady = () => runBatch(readyNicks(), noReadyMsg());
   const retryFailed = () => runBatch(accounts.map((a) => a.account).filter((n) => rows[n]?.phase === "error"), "Không có nick lỗi.");
   const stopAll = () => { stop.current = true; setGen("Đã dừng theo dõi (video có thể vẫn hoàn tất trên Dola)."); };
   // AUTO-DRAIN "Chạy hết lượt hôm nay": mỗi nick chạy hết SỐ VIDEO còn làm được hôm nay (còn điểm ÷ điểm/video),
@@ -263,12 +272,12 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   async function autoDrain() {
     const ps = bulk.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
     if (!ps.length) { setGen("Nhập prompt (mỗi dòng 1 cái) trước khi 'Chạy hết lượt'."); return; }
-    const need = creditCost(def.dur) || 1;
+    const need = needForDur;
     const plan = accounts
       .filter((a) => canRun(a) && rows[a.account]?.phase !== "running")
       .map((a) => ({ n: a.account, cap: Math.floor((a.remaining ?? 0) / need) }))
       .filter((p) => p.cap > 0);
-    if (!plan.length) { setGen("Không nick nào còn đủ điểm để chạy hôm nay."); return; }
+    if (!plan.length) { setGen(noReadyMsg()); return; }
     const total = plan.reduce((s, p) => s + p.cap, 0);
     if (!window.confirm(`Chạy hết lượt hôm nay: ${plan.length} nick × tối đa lượt còn lại = ${total} video ${def.dur}s (mỗi video ${need} điểm), chia ${ps.length} prompt vòng tròn. Bắt đầu?`)) return;
     stop.current = false;
@@ -325,7 +334,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   // Số liệu dùng ngay trên thanh công cụ: prompt đang gõ + ước tính cho nick đã chọn.
   const lines = bulk.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
   const risky = riskyPrompt(firstLine(bulk));
-  const needCredit = selected.reduce((s, n) => s + creditCost(row(n).dur), 0);
+  const needCredit = selected.reduce((s, n) => s + cost(row(n).model, row(n).dur), 0);
   const runningNow = Object.values(rows).filter((r) => r.phase === "running").length;
   const allSel = accounts.length > 0 && accounts.every((a) => sel[a.account]);
   // Nick chạy được lên đầu: đang chạy → sẵn sàng → vừa xong / lỗi (chạy lại được) → nghỉ → hết credit/lượt
@@ -404,7 +413,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <span className={H2}>Chọn nhanh</span>
         <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => selectWhere(canRun, "sẵn sàng")}>Tất cả sẵn sàng</button>
         <span className="text-outline-variant">·</span>
-        <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => selectWhere((a) => a.remaining != null && a.remaining >= creditCost(def.dur) && canRun(a), `còn đủ credit cho ${def.dur}s`)}>Còn đủ credit</button>
+        <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => selectWhere((a) => a.remaining != null && a.remaining >= needForDur && canRun(a), `còn đủ credit cho ${def.model} · ${def.dur}s`)}>Còn đủ credit</button>
         <span className="text-outline-variant">·</span>
         <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => selectWhere(() => !allSel, allSel ? "" : "tất cả")}>{allSel ? "Bỏ chọn" : "Chọn tất cả"}</button>
         {selected.length > 0 && <><span className="text-outline-variant">·</span><button type="button" className="text-xs font-medium text-error hover:underline" onClick={clearSelectedPrompts}>Xóa prompt đã chọn ({selected.length})</button></>}
