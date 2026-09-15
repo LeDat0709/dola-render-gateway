@@ -724,7 +724,10 @@ class BrowserPool:
                     # bị chặn IP thì TỰ XOAY sang nick khác còn chạy được — đây mới là "xoay nick" thật trong Studio.
                     # Giữ pinned=True để khi KHÔNG còn nick nào chạy được vẫn báo LÝ DO THẬT của nick thẻ (không bọc).
                     soft_pin = True
-                    candidates = [match] + [a for a in self.list_accounts() if a["name"] != account]
+                    # Xoay ƯU TIÊN nick còn NHIỀU điểm nhất → rải đều, né dồn 1 nick, tận dụng tối đa lượt/ngày.
+                    others = sorted((a for a in self.list_accounts() if a["name"] != account),
+                                    key=lambda a: -(a.get("remaining") or 0))
+                    candidates = [match] + others
                 else:
                     # GHIM CỨNG (toggle TẮT): nick không chạy được → báo lý do thật, không xoay.
                     if not self._schedulable(match):
@@ -734,7 +737,8 @@ class BrowserPool:
                         raise RuntimeError(short)
                     candidates = [match]
             else:
-                candidates = self.list_accounts()
+                # Không ghim: cũng ưu tiên nick còn nhiều điểm nhất trước.
+                candidates = sorted(self.list_accounts(), key=lambda a: -(a.get("remaining") or 0))
             for a in candidates:
                 if not config.AUTO_RETRY and last_err is not None:
                     raise last_err   # người dùng tắt xoay nick: nick đầu hỏng là dừng, không thử nick khác

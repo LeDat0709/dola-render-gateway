@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Play, RotateCw, Settings, Trash2, FolderOpen, Copy, ArrowDown, Repeat, Stethoscope, Square, RefreshCw, Eraser, Power, Clock, ListOrdered } from "lucide-react";
+import { Play, RotateCw, Settings, Trash2, FolderOpen, Copy, ArrowDown, Repeat, Stethoscope, Square, RefreshCw, Eraser, Power, Clock, ListOrdered, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -99,10 +99,10 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const setRow = (n, patch) => setRows((p) => ({ ...p, [n]: { ...(p[n] || row(n)), ...patch } }));
   const elapsed = (ms) => { const s = Math.max(0, Math.floor((Date.now() - ms) / 1000)); return `${Math.floor(s / 60)}p ${String(s % 60).padStart(2, "0")}s`; };
 
-  async function runOne(n) {
+  async function runOne(n, promptOverride) {
     const acc = accounts.find((a) => a.account === n);
     const s = row(n);
-    const prompt = (s.prompt || "").trim() || firstLine(bulk);
+    const prompt = ((promptOverride ?? s.prompt) || "").trim() || firstLine(bulk);
     if (!prompt) { setRow(n, { phase: "error", errorRaw: "Chưa nhập prompt", status: "warn" }); return false; }
     // Chỉ cảnh báo, không chặn: bị Dola chặn thì không trừ lượt, còn hộp confirm trước đây bấm Huỷ một lần là
     // prompt đó bị nhớ "chưa gửi" mãi (không thuộc "Chạy lại lỗi") → auto tạo đứng im.
@@ -249,6 +249,35 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const runReady = () => runBatch(readyNicks(), "Không có nick sẵn sàng.");
   const retryFailed = () => runBatch(accounts.map((a) => a.account).filter((n) => rows[n]?.phase === "error"), "Không có nick lỗi.");
   const stopAll = () => { stop.current = true; setGen("Đã dừng theo dõi (video có thể vẫn hoàn tất trên Dola)."); };
+  // AUTO-DRAIN "Chạy hết lượt hôm nay": mỗi nick chạy hết SỐ VIDEO còn làm được hôm nay (còn điểm ÷ điểm/video),
+  // lấy prompt round-robin từ khung Prompt. Mỗi nick chạy TUẦN TỰ (xong video này mới video kế), các nick CHẠY SONG
+  // SONG; server tự giãn nhịp + giới hạn luồng + xoay nick. Mục tiêu: không để lượt/điểm ngày hết hạn oan.
+  async function autoDrain() {
+    const ps = bulk.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+    if (!ps.length) { setGen("Nhập prompt (mỗi dòng 1 cái) trước khi 'Chạy hết lượt'."); return; }
+    const need = creditCost(def.dur) || 1;
+    const plan = accounts
+      .filter((a) => canRun(a) && rows[a.account]?.phase !== "running")
+      .map((a) => ({ n: a.account, cap: Math.floor((a.remaining ?? 0) / need) }))
+      .filter((p) => p.cap > 0);
+    if (!plan.length) { setGen("Không nick nào còn đủ điểm để chạy hôm nay."); return; }
+    const total = plan.reduce((s, p) => s + p.cap, 0);
+    if (!window.confirm(`Chạy hết lượt hôm nay: ${plan.length} nick × tối đa lượt còn lại = ${total} video ${def.dur}s (mỗi video ${need} điểm), chia ${ps.length} prompt vòng tròn. Bắt đầu?`)) return;
+    stop.current = false;
+    setGen(`Auto-drain: ${total} video trên ${plan.length} nick (${def.dur}s · ${need} điểm/video) — server tự giãn nhịp + xoay nick.`);
+    let pi = 0;   // chỉ số prompt round-robin, dùng chung các nick
+    await Promise.all(plan.map(async ({ n, cap }) => {
+      for (let k = 0; k < cap; k++) {
+        if (stop.current) break;
+        const p = ps[pi++ % ps.length];
+        setRow(n, { model: def.model, ratio: def.ratio, dur: def.dur });
+        const ok = await runOne(n, p);   // đưa prompt trực tiếp, khỏi lệ thuộc state trễ
+        if (!ok || stop.current) break;  // nick lỗi/hết điểm giữa chừng → dừng nick đó (đã tự xoay nếu bật AUTO_RETRY)
+      }
+    }));
+    setGen(`Auto-drain xong. Xem tiến trình từng nick ở bảng dưới.`);
+    api.notify?.("Dola Studio — auto-drain xong", `Đã chạy hết lượt ${plan.length} nick.`);
+  }
   const fillAll = () => { const p = firstLine(bulk); accounts.forEach((a) => setRow(a.account, { prompt: p })); setGen("Đã điền prompt cho tất cả nick."); };
   const fillLines = () => { const ps = bulk.split(/\r?\n/).map((x) => x.trim()).filter(Boolean); accounts.forEach((a, i) => ps[i] && setRow(a.account, { prompt: ps[i] })); setGen(`Đã chia ${Math.min(ps.length, accounts.length)} prompt.`); };
   // Xóa prompt cũ hàng loạt (Hoài Nam xin): trả các nick về trạng thái trắng như per-row "Làm mới" — bỏ prompt +
@@ -359,6 +388,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         {selected.length > 0 && <><span className="text-outline-variant">·</span><button type="button" className="text-xs font-medium text-error hover:underline" onClick={clearSelectedPrompts}>Xóa prompt đã chọn ({selected.length})</button></>}
         <span className="flex-1" />
         <Button variant="outline" size="sm" onClick={runReady}><Play className="h-3.5 w-3.5" />Chạy sẵn sàng</Button>
+        <Button variant="outline" size="sm" className="border-tertiary/50 text-tertiary hover:text-tertiary" onClick={autoDrain} title="Mỗi nick chạy hết số video còn làm được hôm nay (còn điểm ÷ điểm/video), lấy prompt vòng tròn — không để lượt ngày hết hạn oan"><Zap className="h-3.5 w-3.5" />Chạy hết lượt</Button>
         <Button variant="outline" size="sm" onClick={retryFailed}><RefreshCw className="h-3.5 w-3.5" />Chạy lại lỗi</Button>
         <Button variant="outline" size="sm" className="border-error/40 text-error hover:text-error" onClick={stopAll}><Square className="h-3.5 w-3.5" />Dừng</Button>
         <Button size="sm" onClick={runSelected} disabled={!selected.length}><Play className="h-3.5 w-3.5" />Chạy đã chọn{selected.length ? ` (${selected.length})` : ""}</Button>
