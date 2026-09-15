@@ -374,6 +374,60 @@ def test_scan_account_videos_reads_history_only():
         vw.aiohttp.ClientSession, vw.config.ACCOUNTS_DIR, browser.account_proxy_url = saved
 
 
+def test_http_engine_submits_without_chrome_and_falls_back():
+    """Engine không-Chrome: submit_via_http OK → nhả slot ngay, cờ 'đã gửi'=True, poll HTTP ra video, KHÔNG mở Chrome.
+    Dola từ chối chắc chắn (SubmitHttpRejected) → generate_video rơi về đường fetch (Chrome), cờ về False để pool xoay."""
+    import submit_http
+    import browser
+    saved = (vw.config.SUBMIT_MODE, submit_http.submit_via_http, vw.poll_conversation_http,
+             vw._account_cookies, browser.account_proxy_url, vw._generate_via_fetch)
+    freed, flags, opened = [], [], []
+
+    async def anop():
+        return None
+    try:
+        vw.config.SUBMIT_MODE = "http"
+        browser.account_proxy_url = lambda a: None
+        vw._account_cookies = lambda a: ("c=1", "m", "f")
+
+        async def ok_submit(account, prompt, ratio, dur, model, proxy, on_submitted=None):
+            if on_submitted:
+                on_submitted(account, True)
+            return "38400000000000123"
+
+        async def ok_poll(account, cookie, ms, fp, cid, timeout, on_poll=None, on_balance=None, answered=None, prompt=""):
+            return {"video_url": "u", "local_path": "/tmp/x.mp4", "conversation_id": cid, "account": account}
+        submit_http.submit_via_http = ok_submit
+        vw.poll_conversation_http = ok_poll
+        r = asyncio.run(vw.generate_video("n1", "mèo", "9:16", 30, model="seedance-2.5",
+                                          on_submitted=lambda a, s: flags.append(s),
+                                          on_browser_free=lambda: freed.append(1)))
+        assert r.get("local_path") and flags == [True] and freed == [1], (r, flags, freed)
+
+        flags.clear()
+
+        async def rejected(account, prompt, ratio, dur, model, proxy, on_submitted=None):
+            if on_submitted:
+                on_submitted(account, True)
+                on_submitted(account, False)
+            raise submit_http.SubmitHttpRejected("verify/captcha")
+
+        async def fake_fetch(account, *a, on_submitted=None, **kw):
+            opened.append(account)
+            if on_submitted:
+                on_submitted(account, True)
+            return {"video_url": "u", "local_path": "/tmp/y.mp4", "conversation_id": "9", "account": account}
+        submit_http.submit_via_http = rejected
+        vw._generate_via_fetch = fake_fetch
+        r = asyncio.run(vw.generate_video("n1", "mèo", "9:16", 10, model="seedance-2.5",
+                                          on_submitted=lambda a, s: flags.append(s), on_browser_hold=anop))
+        assert r.get("local_path") and opened == ["n1"], (r, opened)
+        assert flags[-1] is True and False in flags, flags   # False (được xoay) rồi True lại khi fetch gửi
+    finally:
+        (vw.config.SUBMIT_MODE, submit_http.submit_via_http, vw.poll_conversation_http,
+         vw._account_cookies, browser.account_proxy_url, vw._generate_via_fetch) = saved
+
+
 def test_guest_session_is_detected_not_credit():
     """Ảnh 15/09: cookie chết → Dola coi là KHÁCH. Passport phân biệt được (recent_conv thì không); câu từ chối của
     Dola phải thành GuestRefusedError, KHÔNG phải CreditError (「生成できません」 từng bị hiểu là hết điểm)."""

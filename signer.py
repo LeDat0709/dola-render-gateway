@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Optional
 
-DEFAULT_AID = 497858        # aid cổng web Dola (khớp test_web_submit.py)
+DEFAULT_AID = 495671        # aid cổng web Dola — khớp test_web_submit.py + recent_conv/single đang chạy (497858 cũ là SAI)
 DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
 

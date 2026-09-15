@@ -1139,6 +1139,47 @@ async def _recover_or_raise(page, account: str, ms_token: str, fp: str, before, 
     raise _FetchSubmitFailed(f"Dola chưa nhận lệnh ({str(exc)[:160]})") from exc
 
 
+async def _generate_via_http(account: str, prompt: str, ratio: str | None, duration: int,
+                             model_key: str, timeout: int, on_conversation_id, on_poll, on_balance,
+                             on_submitted=None, on_browser_free=None, on_browser_hold=None) -> dict:
+    """Gửi KHÔNG mở Chrome: ký a_bogus bằng Python (submit_http) rồi theo dõi + tải bằng HTTP thuần.
+
+    Nhẹ RAM, mở nick nhanh (không launch Chrome mỗi nick) — như đối thủ. Chỉ dùng khi cookies.json còn sống;
+    Dola từ chối chắc chắn (SubmitHttpRejected) → nổi lên để generate_video rơi về đường fetch (Chrome). Dola hỏi
+    lại (30s/thông số) mà HTTP không trả lời được → mở Chrome bằng resume_video, giữ conversation_id (không gửi lại)."""
+    from submit_http import submit_via_http
+    from browser import account_proxy_url
+    try:
+        proxy = account_proxy_url(account) or config.PROXY or None
+    except Exception:  # noqa: BLE001 — proxy xoay lỗi lúc lấy IP: gửi đi thẳng còn hơn chặn cả job
+        proxy = None
+    if on_browser_free:
+        on_browser_free()   # không giữ slot Chrome nào cả → trả ngay cho nick khác
+    conv_id = await submit_via_http(account, prompt, ratio, duration, model_key, proxy, on_submitted=on_submitted)
+    print(f"[{account}] http submitted ({model_key} {duration}s {ratio or 'default'}) conversation_id={conv_id}", flush=True)
+    deadline = time.time() + timeout
+    if on_conversation_id:
+        on_conversation_id(account, conv_id, deadline)
+    cookie, ms_token, fp = _account_cookies(account)
+    answered: set = set()
+    try:
+        return await poll_conversation_http(account, cookie, ms_token, fp, conv_id,
+                                            timeout, on_poll, on_balance, answered=answered, prompt=prompt)
+    except _NeedsBrowser as ask:
+        # Dola hỏi lại (xác nhận 30s / menu thông số) — chỉ trang web ký được câu trả lời → mở Chrome, GIỮ conv_id.
+        if _answer_key(ask.full) in answered:
+            raise RuntimeError(
+                "Dola hỏi đi hỏi lại cùng một câu — rút ngắn kịch bản cho khớp số giây."
+                f"\n↳ Dola: {ask}") from ask
+        print(f"[{account}] Dola hỏi lại → mở Chrome trả lời (không gửi lại): {ask}", flush=True)
+        if on_browser_hold:
+            await on_browser_hold()
+        left = max(60, int(deadline - time.time()))
+        return await resume_video(account, conv_id, left, on_poll=on_poll, on_balance=on_balance,
+                                  ratio=ratio, duration=duration, answered=answered,
+                                  on_browser_free=on_browser_free, on_browser_hold=on_browser_hold, prompt=prompt)
+
+
 async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, duration: int,
                               model_key: str, timeout: int, on_conversation_id, on_poll, on_balance,
                               on_submitted=None, on_browser_free=None, on_browser_hold=None) -> dict:
@@ -1760,7 +1801,22 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
         timeout = max(timeout, config.REFERENCE_VIDEO_TIMEOUT)
 
     fetch_model = _fetch_model_key(model_key)
-    if config.SUBMIT_MODE == "fetch" and fetch_model and not reference_image_paths:
+    # ENGINE KHÔNG-CHROME: ký a_bogus bằng Python, gửi HTTP thuần (nhẹ RAM, mở nick nhanh như đối thủ). Chỉ cho submit;
+    # Dola từ chối chắc chắn (cookie/captcha/a_bogus lệch bản) → rơi về đường fetch (Chrome). Ảnh tham chiếu vẫn cần UI.
+    if config.SUBMIT_MODE == "http" and fetch_model and not reference_image_paths:
+        from submit_http import SubmitHttpRejected
+        try:
+            result = await _generate_via_http(account, prompt, ratio, duration or 10, fetch_model,
+                                              timeout, on_conversation_id, on_poll, on_balance,
+                                              on_submitted, on_browser_free, on_browser_hold)
+            return await _strip_logo(result, model_key, account)
+        except SubmitHttpRejected as exc:
+            if on_submitted:
+                on_submitted(account, False)   # chưa tới Dola → pool được xoay/thử đường khác
+            print(f"[{account}] engine HTTP bị từ chối ({exc}); rơi về mở Chrome (fetch)", flush=True)
+            if on_browser_hold:
+                await on_browser_hold()        # đã nhả slot ở _generate_via_http → xin lại trước khi mở Chrome
+    if config.SUBMIT_MODE in ("fetch", "http") and fetch_model and not reference_image_paths:
         last_fetch_err = None
         # _FetchSubmitFailed = lệnh CHẮC CHẮN chưa tới Dola (thiếu device_id / HTTP 4xx / dò đủ không thấy hội
         # thoại) → thử lại an toàn. Mọi lỗi "có thể đã gửi" đã thành _FetchDelivered → nổi lên, không gửi lại.

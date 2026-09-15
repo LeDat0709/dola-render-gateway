@@ -589,6 +589,7 @@ async def health():
         "http_poll": config.HTTP_POLL,
         "auto_retry": config.AUTO_RETRY,
         "burn_nicks": config.BURN_NICKS,
+        "submit_mode": config.SUBMIT_MODE,
         "one_nick": config.ONE_NICK,
         "nicks_per_ip": config.NICKS_PER_IP,
         "parallel_per_ip": config.PARALLEL_PER_IP,
@@ -977,6 +978,24 @@ async def admin_account_open(name: str, x_admin_key: str | None = Header(default
     import subprocess
     subprocess.Popen([_sys.executable, str(Path(__file__).resolve().with_name("login_profile.py")), name])   # `sys` chỉ được import là _sys → NameError 500
     return {"ok": True, "message": f"Opening browser for {name}..."}
+
+
+class SubmitModeUpdate(BaseModel):
+    mode: str   # "fetch" (mở Chrome ký, ổn định) | "http" (không Chrome, thử nghiệm)
+
+
+@app.post("/api/admin/submit-mode")
+async def admin_submit_mode(body: SubmitModeUpdate, x_admin_key: str | None = Header(default=None)):
+    """Đổi cách GỬI lệnh: 'fetch' = mở Chrome ký (mặc định, ổn định); 'http' = ký bằng Python gửi thẳng, KHÔNG mở Chrome
+    (nhẹ RAM, mở nick nhanh; Dola từ chối thì tự rơi về fetch). Nhớ vào .env.local."""
+    _admin_auth(x_admin_key)
+    mode = (body.mode or "").strip().lower()
+    if mode not in ("fetch", "http"):
+        raise HTTPException(422, "mode phải là 'fetch' hoặc 'http'")
+    config.SUBMIT_MODE = mode
+    config.upsert_env_local("DOLA_SUBMIT_MODE", mode)
+    print(f"[gateway] cách gửi lệnh: {mode}", flush=True)
+    return {"ok": True, "submit_mode": mode}
 
 
 class BurnNicksUpdate(BaseModel):

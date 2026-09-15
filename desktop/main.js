@@ -1128,6 +1128,22 @@ ipcMain.handle("app:notify", (_e, { title, body }) => {
   return { ok: true };
 });
 
+ipcMain.handle("config:getSubmitMode", async () => {
+  try { const j = await (await fetch(config().base + "/health", { cache: "no-store" })).json(); return { ok: true, mode: j.submit_mode || "fetch" }; }
+  catch (e) { return { ok: false, mode: "fetch", error: String(e).slice(0, 80) }; }
+});
+ipcMain.handle("config:setSubmitMode", async (_e, { mode }) => {
+  const c = config();
+  const headers = { "Content-Type": "application/json" };
+  if (c.adminKey) headers["x-admin-key"] = c.adminKey;
+  try {
+    const r = await fetch(c.base + "/api/admin/submit-mode", { method: "POST", headers, body: JSON.stringify({ mode }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
+    if (!c.remote) upsertEnvLocal("DOLA_SUBMIT_MODE", mode);
+    return { ok: true, mode: j.submit_mode, remote: c.remote };
+  } catch (e) { return { ok: false, error: "Server chưa chạy? " + String(e).slice(0, 80) }; }
+});
 ipcMain.handle("config:setSubmitGap", async (_e, { minSec, maxSec }) => {
   const lo = Math.max(0, Math.min(60, Number(minSec)));
   const hi = Math.max(lo, Math.min(120, Number(maxSec)));

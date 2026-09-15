@@ -149,19 +149,27 @@ def build_signed(cookies: dict[str, str], req_body: dict) -> tuple[str, str]:
     return f"{WEB_URL}?{query}&a_bogus={a_bogus}", body_json
 
 
+class SubmitHttpRejected(RuntimeError):
+    """Dola CHẮC CHẮN chưa nhận lệnh (4xx / captcha / thiếu cookie) — an toàn thử lại đường khác, chưa trừ lượt."""
+
+
 async def submit_via_http(account: str, prompt: str, ratio: str | None, duration: int,
-                          model: str | None = None, proxy: str | None = None) -> str:
+                          model: str | None = None, proxy: str | None = None, on_submitted=None) -> str:
     """Gửi 1 lệnh video qua HTTP thuần (curl_cffi), trả conversation_id. KHÔNG mở Chrome.
 
-    Ném RuntimeError nếu Dola từ chối / không lấy được id. Bàn giao id cho poll_conversation_http + _download.
+    on_submitted(account, True) gọi NGAY TRƯỚC POST (từ đây có thể đã trừ lượt). Ném SubmitHttpRejected khi Dola
+    chắc chắn CHƯA nhận (4xx/captcha/thiếu cookie → gọi on_submitted(False)); RuntimeError khác = không rõ (đừng gửi lại).
     """
     import asyncio
     from curl_cffi import requests as creq
 
     model = model or config.MODEL_KEY_SEEDANCE25
-    cookies = load_account_cookies(account)
+    try:
+        cookies = load_account_cookies(account)
+    except FileNotFoundError as e:
+        raise SubmitHttpRejected(str(e)) from e
     if "sessionid" not in cookies:
-        raise RuntimeError(f"Nick {account}: cookies.json thiếu sessionid (đăng nhập lại nick)")
+        raise SubmitHttpRejected(f"Nick {account}: cookies.json thiếu sessionid (đăng nhập lại nick)")
     body = build_video_body(prompt, ratio, duration, model)
     url, body_json = build_signed(cookies, body)
     headers = {"Content-Type": "application/json", "agw-js-conv": "str, str", "Accept": "*/*",
@@ -175,12 +183,26 @@ async def submit_via_http(account: str, prompt: str, ratio: str | None, duration
                       impersonate="chrome", timeout=120)
         return r.status_code, r.text
 
-    status, text = await asyncio.to_thread(_post)
+    if on_submitted:
+        on_submitted(account, True)   # lệnh sắp rời máy → cổng "đã gửi" của pool chặn xoay/gửi lại
+    try:
+        status, text = await asyncio.to_thread(_post)
+    except Exception as e:   # noqa: BLE001 — chưa gửi được (mạng/proxy/TLS) → thử lại đường khác an toàn
+        if on_submitted:
+            on_submitted(account, False)
+        raise SubmitHttpRejected(f"không gửi được tới Dola: {str(e)[:160]}") from e
+    if 400 <= status < 500 and status != 408:
+        if on_submitted:
+            on_submitted(account, False)   # WAF/cookie/proxy chặn ở cửa → chưa trừ lượt
+        raise SubmitHttpRejected(f"Dola từ chối submit (HTTP {status}): {text[:200]}")
     if status != 200:
         raise RuntimeError(f"Dola từ chối submit (HTTP {status}): {text[:200]}")
     low = text.lower()
     if any(w in low for w in ("verify", "slide", "captcha")) or '"a_bogus' in low:
-        raise RuntimeError(f"Bị chặn/nghi (verify/captcha/a_bogus lệch bản) — signer.last_backend={signer.last_backend()}: {text[:200]}")
+        # a_bogus bị từ chối (ByteDance đổi thuật toán, hoặc IP bẩn) → chưa tạo hội thoại → rơi về đường Chrome an toàn.
+        if on_submitted:
+            on_submitted(account, False)
+        raise SubmitHttpRejected(f"Bị chặn/nghi (verify/captcha/a_bogus lệch bản) — signer.last_backend={signer.last_backend()}: {text[:200]}")
     conv_id = _extract_conversation_id(text)
     if not conv_id:
         raise RuntimeError(f"Submit gửi được nhưng không lấy được conversation_id: {text[:200]}")

@@ -31,6 +31,7 @@ export default function SettingsTab({ active = true }) {
   const [rb, setRb] = useState(""); const [rk, setRk] = useState(""); const [ra, setRa] = useState(""); const [rMsg, setRMsg] = useState("");
   const [autoRetry, setAutoRetry] = useState(true); const [arMsg, setArMsg] = useState("");
   const [burn, setBurn] = useState(false); const [burnMsg, setBurnMsg] = useState("");
+  const [httpEngine, setHttpEngine] = useState(false); const [engMsg, setEngMsg] = useState("");
   const [oneNick, setOneNick] = useState(false); const [onMsg, setOnMsg] = useState(""); const [nicksPerIp, setNicksPerIp] = useState(2); const [parallelPerIp, setParallelPerIp] = useState(1);
   const [srv, setSrv] = useState(null);     // cấu hình server đang chạy (/api/admin/config) hoặc null khi server tắt
   const [up, setUp] = useState(false);
@@ -48,7 +49,7 @@ export default function SettingsTab({ active = true }) {
     loadLane();
     api.getRemote?.().then((r) => { setRb(r?.base || ""); setRk(r?.apiKey || ""); setRa(r?.adminKey || ""); }).catch(() => {});
     api.getAutoRetry?.().then((r) => setAutoRetry(r?.on !== false)).catch(() => {});
-    fetchHealth().then((h) => setBurn(h?.burn_nicks === true)).catch(() => {});
+    fetchHealth().then((h) => { setBurn(h?.burn_nicks === true); setHttpEngine(h?.submit_mode === "http"); }).catch(() => {});
     api.getOneNick?.().then((r) => { setOneNick(r?.on === true); if (r?.nicksPerIp) setNicksPerIp(r.nicksPerIp); if (r?.parallelPerIp) setParallelPerIp(r.parallelPerIp); }).catch(() => {});
     api.getVersion?.().then(setVer).catch(() => {});
     refreshHealth();
@@ -77,6 +78,14 @@ export default function SettingsTab({ active = true }) {
     const r = await api.setAutoRetry?.(on);
     if (!r?.ok) { setAutoRetry(!on); setArMsg("✗ " + (r?.error || "Bật server rồi thử lại")); return; }
     setArMsg(`✓ Đã ${on ? "BẬT" : "TẮT"} tự thử lại / xoay nick — áp dụng ngay cho server đang chạy.`);
+  };
+  const toggleHttpEngine = async (e) => {
+    const on = e.target.checked;
+    setHttpEngine(on);
+    const r = await api.setSubmitMode?.(on ? "http" : "fetch");
+    if (!r?.ok) { setHttpEngine(!on); setEngMsg("✗ " + (r?.error || "Bật server rồi thử lại")); return; }
+    setEngMsg(on ? "✓ BẬT engine không-Chrome — gửi bằng cookie, không mở Chrome mỗi nick (nhẹ RAM, mở nick nhanh). Dola từ chối thì tự mở Chrome lại. Ảnh tham chiếu vẫn dùng Chrome."
+                 : "✓ Về chế độ mở Chrome ký (ổn định).");
   };
   const toggleBurn = async (e) => {
     const on = e.target.checked;
@@ -231,6 +240,12 @@ export default function SettingsTab({ active = true }) {
               <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật: nick hết lượt ngày hoặc hết điểm thì tự TẮT LỊCH và gắn ghi chú <code className="font-mono">[ĐÃ ĐỐT dd/mm: lý do]</code> — mai không tự chạy lại. Dùng khi team xài nick Facebook 1 lần rồi bỏ; lọc "Đã đốt" ở Kho tài khoản để xoá hàng loạt. Chạy đích danh nick trong Studio vẫn tự mở lại. Tắt (mặc định): nick hết lượt tự mở lại sau 0h giờ Nhật.</span></span>
           </label>
           <Msg text={burnMsg} />
+          <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">
+            <input type="checkbox" className="mt-1" checked={httpEngine} onChange={toggleHttpEngine} />
+            <span><span className="font-medium">Engine gửi KHÔNG mở Chrome <span className="rounded bg-warn/15 px-1 text-[10px] font-semibold text-warn">thử nghiệm</span></span>
+              <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật: ký chữ ký bằng Python rồi gửi thẳng bằng cookie của nick — <b>không mở Chrome mỗi nick</b>, nhẹ RAM, mở nick nhanh, chạy được nhiều nick hơn (như đối thủ). Nếu Dola từ chối (cookie/captcha/đổi thuật toán ký) thì <b>tự mở Chrome ký lại</b>. Chữ ký ByteDance đổi theo quý nên có lúc phải cập nhật; video có ảnh tham chiếu vẫn dùng Chrome. Tắt (mặc định): luôn mở Chrome ký (ổn định nhất).</span></span>
+          </label>
+          <Msg text={engMsg} />
           <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">
             <input type="checkbox" className="mt-1" checked={oneNick} onChange={toggleOneNick} />
             <span><span className="font-medium">Xoay IP theo lô (1 key proxy xoay cho nhiều nick)</span>
