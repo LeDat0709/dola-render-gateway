@@ -696,27 +696,37 @@ class BrowserPool:
         try:
             last_err = None
             pinned = account is not None
+            soft_pin = False   # ghim MỀM: vẫn ưu tiên + báo lý do thật của nick thẻ, nhưng cho xoay sang nick khác
             tried: set[str] = set()
             need = self._cost_for(model, duration) or self._default_cost(model, duration)
             if account is not None:
                 match = next((a for a in self.list_accounts() if a["name"] == account), None)
                 if match is None:
                     raise RuntimeError(f"Nick '{account}' không tồn tại")
-                if not self._schedulable(match):
-                    raise RuntimeError(f"Nick '{account}' không chạy được: {self.blocked_reason(match)}")
-                short = self._credit_short(match, need, duration, model)
-                if short:
-                    raise RuntimeError(short)
                 if self._locks.setdefault(account, asyncio.Lock()).locked():
+                    # BẬN thì CHỜ, KHÔNG xoay — người dùng đã chọn đúng nick này, video hiện tại xong rồi chạy tiếp.
                     raise RuntimeError(
                         f"Nick '{account}' đang bận tạo video khác — chờ video hiện tại xong rồi chạy tiếp.")
-                candidates = [match]
+                if config.AUTO_RETRY:
+                    # GHIM MỀM ("Tự thử lại/xoay nick khi lỗi" BẬT): ưu tiên nick của thẻ; nếu nó hết lượt/chết/
+                    # bị chặn IP thì TỰ XOAY sang nick khác còn chạy được — đây mới là "xoay nick" thật trong Studio.
+                    # Giữ pinned=True để khi KHÔNG còn nick nào chạy được vẫn báo LÝ DO THẬT của nick thẻ (không bọc).
+                    soft_pin = True
+                    candidates = [match] + [a for a in self.list_accounts() if a["name"] != account]
+                else:
+                    # GHIM CỨNG (toggle TẮT): nick không chạy được → báo lý do thật, không xoay.
+                    if not self._schedulable(match):
+                        raise RuntimeError(f"Nick '{account}' không chạy được: {self.blocked_reason(match)}")
+                    short = self._credit_short(match, need, duration, model)
+                    if short:
+                        raise RuntimeError(short)
+                    candidates = [match]
             else:
                 candidates = self.list_accounts()
             for a in candidates:
                 if not config.AUTO_RETRY and last_err is not None:
                     raise last_err   # người dùng tắt xoay nick: nick đầu hỏng là dừng, không thử nick khác
-                if not pinned and len(tried) >= config.MAX_ROTATE:
+                if (not pinned or soft_pin) and len(tried) >= config.MAX_ROTATE:
                     raise RuntimeError(
                         f"Đã thử {len(tried)} nick ({', '.join(sorted(tried))}) đều lỗi — dừng để không đốt lượt. "
                         f"Lỗi cuối: {last_err}")

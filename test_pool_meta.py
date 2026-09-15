@@ -16,6 +16,7 @@ from video_worker_ui import AccountLimitedError, ParameterChangeError, Transient
 # Test không cần giãn nhịp thật (mặc định 3–6s mỗi lần gửi); test riêng bên dưới bật lại.
 browser_pool.config.SUBMIT_GAP_SEC = 0
 browser_pool.config.SUBMIT_JITTER_SEC = 0
+browser_pool.config.AUTO_RETRY = True   # mặc định code (bật) — không kế thừa DOLA_AUTO_RETRY=0 của .env.local máy
 
 
 def _pool(tmp: str, conc: int = 1) -> BrowserPool:
@@ -310,6 +311,8 @@ def test_rate_limited_pauses_everyone_then_rotates():
         assert "gửi quá dày" in str(e) and "操作频繁" in str(e), str(e)
     _reset_rate_limit()
     saved = browser_pool.RATE_LIMIT_PAUSE_SEC
+    saved_ar = browser_pool.config.AUTO_RETRY
+    browser_pool.config.AUTO_RETRY = True   # kiểm xoay nick → phải BẬT (không phụ thuộc DOLA_AUTO_RETRY của .env.local)
     browser_pool.RATE_LIMIT_PAUSE_SEC = 0.3
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -326,6 +329,7 @@ def test_rate_limited_pauses_everyone_then_rotates():
             assert 0 < rest <= browser_pool.RATE_LIMIT_NICK_SEC, rest      # nghỉ 5 phút, không phải 30
     finally:
         browser_pool.RATE_LIMIT_PAUSE_SEC = saved
+        browser_pool.config.AUTO_RETRY = saved_ar
         _reset_rate_limit()
 
 
