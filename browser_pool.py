@@ -40,6 +40,11 @@ PRESUBMIT_FAIL_COOLDOWN_SEC = 600
 # ngay (đối thủ v1.0.88: job CHỜ tài nguyên, không gửi bừa). Một video 30s dựng 9–35 phút.
 PINNED_BUSY_WAIT_SEC = int(os.getenv("DOLA_PINNED_BUSY_WAIT", "2700"))
 PINNED_BUSY_POLL_SEC = 3.0
+# Cách ly nick (đối thủ v1.0.88: SPAM_SO_IP → "ACC SPAM CHỜ XỬ LÝ"): lỗi trước khi gửi trên ngần này IP KHÁC NHAU trong
+# SPAM_WINDOW_SEC → lỗi ở NICK (cookie/nick bị hạn chế), không phải proxy → nghỉ dài, khỏi đốt lượt mở Chrome/đổi IP.
+SPAM_IP_COUNT = int(os.getenv("DOLA_SPAM_IP_COUNT", "3"))
+SPAM_WINDOW_SEC = 6 * 3600
+SPAM_COOLDOWN_SEC = 6 * 3600
 # Lỗi của CODE/tham số (nick nào cũng gặp y hệt) → nổi lên ngay, không đốt MAX_ROTATE lượt mở Chrome + cho nick nghỉ oan.
 _NOT_NICK_ERRORS = (AttributeError, NameError, TypeError, KeyError, ImportError, AssertionError, ValueError, sqlite3.Error)
 
@@ -196,6 +201,8 @@ class BrowserPool:
         self.semaphore = asyncio.Semaphore(self.max_concurrency)
         self._one_nick = asyncio.Semaphore(1)   # MỖI LẦN MỘT NICK: 1 nick chạy trọn job tại một thời điểm
         self._ip_used = 0                        # số nick đã dùng IP proxy xoay hiện tại (đổi IP sau mỗi N nick)
+        self._fail_ips: dict[str, dict[str, float]] = {}   # nick -> {đường ra (IP proxy/host/"direct"): lúc lỗi gần nhất}
+        self._quarantine: dict[str, str] = {}            # nick -> lý do cách ly (hiện ở blocked_reason)
         self._proxy_stamp: dict[str, dict] = {}  # dấu proxy đang gắn cho job mỗi nick → cột "Proxy" hiện IP/lượt/NCC
         self._locks: dict[str, asyncio.Lock] = {}
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -288,10 +295,36 @@ class BrowserPool:
         Tắt tự xoay thì không nghỉ: người dùng sửa proxy/cookie xong chạy lại ngay được."""
         if not config.AUTO_RETRY:
             return
-        print(f"[pool] {account}: nghỉ {PRESUBMIT_FAIL_COOLDOWN_SEC // 60} phút vì lỗi trước khi gửi ({str(err)[:80]})", flush=True)
+        now = time.time()
+        seen = {ip: t for ip, t in self._fail_ips.get(account, {}).items() if now - t < SPAM_WINDOW_SEC}
+        seen[self._egress_id(account)] = now
+        self._fail_ips[account] = seen
+        rest, why = PRESUBMIT_FAIL_COOLDOWN_SEC, ""
+        self._ensure_meta(account)   # nick chưa có dòng meta thì UPDATE cooldown không ghi được gì
+        if len(seen) >= SPAM_IP_COUNT:
+            rest = SPAM_COOLDOWN_SEC
+            why = (f"cách ly: lỗi trước khi gửi trên {len(seen)} IP khác nhau trong {SPAM_WINDOW_SEC // 3600} giờ — lỗi ở nick "
+                   f"(cookie/nick bị hạn chế), không phải proxy. Lỗi cuối: {str(err)[:80]}")
+            self._quarantine[account] = why
+        print(f"[pool] {account}: nghỉ {rest // 60} phút vì lỗi trước khi gửi ({why or str(err)[:80]})", flush=True)
         self._conn.execute("UPDATE accounts_meta SET cooldown_until=MAX(cooldown_until, ?) WHERE name=?",
-                           (time.time() + PRESUBMIT_FAIL_COOLDOWN_SEC, account))
+                           (now + rest, account))
         self._conn.commit()
+
+    @staticmethod
+    def _egress_id(account: str) -> str:
+        """Đường ra mạng của nick lúc này (KHÔNG gọi mạng): IP:cổng proxy xoay đang cache / host proxy tĩnh / "direct"."""
+        try:
+            from browser import account_proxy_raw, is_rotating_proxy, parse_proxy, rotating_status
+            raw = account_proxy_raw(account) or config.PROXY or ""
+            if not raw:
+                return "direct"
+            if is_rotating_proxy(raw):
+                return rotating_status(raw).get("endpoint") or raw
+            p = parse_proxy(raw)
+            return p["server"] if p else raw
+        except Exception:  # noqa: BLE001
+            return "?"
 
     def _claim(self, account: str, cost: int = 1):
         """Cộng CREDIT đã dùng hôm nay (không phải số video): 30s Seedance 2.5 = 2 credit (đo 13/09)."""
@@ -394,6 +427,7 @@ class BrowserPool:
                 "login_checked_at": m["login_checked_at"] if m else 0,
                 "cooldown_until": m["cooldown_until"] if m else 0,
                 "cooling": bool(m and m["cooldown_until"] > now),
+                "quarantine": self._quarantine.get(a, "") if m and m["cooldown_until"] > now else "",
                 "rate_limited_until": m["rate_limited_until"] if m and m["rate_limited_until"] else 0,
                 "rate_limited": bool(m and m["rate_limited_until"] > now),
                 "limit_reason": m["limit_reason"] if m else "",
@@ -422,6 +456,8 @@ class BrowserPool:
             return "đang tạm ngưng — bấm 'Cho chạy lại' ở Kho tài khoản (chạy đích danh trong Studio thì tự mở lại)"
         if a["cooling"]:
             left = max(1, int(((a.get("cooldown_until") or 0) - now) / 60))
+            if a.get("quarantine"):
+                return f"{a['quarantine']} — còn {left} phút; đăng nhập lại nick rồi 'Bỏ nghỉ' nếu muốn chạy ngay"
             return (f"đang nghỉ (captcha/gửi quá dày/lỗi lúc mở nick), còn {left} phút — "
                     "bấm 'Bỏ nghỉ tất cả' nếu muốn chạy ngay")
         if a["rate_limited"]:
@@ -457,6 +493,8 @@ class BrowserPool:
         """Bỏ trạng thái 'đang nghỉ' để chạy lại ngay (người dùng tự quyết định chấp nhận rủi ro)."""
         self._conn.execute("UPDATE accounts_meta SET cooldown_until=0 WHERE name=?", (name,))
         self._conn.commit()
+        self._quarantine.pop(name, None)
+        self._fail_ips.pop(name, None)
 
     def set_scheduling(self, name: str, on: bool):
         self._conn.execute(
@@ -645,7 +683,7 @@ class BrowserPool:
             "login_ok": a.get("login_ok"), "login_checked_at": a.get("login_checked_at") or 0,
             "remaining": a.get("remaining"),
             "scheduling": a.get("scheduling", True), "cooling": a.get("cooling", False),
-            "cooldown_until": a.get("cooldown_until", 0),
+            "cooldown_until": a.get("cooldown_until", 0), "quarantine": a.get("quarantine", ""),
             "busy": a.get("busy", False),
         } for a in self.list_accounts()]
 

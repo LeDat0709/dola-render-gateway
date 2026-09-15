@@ -362,7 +362,7 @@ export function accChip(a) {
   }
   if (st === "cooling") {
     const t = a.cooldown_until ? new Date(a.cooldown_until * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "";
-    return { st, variant: "info", text: "Nghỉ" + (t ? ` đến ${t}` : "") };
+    return { st, variant: a.quarantine ? "warn" : "info", text: (a.quarantine ? "Cách ly" : "Nghỉ") + (t ? ` đến ${t}` : ""), title: a.quarantine || "" };
   }
   const M = { ready: ["success", "Sẵn sàng"], busy: ["default", "Đang chạy"], off: ["secondary", "Tạm ngưng"], dead: ["secondary", "⚠ Chưa đăng nhập"] };
   return { st, variant: M[st][0], text: M[st][1] };

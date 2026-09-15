@@ -607,6 +607,27 @@ def test_busy_pinned_nick_gives_up_after_wait_cap():
         assert pool.semaphore._value == pool.max_concurrency, "chờ nick không được giữ slot Chrome"
 
 
+# ---------- R27: nick lỗi trước khi gửi trên ≥3 IP khác nhau → cách ly dài (đối thủ: ACC SPAM CHỜ XỬ LÝ) ----------
+def test_nick_failing_on_many_ips_is_quarantined():
+    import time as _t
+    import proxyxoay
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp)
+        with _proxy_env(tmp, life=1500):
+            for i, ip in enumerate(["1.1.1.1:80", "2.2.2.2:80", "2.2.2.2:80", "3.3.3.3:80"]):
+                proxyxoay._cache[_LINK]["ip"] = ip
+                pool._rest_after_presubmit_fail("n1", RuntimeError("Khung soạn video không mở được"))
+                m = pool._meta("n1")
+                left = m["cooldown_until"] - _t.time()
+                if i < 3:   # 1.1 → 2.2 → 2.2 (trùng IP không tính) = mới 2 IP khác nhau → nghỉ ngắn
+                    assert left <= browser_pool.PRESUBMIT_FAIL_COOLDOWN_SEC + 5, (i, left)
+            assert left > browser_pool.SPAM_COOLDOWN_SEC - 60, "3 IP khác nhau → cách ly dài"
+            a = next(x for x in pool.list_accounts() if x["name"] == "n1")
+            assert "cách ly" in pool.blocked_reason(a) and "3 IP" in pool.blocked_reason(a), pool.blocked_reason(a)
+            pool.clear_cooldown("n1")
+            assert not pool._quarantine and "n1" not in pool._fail_ips, "Bỏ nghỉ = xoá cách ly"
+
+
 if __name__ == "__main__":
     import sys
     tests = [(k, v) for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]

@@ -578,7 +578,7 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotated
         <div className="font-mono text-[10.5px] text-muted-foreground">{a.used_today}/{a.limit} hôm nay{a.remaining != null ? ` · còn ${a.remaining}` : ""}{lowCredit && s.phase === "idle" ? <span className="text-warn"> · nghỉ (thiếu điểm)</span> : ""}</div>
         <CookieTag a={a} />
       </td>
-      <td className={td + " whitespace-nowrap"}><Badge variant={chip.variant}>{chip.text}</Badge></td>
+      <td className={td + " whitespace-nowrap"}><Badge variant={chip.variant} title={chip.title || undefined}>{chip.text}</Badge></td>
       <td className={td}>
         {s.videoUrl ? (
           <div className="flex flex-col items-start gap-0.5">
@@ -697,7 +697,7 @@ function Footer({ s, a, onRun, rotatedFrom }) {
       </div>
     );
   }
-  if (a.cooling && a.cooldown_until > 0) return <span className="font-mono text-[11px] text-info">nghỉ còn {Math.max(1, Math.ceil((a.cooldown_until - Date.now() / 1000) / 60))} phút</span>;
+  if (a.cooling && a.cooldown_until > 0) return <span className={"font-mono text-[11px] " + (a.quarantine ? "text-warn" : "text-info")} title={a.quarantine || undefined}>{a.quarantine ? "cách ly (lỗi trên nhiều IP)" : "nghỉ"} còn {Math.max(1, Math.ceil((a.cooldown_until - Date.now() / 1000) / 60))} phút</span>;
   if (a.busy && rotatedFrom) return <span className="font-mono text-[11px] text-primary" title={"Nick này đang dựng video được xoay từ thẻ " + rotatedFrom}>⏳ đang dựng (job xoay từ {rotatedFrom})</span>;
   if (a.busy) return <span className="font-mono text-[11px] text-primary">Đang chạy trên server…</span>;   // #2: khớp badge, khỏi mâu thuẫn "Chưa chạy"
   return <span className="font-mono text-[11px] text-muted-foreground">{s.status || "Chưa chạy"}</span>;
