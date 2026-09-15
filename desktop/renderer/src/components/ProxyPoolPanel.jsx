@@ -54,6 +54,11 @@ export default function ProxyPoolPanel({ onAssigned }) {
   const s = data?.stats || { total: 0, alive: 0, dead: 0, unchecked: 0 };
   const dot = (a) => a === true ? <Badge variant="success">sống</Badge> : a === false ? <Badge variant="danger">chết</Badge> : <Badge variant="secondary">chưa kiểm</Badge>;
 
+  // Cảnh báo loại proxy xoay theo whitelist IP (proxy.vn/topproxy/link get.php của proxyxoay). Máy IP động →
+  // whitelist xong đổi IP là "chết" ngay. tmproxy (key-auth) và proxy tĩnh user:pass thì KHÔNG bị.
+  const needsWhitelist = provider === "topproxy" || provider === "proxyvn"
+    || /get\.php|proxyxoay|(?:^|[\s\n])(?:topproxy|proxyvn|proxyxoay):\/\//i.test(text);
+
   return (
     <div className="space-y-3 rounded-xl border bg-card p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -90,6 +95,11 @@ export default function ProxyPoolPanel({ onAssigned }) {
         <span className="text-xs text-muted-foreground">nick/IP</span>
         <Button size="sm" variant="outline" onClick={assign} disabled={!!busy || !s.alive}><Shuffle className="h-3.5 w-3.5" />Chia cho nick</Button>
       </div>
+      {needsWhitelist && (
+        <div className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[11px] leading-relaxed text-warn">
+          ⚠ Loại này (proxy.vn / topproxy / link <code className="font-mono">get.php</code>) xác thực theo <b>whitelist IP máy</b> — máy đổi IP là proxy <b>chết ngay</b>. Nên dùng <b>tmproxy</b> (xác thực bằng key, chạy mọi IP) hoặc <b>proxy tĩnh <code className="font-mono">ip:port:user:pass</code></b> để khỏi whitelist.
+        </div>
+      )}
       {msg && <div className="text-xs text-muted-foreground">{msg}</div>}
 
       {!!(data?.proxies || []).length && (
