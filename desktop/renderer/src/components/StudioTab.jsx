@@ -335,6 +335,8 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   Object.entries(rows).forEach(([origin, r]) => { if (r?.ranOn && r.ranOn !== origin) rotatedInto[r.ranOn] = origin; });
   const nickProps = (a) => ({
     a, s: row(a.account), selected: !!sel[a.account], clock, elapsed, proxyCell, rotatedFrom: rotatedInto[a.account] || "",
+    // prompt THẬT đang dựng trên nick này (job xoay từ nick gốc) → cột Prompt hiện đúng, không còn placeholder.
+    rotatedPrompt: rotatedInto[a.account] ? (row(rotatedInto[a.account]).prompt || "") : "",
     onSel: (v) => setSel((p) => ({ ...p, [a.account]: v })), onChange: (patch) => setRow(a.account, patch),
     onRun: () => { stop.current = false; runOne(a.account); }, onRelogin: () => relogin(a.account), onProxy: () => setProxy(a.account), onDelete: () => del(a.account),
     onPlay, onOpen: () => api.openDownloads?.(), onCopy: copyPath, onRemoveWm: removeWm,
@@ -472,7 +474,7 @@ function Timeline({ s, compact = false }) {
 }
 
 // Dạng bảng: một dòng một nick, cùng dữ liệu và thao tác với thẻ nhưng nhìn được 15–20 nick không cần cuộn.
-function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
+function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotatedPrompt, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
   const n = a.account;
   const chip = stateChip(a, s);
   const tint = s.phase === "done" ? " bg-tertiary/5" : s.phase === "error" ? " bg-error/5" : "";
@@ -501,7 +503,12 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, onSel, 
         ) : <span className="text-muted-foreground">—</span>}
       </td>
       <td className={td + " min-w-[260px]"}>
-        <Input className="h-8 text-[12.5px]" value={s.prompt} placeholder={`prompt cho ${n}…`} onChange={(e) => onChange({ prompt: e.target.value })} />
+        {rotatedPrompt
+          ? <div className="rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-[12px] leading-tight" title={rotatedPrompt}>
+              <span className="block truncate">{rotatedPrompt}</span>
+              <span className="font-mono text-[10px] text-primary">↳ prompt của job xoay từ {rotatedFrom}</span>
+            </div>
+          : <Input className="h-8 text-[12.5px]" value={s.prompt} placeholder={`prompt cho ${n}…`} onChange={(e) => onChange({ prompt: e.target.value })} />}
       </td>
       <td className={td}><SelectNative className="h-8 w-[122px] text-xs" value={s.model} onChange={(e) => onChange({ model: e.target.value })}>{MODELS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
       <td className={td}><SelectNative className="h-8 w-[68px] text-xs" value={s.ratio} onChange={(e) => onChange({ ratio: e.target.value })}>{RATIOS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
@@ -548,7 +555,7 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, onSel, 
   );
 }
 
-function NickCard({ a, s, selected, elapsed, rotatedFrom, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
+function NickCard({ a, s, selected, elapsed, rotatedFrom, rotatedPrompt, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
   const n = a.account;
   const cardChip = stateChip(a, s);
   const border = s.phase === "done" ? " ring-1 ring-tertiary/25" : s.phase === "error" ? " ring-1 ring-error/30" : "";
@@ -563,6 +570,11 @@ function NickCard({ a, s, selected, elapsed, rotatedFrom, onSel, onChange, onRun
       </div>
       {s.phase === "done" ? (
         <DoneRow s={s} onPlay={onPlay} onOpen={onOpen} onCopy={onCopy} onRemoveWm={onRemoveWm} onNew={onNew} />
+      ) : rotatedPrompt ? (
+        <div className="rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5 text-[12.5px] leading-tight" title={rotatedPrompt}>
+          <span className="block line-clamp-2">{rotatedPrompt}</span>
+          <span className="font-mono text-[10px] text-primary">↳ prompt của job xoay từ {rotatedFrom}</span>
+        </div>
       ) : (
         <Input className="h-9 text-[13px]" value={s.prompt} placeholder={`prompt cho ${n}…`} onChange={(e) => onChange({ prompt: e.target.value })} />
       )}
