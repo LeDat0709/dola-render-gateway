@@ -1,5 +1,6 @@
 """Patchright persistent context launcher: Explicit proxy and anti-detection parameters."""
 import asyncio
+import contextlib
 import hashlib
 import os
 import shutil
@@ -357,10 +358,55 @@ def rotate_proxy_session(account: str, every: int) -> str:
     return st["id"]
 
 
-def _rotate_raw(raw: str, label: str) -> None:
+# SỔ GIỮ CHỖ proxy xoay: proxy chuẩn hoá -> số job ĐANG chạy trên nó (mở nick → gửi → dựng → tải). tmproxy/proxy.vn
+# GIẾT cổng cũ khi cấp IP mới (đối thủ v1.0.88: NHA_BAN_GIET_CONG_CU) → tự đổi IP lúc còn job khác trên cùng key = cắt
+# IP của job đó giữa chừng (đã trừ lượt). Chỉ tự đổi khi sổ = 0; bấm "Đổi IP" tay thì vẫn đổi (giao diện đã cảnh báo).
+_proxy_leases: dict[str, int] = {}
+# IP proxy xoay còn sống ít hơn ngần này (theo nhà bán báo) mà sắp mở nick → xin IP mới TRƯỚC (đủ mở Chrome + gửi).
+PROXY_MIN_LIFE_SEC = int(os.getenv("DOLA_PROXY_MIN_LIFE", "180"))
+
+
+def _effective_rotating(account: str) -> str:
+    """Proxy xoay nick đang đi (riêng, không thì proxy chung) dạng chuẩn; proxy tĩnh/đi thẳng → ""."""
+    raw = normalize_proxy_input(account_proxy_raw(account) or config.PROXY)
+    return raw if is_rotating_proxy(raw) else ""
+
+
+@contextlib.contextmanager
+def proxy_lease(account: str):
+    """Giữ chỗ proxy xoay của nick suốt MỘT job."""
+    key = _effective_rotating(account)
+    if key:
+        _proxy_leases[key] = _proxy_leases.get(key, 0) + 1
+    try:
+        yield
+    finally:
+        if key:
+            left = _proxy_leases.get(key, 1) - 1
+            if left > 0:
+                _proxy_leases[key] = left
+            else:
+                _proxy_leases.pop(key, None)
+
+
+def rotate_if_expiring(account: str) -> bool:
+    """TRƯỚC khi mở nick: IP proxy xoay sắp hết tuổi (< PROXY_MIN_LIFE_SEC) → xin IP mới, để cổng không chết giữa lúc
+    mở Chrome/gửi prompt (đối thủ: xoay_truoc_job). Không gọi mạng nếu IP còn sống lâu / chưa lấy IP lần nào."""
+    key = _effective_rotating(account)
+    st = rotating_status(key) if key else {}
+    if not st or st.get("expires_in", PROXY_MIN_LIFE_SEC) >= PROXY_MIN_LIFE_SEC:
+        return False
+    return _rotate_raw(key, f"{account} (IP còn {st['expires_in']}s, đổi trước khi mở nick)")
+
+
+def _rotate_raw(raw: str, label: str) -> bool:
     """Xin IP mới cho MỘT chuỗi proxy xoay (tmproxy://KEY, KEY trần, hoặc link get.php?key=…). Không phải
-    proxy xoay hoặc lỗi mạng → giữ IP cũ. `label` chỉ để in log."""
+    proxy xoay, lỗi mạng, hoặc CÒN JOB KHÁC đang chạy trên proxy này → giữ IP cũ. `label` chỉ để in log."""
     raw = normalize_proxy_input(raw)
+    busy = _proxy_leases.get(raw, 0)
+    if busy:
+        print(f"[proxy] {label}: KHÔNG đổi IP — {busy} job khác đang chạy trên proxy này (đổi sẽ cắt IP của chúng)", flush=True)
+        return False
     try:
         if raw.lower().startswith("tmproxy://"):
             import tmproxy
@@ -371,8 +417,10 @@ def _rotate_raw(raw: str, label: str) -> None:
                 return
             ip = proxyxoay.rotate(raw)["ip"]
         print(f"[proxy] {label}: IP hiện hành {ip}", flush=True)
+        return True
     except Exception as exc:
         print(f"[proxy] {label}: đổi IP thất bại, giữ IP cũ: {str(exc)[:100]}", flush=True)
+        return False
 
 
 def rotate_tmproxy_now(account: str) -> None:

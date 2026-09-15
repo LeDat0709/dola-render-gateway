@@ -33,6 +33,11 @@ _WAIT_FIELDS = ("nextRequest", "next_request", "nextrequest", "timeout", "ttl")
 # Sàn hạn cache current(): phải LỚN hơn thời lượng render 1 video để IP không đổi giữa chừng (submit/poll/tải
 # cùng IP), nhưng đủ ngắn để bản cache chết được làm mới thay vì phục vụ mãi. 10 phút > video 30s (~2–3 phút).
 _CACHE_TTL_FLOOR = 600
+# "proxy nay se die sau 1777s" (tài liệu proxy.vn) = TUỔI THỌ IP. Trước đây regex chờ bắt nhầm số này → next_ok = +1777s →
+# rotate() sau 710022002 không gọi link suốt ~30 phút. Có tuổi thọ thì cache bám tuổi thọ (gọi get.php lúc IP còn sống =
+# xoay IP dưới chân job khác), chết sớm _LIFE_MARGIN_SEC để kịp lấy IP mới.
+_LIFE_RE = re.compile(r"die\s*sau\s*(\d+)", re.I)
+_LIFE_MARGIN_SEC = 30
 
 
 # proxyxoay.shop (proxy.vn / topproxy) cho KHAI THÊM IPv4 được dùng ngay trong link: &whitelist=IP (tài liệu nhà bán).
@@ -119,7 +124,7 @@ def _wait_seconds(data: dict, message: str) -> int:
     n = _find(data, _WAIT_FIELDS)
     if n.isdigit():
         return int(n)
-    m = re.search(r"(\d+)\s*(giây|giay|s|sec)", message, re.I)   # "chờ 43 giây"
+    m = re.search(r"(\d+)\s*(giây|giay|s|sec)", _LIFE_RE.sub("", message), re.I)   # "chờ 43 giây" (bỏ "die sau Ns")
     return int(m.group(1)) if m else 0
 
 
@@ -151,7 +156,8 @@ def _fetch(link: str, now: float) -> dict:
     changes = (prev.get("changes", 0) if prev.get("day") == day else 0) + (prev.get("ip") != ip)   # lần ĐỔI IP trong ngày
     ent = {**proxy, "ip": ip, "network": _find(src, _NET_FIELDS), "location": _find(src, _LOC_FIELDS),
            "expiration": _find(src, _EXP_FIELDS), "message": message,
-           "next_ok": now + wait, "fetched_at": now, "ttl": max(wait, _CACHE_TTL_FLOOR), "day": day, "changes": changes}
+           "next_ok": now + wait, "fetched_at": now, "day": day, "changes": changes,
+           "ttl": max(int(life.group(1)) - _LIFE_MARGIN_SEC, 0) if (life := _LIFE_RE.search(message)) else max(wait, _CACHE_TTL_FLOOR)}
     _cache[link] = ent
     if wl_ip:
         _wl_sent[link] = wl_ip   # khai OK (có proxy trả về) → IP máy chưa đổi thì lần sau khỏi gắn lại
@@ -196,7 +202,7 @@ def status(link: str) -> dict:
     if not ent:
         return {}
     now = time.time()
-    life = re.search(r"die\s*sau\s*(\d+)", ent.get("message", ""), re.I)
+    life = _LIFE_RE.search(ent.get("message", ""))
     dies_at = ent["fetched_at"] + (int(life.group(1)) if life else ent["ttl"])
     return {"endpoint": ent.get("ip", ""), "network": ent.get("network", ""), "location": ent.get("location", ""),
             "age": int(now - ent["fetched_at"]), "expires_in": int(dies_at - now),

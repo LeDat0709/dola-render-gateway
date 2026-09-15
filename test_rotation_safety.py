@@ -477,6 +477,80 @@ def test_guest_refusal_marks_dead_and_rotates():
         assert got == [("n1", True), ("n1", False), ("n2", True)], got
 
 
+# ---------- R21–R23: sổ giữ chỗ proxy xoay (đối thủ v1.0.88: không đổi IP khi làn còn nick chạy) ----------
+_LINK = "https://proxyxoay.shop/api/get.php?key=KEYLEASE1234&nhamang=random&tinhthanh=0"
+
+
+class _proxy_env:
+    """n1, n2 cùng 1 link proxyxoay; IP cache sống `life` giây; đếm số lần gọi đổi IP thật."""
+    def __init__(self, tmp, life):
+        self.tmp, self.life, self.rotations = tmp, life, []
+
+    def __enter__(self):
+        import time as _t
+        import browser
+        import proxyxoay
+        self.saved = (browser_pool.config.ACCOUNTS_DIR, browser_pool.config.PROXY, proxyxoay.rotate)
+        browser_pool.config.ACCOUNTS_DIR, browser_pool.config.PROXY = Path(self.tmp) / "accounts", ""
+        for n in ("n1", "n2"):
+            (Path(self.tmp) / "accounts" / n / "proxy.txt").write_text(_LINK, encoding="utf-8")
+        proxyxoay._cache[_LINK] = {"server": "http://1.1.1.1:80", "ip": "1.1.1.1:80", "message": f"proxy nay se die sau {self.life}s",
+                                   "fetched_at": _t.time(), "ttl": max(self.life - 30, 0), "next_ok": 0, "network": "", "location": ""}
+        proxyxoay.rotate = lambda link: (self.rotations.append(link), proxyxoay._cache[link])[1]
+        browser._proxy_leases.clear()
+        return self
+
+    def __exit__(self, *a):
+        import browser
+        import proxyxoay
+        browser_pool.config.ACCOUNTS_DIR, browser_pool.config.PROXY, proxyxoay.rotate = self.saved
+        proxyxoay._cache.pop(_LINK, None)
+        browser._proxy_leases.clear()
+
+
+def test_job_holds_proxy_lease_while_running():
+    import browser
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp)
+        with _proxy_env(tmp, life=1500) as env:
+            seen = []
+
+            async def gen(acc, *a, on_submitted=None, **kw):
+                seen.append(dict(browser._proxy_leases))
+                on_submitted(acc, True)
+                return {"video_url": "u", "account": acc}
+            browser_pool.generate_video = gen
+            _run(pool.generate_video("p", "9:16", 10, account="n1"))
+            assert seen == [{_LINK: 1}], seen
+            assert browser._proxy_leases == {}, "hết job phải trả chỗ"
+            assert env.rotations == [], "IP còn sống lâu → không đổi trước job"
+
+
+def test_auto_rotate_skipped_while_other_job_on_same_proxy():
+    """710022002 / tới lượt đổi sau N video trên n1 mà n2 ĐANG chạy cùng key → không đổi (đổi = cắt IP của n2)."""
+    import browser
+    with tempfile.TemporaryDirectory() as tmp:
+        _pool(tmp)
+        with _proxy_env(tmp, life=1500) as env:
+            with browser.proxy_lease("n2"):
+                assert browser.rotate_tmproxy_now("n1") is None and env.rotations == [], env.rotations
+            browser.rotate_tmproxy_now("n1")
+            assert env.rotations == [_LINK], "không còn job nào trên proxy → được đổi"
+
+
+def test_expiring_ip_rotated_before_opening_nick():
+    import browser
+    with tempfile.TemporaryDirectory() as tmp:
+        pool = _pool(tmp)
+        browser_pool.generate_video = _scripted({"n1": [("ok",)], "n2": [("ok",)]})
+        with _proxy_env(tmp, life=100) as env:           # IP chỉ còn ~100s < PROXY_MIN_LIFE_SEC
+            with browser.proxy_lease("n2"):                # n2 đang chạy cùng key → KHÔNG đổi
+                _run(pool.generate_video("p", "9:16", 10, account="n1"))
+            assert env.rotations == [], env.rotations
+            _run(pool.generate_video("p", "9:16", 10, account="n1"))
+            assert env.rotations == [_LINK], "IP sắp hết tuổi, không ai dùng → đổi TRƯỚC khi mở nick"
+
+
 if __name__ == "__main__":
     import sys
     tests = [(k, v) for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]

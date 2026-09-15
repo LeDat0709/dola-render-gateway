@@ -806,19 +806,23 @@ class BrowserPool:
                 raise e
 
         async def _run_worker(acc, on_balance, seen):
+            from browser import proxy_lease, rotate_if_expiring
             await _pace(account_proxy_raw(acc) or "")
             await _hold_browser()
+            # IP proxy xoay sắp hết tuổi mà không job nào khác đang dùng → đổi TRƯỚC khi mở nick (không chết giữa lúc gửi).
+            await asyncio.to_thread(rotate_if_expiring, acc)
             if on_opening:
                 try:
                     on_opening(acc)
                 except Exception as e:  # noqa: BLE001 — chỉ là nhãn hiển thị, không được làm nick bị xoay/nghỉ
                     print(f"[pool] {acc}: ghi trạng thái 'đang mở nick' lỗi (bỏ qua): {e!r}", flush=True)
-            result = await _presubmit_guard(
-                generate_video, acc, prompt, ratio, duration, model=model,
-                on_conversation_id=on_conversation_id, on_poll=on_poll,
-                on_balance=on_balance, on_submitted=_on_submitted,
-                on_browser_free=_release_browser, on_browser_hold=_hold_browser,
-                reference_image_paths=reference_image_paths)
+            with proxy_lease(acc):   # giữ chỗ proxy suốt job: nick khác không tự đổi IP dưới chân job này
+                result = await _presubmit_guard(
+                    generate_video, acc, prompt, ratio, duration, model=model,
+                    on_conversation_id=on_conversation_id, on_poll=on_poll,
+                    on_balance=on_balance, on_submitted=_on_submitted,
+                    on_browser_free=_release_browser, on_browser_hold=_hold_browser,
+                    reference_image_paths=reference_image_paths)
             try:
                 self._settle(acc, result, model, duration, seen["balance"])
                 # VIDEO XONG = cookie chắc chắn sống (Studio bỏ qua bước kiểm cho nick này). KHÔNG ghi lúc Dola mới nhận

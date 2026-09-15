@@ -68,6 +68,14 @@ def main():
             pass
     finally:
         config.ACCOUNTS_DIR, config.PROXY = old_dir, old_proxy
+    # "die sau Ns" = TUỔI THỌ IP, không phải thời gian chờ đổi (trước đây rotate() sau 710022002 thành no-op ~25 phút)
+    proxyxoay._cache.clear()
+    proxyxoay._get = lambda link: '{"status":100,"message":"proxy nay se die sau 1500s","proxyhttp":"3.3.3.3:80::"}'
+    ent = proxyxoay.current(LINK)
+    assert ent["next_ok"] == ent["fetched_at"] and ent["ttl"] == 1470, ent
+    proxyxoay._get = lambda link: '{"status":100,"message":"Con 59s moi co the doi proxy","proxyhttp":"3.3.3.3:80::"}'
+    ent = proxyxoay.rotate(LINK)
+    assert ent["next_ok"] - ent["fetched_at"] == 59 and ent["ttl"] == 600, ent
     test_auto_whitelist_and_status()
     print("OK")
 
