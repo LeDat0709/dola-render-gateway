@@ -12,6 +12,7 @@ import proxyxoay
 import tmproxy
 
 KEY = "0123456789abcdef0123456789abcdef"
+proxyxoay._public_ipv4 = lambda now: ""   # không gọi mạng hỏi IP máy (tự khai whitelist test ở test_proxyxoay.py)
 
 
 def _boom(*a, **k):

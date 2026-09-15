@@ -15,6 +15,7 @@ Giữ IP CỐ ĐỊNH suốt một video: current() luôn trả IP đã cache; c
 710022002 / bấm "Đổi IP") mới gọi lại link, và tôn trọng khoảng chờ nhà bán ép (next_ok).
 """
 import json
+import os
 import re
 import threading
 import time
@@ -34,8 +35,44 @@ _WAIT_FIELDS = ("nextRequest", "next_request", "nextrequest", "timeout", "ttl")
 _CACHE_TTL_FLOOR = 600
 
 
+# proxyxoay.shop (proxy.vn / topproxy) cho KHAI THÊM IPv4 được dùng ngay trong link: &whitelist=IP (tài liệu nhà bán).
+# Máy IP ĐỘNG (đo 15/09: 3–4 IP/phiên) whitelist tay xong đổi IP là proxy "chết" → tool tự khai IP hiện tại của máy mỗi khi
+# IP máy đổi. get.php vẫn trả lời máy chưa whitelist (HTTP 200) nên khai được. Tắt: DOLA_PROXY_AUTO_WHITELIST=0.
+AUTO_WHITELIST = os.getenv("DOLA_PROXY_AUTO_WHITELIST", "1") != "0"
+_PUBLIC_IP_URL = "https://api.ipify.org"   # chỉ trả IPv4 — nhà bán chỉ nhận IPv4
+_PUBLIC_IP_TTL = 300                       # hỏi lại IP máy mỗi 5 phút (IP động đổi thì lần gọi sau tự khai lại)
+_pub_ip = {"ip": "", "at": 0.0}
+_wl_sent: dict[str, str] = {}              # link -> IPv4 đã khai whitelist thành công gần nhất
+
+
 class ProxyXoayError(RuntimeError):
     pass
+
+
+def _public_ipv4(now: float) -> str:
+    """IPv4 công cộng của MÁY (đi thẳng, không qua proxy); lỗi mạng → IP lần trước (hoặc "")."""
+    if _pub_ip["ip"] and now - _pub_ip["at"] < _PUBLIC_IP_TTL:
+        return _pub_ip["ip"]
+    try:
+        with urllib.request.urlopen(_PUBLIC_IP_URL, timeout=5) as r:
+            ip = r.read().decode("ascii", "replace").strip()
+    except (urllib.error.URLError, OSError):
+        return _pub_ip["ip"]
+    if re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", ip):
+        _pub_ip.update(ip=ip, at=now)
+    return _pub_ip["ip"]
+
+
+def _whitelist_url(link: str, now: float) -> tuple[str, str]:
+    """(url gọi thật, IP đang khai). Chỉ gắn &whitelist= cho proxyxoay.shop, khi link chưa tự ghi whitelist và IP
+    máy khác lần khai thành công trước — link lưu trong kho/cache KHÔNG đổi (khoá cache giữ nguyên)."""
+    low = link.lower()
+    if not AUTO_WHITELIST or "proxyxoay.shop" not in low or "whitelist=" in low:
+        return link, ""
+    ip = _public_ipv4(now)
+    if not ip or _wl_sent.get(link) == ip:
+        return link, ""
+    return f"{link}{'&' if '?' in link else '?'}whitelist={ip}", ip
 
 
 def is_key_link(raw: str | None) -> bool:
@@ -87,7 +124,8 @@ def _wait_seconds(data: dict, message: str) -> int:
 
 
 def _fetch(link: str, now: float) -> dict:
-    body = _get(link).strip()
+    url, wl_ip = _whitelist_url(link, now)
+    body = _get(url).strip()
     try:
         j = json.loads(body)
         data = j if isinstance(j, dict) else {}
@@ -108,10 +146,16 @@ def _fetch(link: str, now: float) -> dict:
         raise ProxyXoayError(message or "phản hồi không có proxy")
     ip = proxy["server"].split("://", 1)[1]
     wait = _wait_seconds(src, message)
+    prev = _cache.get(link) or {}
+    day = time.strftime("%Y-%m-%d", time.localtime(now))
+    changes = (prev.get("changes", 0) if prev.get("day") == day else 0) + (prev.get("ip") != ip)   # lần ĐỔI IP trong ngày
     ent = {**proxy, "ip": ip, "network": _find(src, _NET_FIELDS), "location": _find(src, _LOC_FIELDS),
            "expiration": _find(src, _EXP_FIELDS), "message": message,
-           "next_ok": now + wait, "fetched_at": now, "ttl": max(wait, _CACHE_TTL_FLOOR)}
+           "next_ok": now + wait, "fetched_at": now, "ttl": max(wait, _CACHE_TTL_FLOOR), "day": day, "changes": changes}
     _cache[link] = ent
+    if wl_ip:
+        _wl_sent[link] = wl_ip   # khai OK (có proxy trả về) → IP máy chưa đổi thì lần sau khỏi gắn lại
+        print(f"[proxyxoay] {mask(link)}: đã tự khai whitelist IP máy {wl_ip}", flush=True)
     return ent
 
 
@@ -143,6 +187,21 @@ def cached_ip(link: str) -> dict:
     if not ent:
         return {}
     return {"ip": ent.get("ip", ""), "network": ent.get("network", ""), "location": ent.get("location", "")}
+
+
+def status(link: str) -> dict:
+    """Trạng thái IP đang cache của link (KHÔNG gọi mạng) cho Kho proxy: endpoint ip:port, nhà mạng/vị trí, tuổi IP,
+    còn sống bao lâu (theo "die sau Ns" nhà bán báo, không có thì theo hạn cache), bao lâu nữa được đổi, số lần đổi hôm nay."""
+    ent = _cache.get((link or "").strip())
+    if not ent:
+        return {}
+    now = time.time()
+    life = re.search(r"die\s*sau\s*(\d+)", ent.get("message", ""), re.I)
+    dies_at = ent["fetched_at"] + (int(life.group(1)) if life else ent["ttl"])
+    return {"endpoint": ent.get("ip", ""), "network": ent.get("network", ""), "location": ent.get("location", ""),
+            "age": int(now - ent["fetched_at"]), "expires_in": int(dies_at - now),
+            "rotate_in": max(0, int(ent["next_ok"] - now)), "changes": ent.get("changes", 1),
+            "whitelist_ip": _wl_sent.get((link or "").strip(), "")}
 
 
 def resolve_dict(raw: str) -> dict | None:

@@ -12,6 +12,7 @@ Lưu ở DATA_DIR/proxy_pool.json. Endpoint (mount vào server.py):
   POST   /api/admin/proxies/check   -> kiểm tra tất cả (8 luồng/15s)  -> {ok, alive, dead}
   POST   /api/admin/proxies/prune   -> xoá proxy chết                 -> {ok, removed}
   POST   /api/admin/proxies/assign  -> chia proxy sống cho nick chưa có (body {per_ip, scope}) -> {ok, assigned}
+  POST   /api/admin/proxies/{id}/rotate -> đổi IP proxy xoay rồi kiểm lại -> {ok, proxy}
   DELETE /api/admin/proxies/{id}    -> xoá 1 proxy khỏi kho
 
 Tự kiểm (không cần mạng): python proxy_pool.py
@@ -22,6 +23,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -33,6 +35,8 @@ from pydantic import BaseModel, Field
 CHECK_CONCURRENCY = int(os.getenv("PROXY_CHECK_THREADS", "8"))     # 8 luồng song song
 CHECK_TIMEOUT = float(os.getenv("PROXY_CHECK_TIMEOUT", "15"))      # 15 giây/proxy
 CHECK_URL = os.getenv("PROXY_CHECK_URL", "https://www.dola.com/")  # proxy phải với tới Dola mới coi là sống
+# Hỏi IP RA thật qua proxy (IP + nhà mạng + tỉnh) để Kho proxy hiện "IP ra 116.107.x.x · viettel HungYen" như tool đối thủ.
+IPINFO_URL = os.getenv("PROXY_IPINFO_URL", "http://ip-api.com/json/?fields=status,query,isp,city,regionName")
 DEFAULT_PER_IP = int(os.getenv("PROXY_PER_IP", "5"))
 
 
@@ -153,38 +157,72 @@ class PoolStore:
         return [it["raw"] for _, it in sorted(self.items.items()) if it.get("alive") is not False]
 
     def public(self, nick_count: Callable[[str], int] | None = None) -> list[dict]:
-        """Danh sách CHE mật khẩu cho API admin."""
+        """Danh sách CHE mật khẩu cho API admin + thông tin hiển thị (KHÔNG gọi mạng): IP ra/nhà mạng/độ trễ lần
+        kiểm gần nhất, lý do chết, và với proxy xoay: đuôi key, endpoint, tuổi IP, chờ đổi, số lần đổi hôm nay."""
+        from browser import is_rotating_proxy, parse_proxy, rotating_status
         out = []
         for pid, it in sorted(self.items.items()):
+            raw = it["raw"]
+            rot = rotating_status(raw) if is_rotating_proxy(raw) else {}
+            if rot:
+                endpoint = rot.get("endpoint", "")
+            else:
+                p = parse_proxy(raw)   # proxy tĩnh: chỉ tách chuỗi
+                endpoint = p["server"].split("://", 1)[-1] if p else ""
             out.append({
-                "id": pid, "proxy": mask_proxy(it["raw"]), "scheme": _scheme(it["raw"]),
+                "id": pid, "proxy": mask_proxy(raw), "scheme": _scheme(raw),
                 "alive": it.get("alive"), "last_check": it.get("last_check", 0),
-                "nicks": nick_count(it["raw"]) if nick_count else None,
+                "nicks": nick_count(raw) if nick_count else None,
+                "endpoint": endpoint, "exit_ip": it.get("exit_ip") or rot.get("exit_ip", ""),
+                "isp": it.get("isp") or rot.get("network", ""), "city": it.get("city") or rot.get("location", ""),
+                "latency_ms": it.get("latency_ms"), "error": it.get("error") or rot.get("error", ""),
+                "rot": rot or None,
             })
         return out
 
+    async def _check_one(self, pid: str, sem: asyncio.Semaphore) -> None:
+        """Kiểm 1 proxy: với tới Dola qua proxy = sống (+độ trễ); sống thì hỏi IP ra/nhà mạng; chết thì ghi lý do."""
+        it = self.items.get(pid)
+        if not it:
+            return
+        raw = it["raw"]
+        info = {"alive": False, "last_check": time.time(), "error": "", "exit_ip": "", "isp": "", "city": "",
+                "latency_ms": None}
+        url = await asyncio.to_thread(_aiohttp_url, raw)   # tmproxy://KEY / get.php → gọi API nhà bán (đồng bộ) ngoài vòng lặp
+        if not url:
+            from browser import is_rotating_proxy, rotating_last_error
+            info["error"] = (rotating_last_error(raw) if is_rotating_proxy(raw) else "") or "không lấy được proxy"
+        else:
+            try:
+                async with sem, aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=CHECK_TIMEOUT)) as sess:
+                    t0 = time.monotonic()
+                    async with sess.get(CHECK_URL, proxy=url) as resp:
+                        info["alive"] = resp.status < 500      # có phản hồi từ Dola qua proxy = sống
+                        info["latency_ms"] = int((time.monotonic() - t0) * 1000)
+                        if not info["alive"]:
+                            info["error"] = f"Dola trả HTTP {resp.status} qua proxy"
+                    if info["alive"]:
+                        try:
+                            async with sess.get(IPINFO_URL, proxy=url, timeout=aiohttp.ClientTimeout(total=8)) as r2:
+                                j = await r2.json(content_type=None)
+                            info.update(exit_ip=str(j.get("query") or ""), isp=str(j.get("isp") or ""),
+                                        city=str(j.get("city") or j.get("regionName") or ""))
+                        except Exception:  # noqa: BLE001 — chỉ là thông tin hiển thị
+                            pass
+            except Exception as exc:  # noqa: BLE001
+                msg = str(exc) or type(exc).__name__
+                info["error"] = re.sub(r"//[^@/\s]+@", "//***@", msg)[:140]   # không lộ user:pass trong lỗi
+        if pid in self.items:
+            self.items[pid].update(info)
+
+    async def check_ids(self, pids: list[str]) -> None:
+        sem = asyncio.Semaphore(CHECK_CONCURRENCY)
+        await asyncio.gather(*(self._check_one(pid, sem) for pid in pids))
+        self._save()
+
     async def check_all(self) -> tuple[int, int]:
         """Kiểm 8 luồng/15s; đánh dấu alive True/False. Trả (số sống, số chết)."""
-        sem = asyncio.Semaphore(CHECK_CONCURRENCY)
-        now = time.time()
-
-        async def check_one(pid: str, raw: str):
-            url = await asyncio.to_thread(_aiohttp_url, raw)   # tmproxy://KEY → gọi API (đồng bộ) ngoài vòng lặp
-            alive = False
-            if url:
-                try:
-                    async with sem:
-                        timeout = aiohttp.ClientTimeout(total=CHECK_TIMEOUT)
-                        async with aiohttp.ClientSession(timeout=timeout) as s:
-                            async with s.get(CHECK_URL, proxy=url) as r:
-                                alive = r.status < 500      # có phản hồi từ Dola qua proxy = sống
-                except Exception:
-                    alive = False
-            self.items[pid]["alive"] = alive
-            self.items[pid]["last_check"] = now
-
-        await asyncio.gather(*(check_one(pid, it["raw"]) for pid, it in list(self.items.items())))
-        self._save()
+        await self.check_ids(list(self.items))
         alive = sum(1 for it in self.items.values() if it.get("alive"))
         return alive, len(self.items) - alive
 
@@ -259,6 +297,23 @@ def make_router(ctx: dict[str, Any]) -> APIRouter:
             set_account_proxy(name, proxies[i % len(proxies)])
             assigned += 1
         return {"ok": True, "assigned": assigned, "proxies_used": len(proxies), "per_ip": body.per_ip}
+
+    @r.post("/api/admin/proxies/{pid}/rotate")
+    async def rotate_proxy(pid: str, x_admin_key: str | None = Header(default=None)):
+        """Đổi IP 1 proxy xoay (nút "Đổi IP" như tool đối thủ) rồi kiểm lại ngay để hiện IP ra mới."""
+        admin_auth(x_admin_key)
+        it = store.items.get(pid)
+        if not it:
+            raise HTTPException(404, "không có proxy này trong kho")
+        from browser import is_rotating_proxy, rotating_rotate
+        if not is_rotating_proxy(it["raw"]):
+            raise HTTPException(422, "proxy tĩnh không đổi IP được")
+        try:
+            await asyncio.to_thread(rotating_rotate, it["raw"])   # chưa tới giờ nhà bán cho đổi → giữ IP cũ, không lỗi
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502, f"nhà bán proxy báo lỗi: {str(exc)[:160]}")
+        await store.check_ids([pid])
+        return {"ok": True, "proxy": next(p for p in store.public(_nick_count) if p["id"] == pid)}
 
     @r.delete("/api/admin/proxies/{pid}")
     async def del_proxy(pid: str, x_admin_key: str | None = Header(default=None)):

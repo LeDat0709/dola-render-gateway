@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import { Boxes, RefreshCw, Activity, Trash2, Shuffle, Plus } from "lucide-react";
+import { Boxes, RefreshCw, Activity, Trash2, Shuffle, Plus, RotateCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { SelectNative } from "@/components/ui/select-native";
-import { proxyPoolList, proxyPoolAdd, proxyPoolCheck, proxyPoolPrune, proxyPoolAssign, proxyPoolDelete } from "@/lib/api";
+import { proxyPoolList, proxyPoolAdd, proxyPoolCheck, proxyPoolPrune, proxyPoolAssign, proxyPoolDelete, proxyPoolRotate } from "@/lib/api";
 
 // Kho proxy tập trung: dán proxy vào kho, kiểm tra sống/chết (8 luồng/15s trên server), lọc chết, rồi
 // chia cho nick chưa có proxy — tất cả qua API admin nên chạy cả khi nối server từ xa (VPS). Mật khẩu
 // proxy do server che, giao diện không bao giờ thấy pass gốc.
+// "3p", "1g05" — tuổi IP / thời gian chờ đổi cho gọn.
+const ago = (x) => (x == null ? "" : x < 60 ? `${x}s` : x < 3600 ? `${Math.floor(x / 60)}p` : `${Math.floor(x / 3600)}g${String(Math.floor((x % 3600) / 60)).padStart(2, "0")}`);
+
 export default function ProxyPoolPanel({ onAssigned }) {
   const [data, setData] = useState(null);
   const [text, setText] = useState("");
@@ -32,6 +35,8 @@ export default function ProxyPoolPanel({ onAssigned }) {
     }
   }, []);
   useEffect(() => { load(); }, [load]);
+  // Tuổi IP / chờ đổi chạy theo thời gian: đọc lại kho mỗi 15s (API chỉ đọc cache, không gọi nhà bán).
+  useEffect(() => { const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
   // Mở tab đúng lúc gateway đang restart → lần tải đầu hỏng; trước đây kẹt "Failed to fetch" mãi dù header đã online.
   useEffect(() => {
     if (!loadFailed) return undefined;
@@ -50,6 +55,15 @@ export default function ProxyPoolPanel({ onAssigned }) {
   const prune = () => run("prune", proxyPoolPrune, (r) => setMsg(`Đã xoá ${r.removed} proxy chết (còn ${r.total}).`));
   const assign = () => run("assign", () => proxyPoolAssign(perIp, scope), (r) => { setMsg(`Đã chia proxy cho ${r.assigned} nick (${r.proxies_used} IP, tối đa ${r.per_ip}/IP).`); onAssigned?.(); });
   const del = (id) => run("del" + id, () => proxyPoolDelete(id));
+  const rotate = (p) => {
+    if (p.nicks > 0 && !window.confirm(`Đổi IP proxy này? ${p.nicks} nick đang dùng nó — job ĐANG CHẠY trên các nick đó có thể lỗi giữa chừng.`)) return;
+    run("rot" + p.id, () => proxyPoolRotate(p.id), (r) => {
+      const n = r.proxy || {};
+      setMsg(n.rot?.rotate_in > 0 && n.endpoint === p.endpoint
+        ? `Nhà bán chưa cho đổi — còn ${ago(n.rot.rotate_in)} nữa (đang giữ IP ${n.endpoint}).`
+        : `Đã đổi IP: ${n.endpoint || "?"}${n.exit_ip ? ` · IP ra ${n.exit_ip}` : ""}${n.alive === false ? ` · CHẾT: ${n.error || "?"}` : ""}.`);
+    });
+  };
 
   const s = data?.stats || { total: 0, alive: 0, dead: 0, unchecked: 0 };
   const dot = (a) => a === true ? <Badge variant="success">sống</Badge> : a === false ? <Badge variant="danger">chết</Badge> : <Badge variant="secondary">chưa kiểm</Badge>;
@@ -97,26 +111,59 @@ export default function ProxyPoolPanel({ onAssigned }) {
       </div>
       {needsWhitelist && (
         <div className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[11px] leading-relaxed text-warn">
-          ⚠ Loại này (proxy.vn / topproxy / link <code className="font-mono">get.php</code>) xác thực theo <b>whitelist IP máy</b> — máy đổi IP là proxy <b>chết ngay</b>. Nên dùng <b>tmproxy</b> (xác thực bằng key, chạy mọi IP) hoặc <b>proxy tĩnh <code className="font-mono">ip:port:user:pass</code></b> để khỏi whitelist.
+          ⚠ Loại này (proxy.vn / topproxy / link <code className="font-mono">get.php</code>) xác thực theo <b>whitelist IP máy</b>. Tool <b>tự khai whitelist IP máy</b> mỗi khi IP máy đổi (cột "IP proxy" hiện IP đã khai). Vẫn chết thì: mạng máy chỉ có IPv6, IP máy đổi quá nhanh, hoặc key hết hạn — khi đó dùng <b>tmproxy</b> (xác thực bằng key) hoặc <b>proxy tĩnh <code className="font-mono">ip:port:user:pass</code></b>.
         </div>
       )}
       {msg && <div className="text-xs text-muted-foreground">{msg}</div>}
 
       {!!(data?.proxies || []).length && (
-        <Table wrapperClassName="max-h-56 bg-background" className="text-[12px]">
+        <Table wrapperClassName="max-h-96 bg-background" className="text-[12px]">
           <TableHeader className="bg-background">
-            <TableRow><TableHead>Proxy (đã che mật khẩu)</TableHead><TableHead>Giao thức</TableHead><TableHead>Trạng thái</TableHead><TableHead>Nick đang gán</TableHead><TableHead /></TableRow>
+            <TableRow><TableHead>Proxy</TableHead><TableHead>IP ra</TableHead><TableHead>IP proxy</TableHead><TableHead>Trạng thái</TableHead><TableHead>Nick</TableHead><TableHead /></TableRow>
           </TableHeader>
           <TableBody>
-            {data.proxies.map((p) => (
-              <TableRow key={p.id}>
-                <TableCell className="py-1.5 font-mono">{p.proxy}</TableCell>
-                <TableCell className="py-1.5"><span className="rounded bg-surface-high px-1.5 py-0.5 font-mono text-[10px] uppercase">{p.scheme}</span></TableCell>
-                <TableCell className="py-1.5">{dot(p.alive)}</TableCell>
-                <TableCell className="py-1.5 font-mono text-muted-foreground">{p.nicks ?? 0}</TableCell>
-                <TableCell className="py-1.5 text-right"><Button variant="ghost" size="icon" className="h-7 w-7 text-error hover:text-error" onClick={() => del(p.id)} disabled={!!busy}><Trash2 className="h-3.5 w-3.5" /></Button></TableCell>
-              </TableRow>
-            ))}
+            {data.proxies.map((p) => {
+              const rot = p.rot;
+              const life = rot?.expires_in;
+              return (
+                <TableRow key={p.id} className="align-top">
+                  <TableCell className="py-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="rounded bg-primary/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase text-primary">{rot?.provider || p.scheme}</span>
+                      <span className="font-mono text-[12px] font-semibold" title={p.proxy}>{rot ? (rot.key_tail ? `…${rot.key_tail}` : "key") : p.proxy}</span>
+                    </div>
+                    <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{p.endpoint || (rot ? "chưa lấy IP — bấm Kiểm tra kho" : "")}</div>
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap py-2">
+                    {p.exit_ip
+                      ? <><div className="font-mono text-[12px] font-semibold text-tertiary">{p.exit_ip}</div>
+                          <div className="text-[11px] text-muted-foreground">{[p.isp, p.city].filter(Boolean).join(" · ") || "—"}</div></>
+                      : <span className="text-[11px] text-muted-foreground">{p.alive === false ? "—" : "bấm Kiểm tra kho"}</span>}
+                  </TableCell>
+                  <TableCell className="min-w-[250px] whitespace-nowrap py-2 text-[11px] leading-snug">
+                    {rot ? (
+                      <>
+                        <div className={life == null ? "text-muted-foreground" : life <= 0 ? "text-warn" : life < 120 ? "text-warn" : "text-tertiary"}>
+                          {life == null ? "chưa lấy IP" : life <= 0 ? "IP đã hết tuổi" : `IP còn sống ${ago(life)}`}{rot.age != null ? <span className="text-muted-foreground"> · lấy {ago(rot.age)} trước</span> : null}
+                        </div>
+                        <div className="text-muted-foreground">đổi {rot.changes ?? 0} lần hôm nay · {rot.rotate_in > 0 ? `đổi được sau ${ago(rot.rotate_in)}` : "đổi được ngay"}</div>
+                        {rot.whitelist_ip && <div className="font-mono text-[10.5px] text-info">whitelist {rot.whitelist_ip} (tự khai)</div>}
+                      </>
+                    ) : <span className="text-muted-foreground">IP tĩnh</span>}
+                  </TableCell>
+                  <TableCell className="max-w-[240px] py-2">
+                    <div className="flex items-center gap-1.5">{dot(p.alive)}{p.alive && p.latency_ms != null && <span className="font-mono text-[10.5px] text-muted-foreground">{p.latency_ms}ms</span>}</div>
+                    {p.error && p.alive !== true && <div className="mt-0.5 truncate text-[11px] text-error" title={p.error}>{p.error}</div>}
+                  </TableCell>
+                  <TableCell className="py-2 font-mono text-muted-foreground">{p.nicks ?? 0}</TableCell>
+                  <TableCell className="whitespace-nowrap py-2 text-right">
+                    {rot && <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => rotate(p)} disabled={!!busy} title="Xin IP mới từ nhà bán rồi kiểm lại ngay">
+                      <RotateCw className={"h-3.5 w-3.5 " + (busy === "rot" + p.id ? "animate-spin" : "")} />Đổi IP</Button>}
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-error hover:text-error" onClick={() => del(p.id)} disabled={!!busy}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       )}

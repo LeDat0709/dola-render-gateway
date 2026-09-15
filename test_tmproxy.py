@@ -39,6 +39,17 @@ def main():
     tmproxy._cache.clear()
     tmproxy._post = lambda path, body: {"code": 1, "message": "invalid api key"}
     assert browser.parse_proxy("tmproxy://xxxx") is None, "key hỏng → None (Kho proxy từ chối), không ném"
+    # status() cho Kho proxy (không gọi mạng): endpoint, IP ra TMProxy báo sẵn, đếm lần ĐỔI IP (IP trùng không tính)
+    tmproxy._cache.clear()
+    seq = iter(["1.1.1.1:80", "1.1.1.1:80", "2.2.2.2:80"])
+    tmproxy._post = lambda path, body: {"code": 0, "data": {"https": next(seq), "public_ip": "9.9.9.9", "timeout": 1800, "next_request": 0}}
+    K = "b" * 32
+    tmproxy.current(K); tmproxy.rotate(K)
+    assert tmproxy.status(K)["changes"] == 1, tmproxy.status(K)
+    tmproxy.rotate(K)
+    st = tmproxy.status(K)
+    assert st["changes"] == 2 and st["endpoint"] == "2.2.2.2:80" and st["exit_ip"] == "9.9.9.9" and 1790 <= st["expires_in"] <= 1800, st
+    assert tmproxy.status("khong-co") == {}
     print("OK")
 
 

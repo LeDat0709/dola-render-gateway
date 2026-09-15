@@ -260,6 +260,26 @@ def rotating_ip_info(raw: str) -> dict:
     return {}
 
 
+def rotating_status(raw: str) -> dict:
+    """Trạng thái proxy XOAY cho Kho proxy (KHÔNG gọi mạng): nhà cung cấp, đuôi key (…zAsO, như tool đối thủ),
+    endpoint, tuổi IP, còn sống, chờ đổi, số lần đổi hôm nay, lỗi lấy IP gần nhất. Proxy tĩnh → {}."""
+    import re
+    s = normalize_proxy_input(raw)
+    if s.lower().startswith("tmproxy://"):
+        import tmproxy
+        key = tmproxy.key_of(s)
+        st = tmproxy.status(key)
+    else:
+        import proxyxoay
+        if not proxyxoay.is_key_link(s):
+            return {}
+        m = re.search(r"[?&]key=([^&\s]+)", s)
+        key = m.group(1) if m else ""
+        st = proxyxoay.status(s)
+    return {**st, "provider": provider_label(s), "key_tail": key[-4:] if len(key) >= 8 else "",
+            "error": rotating_last_error(s)}
+
+
 def rotating_lane(raw: str) -> dict | None:
     return _rotating_ent(raw, False)
 

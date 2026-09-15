@@ -310,6 +310,7 @@ export const proxyPoolCheck = () => poolFetch("/check", "POST");
 export const proxyPoolPrune = () => poolFetch("/prune", "POST");
 export const proxyPoolAssign = (per_ip, scope) => poolFetch("/assign", "POST", { per_ip, scope });
 export const proxyPoolDelete = (id) => poolFetch("/" + encodeURIComponent(id), "DELETE");
+export const proxyPoolRotate = (id) => poolFetch("/" + encodeURIComponent(id) + "/rotate", "POST");
 
 // ── Mang nick sang máy khác ───────────────────────────────────────
 export async function exportAccounts() {

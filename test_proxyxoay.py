@@ -7,6 +7,7 @@ LINK = "https://proxyxoay.shop/api/get.php?key=ABC123&nhamang=random&tinhthanh=0
 
 
 def main():
+    proxyxoay._public_ipv4 = lambda now: ""   # test không gọi mạng hỏi IP máy (tự khai whitelist test riêng bên dưới)
     assert proxyxoay.is_key_link(LINK)
     assert proxyxoay.is_key_link("http://x/get.php?key=1")
     assert not proxyxoay.is_key_link("http://user:pass@1.2.3.4:8080")
@@ -67,7 +68,41 @@ def main():
             pass
     finally:
         config.ACCOUNTS_DIR, config.PROXY = old_dir, old_proxy
+    test_auto_whitelist_and_status()
     print("OK")
+
+
+def test_auto_whitelist_and_status():
+    """Tự khai whitelist IP máy (&whitelist=IP) khi IP máy đổi; đếm lần đổi IP/ngày; status() cho Kho proxy."""
+    urls, ips = [], {"now": "1.2.3.4"}
+    replies = iter(['{"status":102,"message":"IP chua whitelist"}',
+                    '{"status":100,"message":"proxy nay se die sau 1500s","proxyhttp":"42.117.243.215:10836::","Nha Mang":"fpt","Vi Tri":"HaNoi1"}',
+                    '{"status":100,"proxyhttp":"42.117.243.215:10836::"}',
+                    '{"status":100,"proxyhttp":"8.8.8.8:1::"}'])
+    proxyxoay._public_ipv4 = lambda now: ips["now"]
+    proxyxoay._get = lambda url: (urls.append(url), next(replies))[1]
+    proxyxoay._cache.clear(); proxyxoay._wl_sent.clear()
+    try:
+        proxyxoay.rotate(LINK)
+        raise AssertionError("status 102 phải ném lỗi")
+    except proxyxoay.ProxyXoayError:
+        pass
+    assert urls[-1] == LINK + "&whitelist=1.2.3.4" and LINK not in proxyxoay._wl_sent, "khai lỗi → lần sau khai lại"
+    ent = proxyxoay.rotate(LINK)
+    assert urls[-1].endswith("&whitelist=1.2.3.4") and proxyxoay._wl_sent[LINK] == "1.2.3.4"
+    assert LINK in proxyxoay._cache and ent["changes"] == 1, "khoá cache giữ NGUYÊN link (không dính &whitelist=)"
+    st = proxyxoay.status(LINK)
+    assert st["endpoint"] == "42.117.243.215:10836" and st["network"] == "fpt" and st["location"] == "HaNoi1", st
+    assert 1490 <= st["expires_in"] <= 1500 and st["whitelist_ip"] == "1.2.3.4", st   # tuổi IP theo "die sau 1500s"
+    proxyxoay._cache[LINK]["next_ok"] = 0
+    assert proxyxoay.rotate(LINK)["changes"] == 1 and urls[-1] == LINK, "IP máy chưa đổi → không gắn lại; IP proxy trùng → không tính đổi"
+    ips["now"] = "5.6.7.8"
+    proxyxoay._cache[LINK]["next_ok"] = 0
+    assert proxyxoay.rotate(LINK)["changes"] == 2 and urls[-1] == LINK + "&whitelist=5.6.7.8", "IP máy đổi → tự khai IP mới"
+    info = browser.rotating_status(LINK)
+    assert info["key_tail"] == "" and info["provider"] == "proxyxoay", info            # key ngắn (<8) → không hiện đuôi
+    assert browser.rotating_status("proxyvn://ABCDEFGH1234")["key_tail"] == "1234"
+    assert proxyxoay._whitelist_url("https://other.vn/get.php?key=K", 0) == ("https://other.vn/get.php?key=K", ""), "chỉ proxyxoay.shop"
 
 
 if __name__ == "__main__":

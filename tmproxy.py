@@ -67,7 +67,11 @@ def _store(key: str, data: dict, now: float) -> dict:
     https = (data or {}).get("https") or ""
     if not https:
         raise TMProxyError("TMProxy trả về không có proxy https")
+    prev = _cache.get(key) or {}
+    day = time.strftime("%Y-%m-%d", time.localtime(now))
     ent = {
+        "fetched_at": now, "day": day,
+        "changes": (prev.get("changes", 0) if prev.get("day") == day else 0) + (prev.get("https") != https),
         "https": https,
         "username": data.get("username") or "",
         "password": data.get("password") or "",
@@ -104,6 +108,18 @@ def rotate(key: str) -> dict:
         if ent and now < ent["next_ok"]:
             return ent
         return _store(key, _call("get-new-proxy", _new_body(key)), now)
+
+
+def status(key: str) -> dict:
+    """Trạng thái IP đang cache của key (KHÔNG gọi mạng) cho Kho proxy — cùng dạng proxyxoay.status (+ exit_ip:
+    TMProxy báo sẵn IP ra)."""
+    ent = _cache.get(key)
+    if not ent:
+        return {}
+    now = time.time()
+    return {"endpoint": ent.get("https", ""), "exit_ip": ent.get("public_ip", ""), "network": "", "location": "",
+            "age": int(now - ent.get("fetched_at", now)), "expires_in": int(ent["exp"] + _MARGIN_SEC - now),
+            "rotate_in": max(0, int(ent["next_ok"] - now)), "changes": ent.get("changes", 1)}
 
 
 def cached_ip(key: str) -> dict:
