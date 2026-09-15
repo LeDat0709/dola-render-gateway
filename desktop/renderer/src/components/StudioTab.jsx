@@ -117,7 +117,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     }
     if (inflight.current.has(n)) return true;   // đã chạy ở nơi khác, không tính là lỗi
     inflight.current.add(n);
-    setRow(n, { prompt, phase: "running", stage: "queued", startedAt: Date.now(), errorRaw: "", videoUrl: "" });
+    setRow(n, { prompt, phase: "running", stage: "queued", startedAt: Date.now(), errorRaw: "", videoUrl: "", ranOn: "" });
     try {
       // Người dùng đã chọn đích danh nick này thì "tạm ngưng" không còn là lý do chặn: mở lại giúp rồi
       // gửi luôn (server từ chối job vào nick tạm ngưng). Trước đây thẻ chỉ báo "bấm Bật lịch tất cả rồi chạy lại".
@@ -156,6 +156,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
       }
       const pk = [pj.proxy_ip, pj.proxy_provider, pj.proxy_used, pj.proxy_per, pj.proxy_fresh, pj.proxy_kind].join("|");   // IP + lượt + NCC + loại → cột Proxy
       if (pk !== pip) { pip = pk; setRow(n, { proxyIp: pj.proxy_ip || "", proxyIsp: pj.proxy_isp || "", proxyProvider: pj.proxy_provider || "", proxyUsed: pj.proxy_used, proxyPer: pj.proxy_per, proxyFresh: pj.proxy_fresh, proxyKind: pj.proxy_kind || "" }); }
+      if (pj.account && pj.account !== n) setRow(n, { ranOn: pj.account });   // job đã XOAY sang nick khác → hiện nick thật
       if (pj.status === "completed") { setRow(n, { phase: "done", stage: "done", videoUrl: pj.video_url }); api.saveVideo?.(pj.video_url); return true; }
       if (pj.status === "failed") { setRow(n, { phase: "error", errorRaw: pj.error || "?" }); return false; }
       if (pj.stage && pj.stage !== stage) { stage = pj.stage; setRow(n, { stage }); }
@@ -421,6 +422,7 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, onSel, onChange, onR
       <td className={td + " font-mono text-[11px] text-muted-foreground tabular-nums"}>{idx}</td>
       <td className={td + " whitespace-nowrap"}>
         <div className="font-mono text-[12px] font-semibold">{n}</div>
+        {s.ranOn && s.ranOn !== n && <div className="font-mono text-[10px] text-primary" title="Job đã xoay sang nick này">↦ chạy trên {s.ranOn}</div>}
         <div className="font-mono text-[10.5px] text-muted-foreground">{a.used_today}/{a.limit} hôm nay{a.remaining != null ? ` · còn ${a.remaining}` : ""}</div>
       </td>
       <td className={td + " whitespace-nowrap"}><Badge variant={chip.variant}>{chip.text}</Badge></td>
