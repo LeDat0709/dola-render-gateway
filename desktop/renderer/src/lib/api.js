@@ -86,7 +86,7 @@ export function fmtError(raw) {
   if (/lỗi tạm thời|エラーが発生|try again|システムエラー|問題が発生/i.test(r)) return T("⏳", "Dola lỗi tạm thời", "Đã tự thử lại; chạy lại nếu vẫn lỗi.");
   if (/thời lượng 30|chip 30|video 30s/i.test(r)) return T("🎞", "30s gửi chưa được", "Kiểm tra mạng/proxy rồi thử lại.");
   if (/server mới tắt|tự chạy lại \d+ lần|job quá cũ|khởi động lại server/i.test(r)) return T("🔁", "Server tắt giữa lúc chạy", "Kiểm tra dola.com; chưa có video thì chạy lại.");
-  if (/traceback|exception|nameerror|attributeerror|keyerror/i.test(L)) return T("🐞", "Lỗi tool", "Xem Log, gửi cho dev.");
+  if (/traceback|exception|nameerror|attributeerror|typeerror|keyerror|valueerror|is not defined|has no attribute|not subscriptable|not callable|unexpected keyword|positional argument|indexerror|module .* has no/i.test(L)) return T("🐞", "Lỗi tool", "Lỗi phần mềm — gửi Log cho dev (không phải lỗi nick).");
   if (/chưa ra video|timeout|hết giờ|hết \d+s/i.test(r)) return T("⌛", "Quá giờ chưa ra video", "Thử lại; mạng có thể chậm.");
   const m = r.replace(/^.*?Dola báo:\s*/i, "").replace(/\s+/g, " ").trim();
   return T("⚠", (m || r).slice(0, 44), "Rê chuột để xem chi tiết.");
