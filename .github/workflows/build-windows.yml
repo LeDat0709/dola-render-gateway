@@ -45,9 +45,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          FILES=$(ls dist-app/*.exe dist-app/latest.yml dist-app/*.blockmap 2>/dev/null)
-          gh release create "$GITHUB_REF_NAME" $FILES \
+          # Gom file bằng MẢNG (giữ được dấu cách trong "Dola Studio Setup x.exe") + bỏ qua file thiếu.
+          # Trước đây FILES=$(ls ...) rồi $FILES không nháy → tên có dấu cách bị tách → gh lỗi.
+          shopt -s nullglob
+          FILES=(dist-app/*.exe)
+          [ -f dist-app/latest.yml ] && FILES+=(dist-app/latest.yml)
+          FILES+=(dist-app/*.blockmap)
+          echo "Đính ${#FILES[@]} file:"; printf ' - %s\n' "${FILES[@]}"
+          gh release create "$GITHUB_REF_NAME" "${FILES[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Dola Studio $GITHUB_REF_NAME" \
             --notes "Bản Windows một-cú-bấm. Tải **Dola Studio Setup** để cài (bản cài TỰ CẬP NHẬT các phiên bản sau), hoặc **DolaStudio-portable** để chạy thẳng. Máy đích không cần cài Python/Node/Chrome." \
-          || gh release upload "$GITHUB_REF_NAME" $FILES --clobber --repo "$GITHUB_REPOSITORY"
+          || gh release upload "$GITHUB_REF_NAME" "${FILES[@]}" --clobber --repo "$GITHUB_REPOSITORY"
