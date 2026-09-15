@@ -23,14 +23,35 @@ export async function report() {
   } catch { return null; }
 }
 
+// Gateway bị TẮT/BẬT lại lúc đăng nhập / nạp cookie (gateway.cjs pause()) hoặc khởi động lại: POST tạo job
+// treo tới khi Chromium tự bỏ (~vài phút) → thẻ đứng ở "chờ server nhận job" hàng phút. Đặt timeout mỗi lần
+// gửi + tự gửi lại vài lần để vượt qua lúc gateway đang lên. An toàn trừ lượt: tạo job chỉ là INSERT SQLite
+// cục bộ (mili-giây) — chưa gửi Dola, chưa trừ lượt; quá SUBMIT_TIMEOUT_MS nghĩa là app CHƯA phục vụ (chưa
+// tạo row) nên gửi lại không tạo job trùng. Việc trừ lượt xảy ra ở _run_task sau này, không ở bước tạo.
+const SUBMIT_TIMEOUT_MS = 10000;   // 1 lần POST chờ tối đa 10s (tạo job cục bộ luôn xong dưới 1s)
+const SUBMIT_RETRIES = 6;          // ~ vài chục giây; gateway bật lại thường < 15s
 export async function submitJob(prompt, body) {
-  const r = await fetch(cfg.base + "/v1/videos/generations", {
-    method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ ...body, prompt }),
-  });
-  const j = await r.json();
-  if (!r.ok) throw new Error(j.detail || "HTTP " + r.status);
-  return j.id;
+  let lastErr;
+  for (let i = 0; i < SUBMIT_RETRIES; i++) {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), SUBMIT_TIMEOUT_MS);
+    try {
+      const r = await fetch(cfg.base + "/v1/videos/generations", {
+        method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ ...body, prompt }), signal: ac.signal,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || "HTTP " + r.status);   // server ĐÃ trả lời (hết điểm, nick lỗi…) → ném luôn, không gửi lại
+      return j.id;
+    } catch (e) {
+      // Chỉ gửi lại khi treo/không nối được (gateway đang bật lại). Lỗi có phản hồi HTTP = server sống nhưng từ chối → ném.
+      const down = e?.name === "AbortError" || e?.name === "TypeError" || /failed to fetch|load failed|networkerror|econnrefused/i.test(e?.message || "");
+      if (!down) throw e;
+      lastErr = e;
+      if (i < SUBMIT_RETRIES - 1) await new Promise((res) => setTimeout(res, 2000));   // chờ gateway lên rồi gửi lại
+    } finally { clearTimeout(t); }
+  }
+  throw new Error("Chưa nối được server sau nhiều lần thử (gateway đang bật lại?) — chờ vài giây rồi chạy lại. " + (lastErr?.message || ""));
 }
 // Ném Error kèm .status khi server trả lỗi (404 = job không còn) — trước đây trả JSON lỗi về như
 // job bình thường, status undefined → dòng Studio quay vòng "đang chạy" vô tận.

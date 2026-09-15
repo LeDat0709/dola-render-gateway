@@ -242,8 +242,8 @@ export default function SettingsTab({ active = true }) {
           <Msg text={burnMsg} />
           <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">
             <input type="checkbox" className="mt-1" checked={httpEngine} onChange={toggleHttpEngine} />
-            <span><span className="font-medium">Engine gửi KHÔNG mở Chrome <span className="rounded bg-warn/15 px-1 text-[10px] font-semibold text-warn">thử nghiệm</span></span>
-              <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật: ký chữ ký bằng Python rồi gửi thẳng bằng cookie của nick — <b>không mở Chrome mỗi nick</b>, nhẹ RAM, mở nick nhanh, chạy được nhiều nick hơn (như đối thủ). Nếu Dola từ chối (cookie/captcha/đổi thuật toán ký) thì <b>tự mở Chrome ký lại</b>. Chữ ký ByteDance đổi theo quý nên có lúc phải cập nhật; video có ảnh tham chiếu vẫn dùng Chrome. Tắt (mặc định): luôn mở Chrome ký (ổn định nhất).</span></span>
+            <span><span className="font-medium">Engine gửi KHÔNG mở Chrome <span className="rounded bg-tertiary/15 px-1 text-[10px] font-semibold text-tertiary">mặc định</span></span>
+              <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật (mặc định): ký chữ ký bằng Python rồi gửi thẳng bằng cookie của nick — <b>không mở Chrome mỗi nick</b>, nhẹ RAM, mở nick nhanh, chạy được nhiều nick hơn, và <b>đăng nhập/nạp cookie không phải tắt cả mẻ đang chạy</b> (như đối thủ). Nếu Dola từ chối (cookie/captcha/đổi thuật toán ký) thì <b>tự mở Chrome ký lại</b>. Chữ ký ByteDance đổi theo quý nên có lúc phải cập nhật; video có ảnh tham chiếu vẫn dùng Chrome. Tắt: luôn mở Chrome ký (ổn định nhất, nhưng đăng nhập phải tạm dừng render).</span></span>
           </label>
           <Msg text={engMsg} />
           <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">

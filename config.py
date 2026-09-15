@@ -188,7 +188,10 @@ REMOVE_WATERMARK = os.getenv("DOLA_REMOVE_WATERMARK", "1") == "1"
 # How a video is submitted: "fetch" = signed /chat/completion call from inside the logged-in page
 # (no clicking, headless-capable, falls back to "ui" when submission is refused); "ui" = drive the
 # composer with clicks and keystrokes (required for reference images and the 30s extension).
-SUBMIT_MODE = os.getenv("DOLA_SUBMIT_MODE", "fetch").strip().lower()
+# Mặc định "http": ký a_bogus bằng Python + gửi thẳng bằng cookies.json, KHÔNG mở Chrome mỗi nick (nhẹ RAM,
+# nhiều nick, đăng nhập không phải giết gateway). Nick thiếu/hỏng cookies.json hoặc Dola từ chối ký → tự rơi
+# về đường Chrome (fetch) an toàn. Đặt DOLA_SUBMIT_MODE=fetch để ép luôn dùng Chrome.
+SUBMIT_MODE = os.getenv("DOLA_SUBMIT_MODE", "http").strip().lower()
 
 # ability_param model keys accepted by /chat/completion. 2.0 was captured from the real UI;
 # Seedance 2.5 needs an entitled account: run one 2.5 job via UI, copy the key from the

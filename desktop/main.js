@@ -71,8 +71,21 @@ const gateway = createGateway({
     return { proc: p };
   },
 });
-// Handler cần Chrome profile của nick rảnh: gọi gateway.pause() trong thân, xong tự bật lại.
+// Handler cần Chrome profile của nick rảnh: gọi freeProfileForLogin() trong thân, xong tự bật lại.
 const pausedHandle = (channel, fn) => ipcMain.handle(channel, gateway.withPaused(fn));
+
+// Chế độ gửi hiện tại (http/fetch) từ gateway. Hỏi lỗi → coi như "fetch" (an toàn: thà pause thừa còn hơn xung đột profile).
+async function submitModeNow() {
+  try { const j = await (await fetch(config().base + "/health", { cache: "no-store" })).json(); return (j.submit_mode || "fetch").toLowerCase(); }
+  catch { return "fetch"; }
+}
+// Đăng nhập / nạp cookie phải nhả Chrome profile của nick. Chỉ chế độ "fetch" mới cần vì worker đang GIỮ profile
+// (mở Chrome mỗi nick) → phải giết gateway. Chế độ "http" worker đọc cookies.json (không mở Chrome) nên KHÔNG giết
+// gateway → cả mẻ đang render sống tiếp. (Ceiling: http vẫn rơi về Chrome khi ký lỗi; nếu đăng nhập ĐÚNG nick đang
+// fallback-render thì profile bị khoá → login báo lỗi, chạy lại sau — không mất video/lượt, cả mẻ vẫn sống.)
+async function freeProfileForLogin() {
+  if ((await submitModeNow()) !== "http") gateway.pause();
+}
 
 // --- Log capture: pipe everything the gateway prints to logs/gateway.log (timestamped). ---
 // Without this the subprocess stdout/stderr is discarded (and a full 64KB pipe can stall the gateway).
@@ -608,7 +621,7 @@ pausedHandle("account:importFacebookElectron", async (_e, { name, line, lang }) 
   if (!names.has("c_user") || !names.has("xs")) {
     return { ok: false, error: "Cookie Facebook thiếu c_user / xs — dán đầy đủ cookie hoặc dòng uid|pass|2fa|cookie|ua" };
   }
-  gateway.pause();   // profile của nick phải rảnh; pausedHandle bật lại gateway khi xong
+  await freeProfileForLogin();   // http: render không giữ Chrome → khỏi giết gateway; fetch: pause như cũ
 
   const partition = `persist:dola-${name}`;
   const ses = session.fromPartition(partition);
@@ -750,7 +763,7 @@ const CHECKPOINT_GRACE_MS = 45 * 1000;
 
 pausedHandle("account:loginElectron", async (_e, { name, lang }) => {
   if (!NAME_RE.test(name || "")) return { ok: false, error: "Tên nick chỉ gồm chữ, số, _ hoặc - (1-32 ký tự)" };
-  gateway.pause();   // profile của nick phải rảnh; pausedHandle bật lại gateway khi xong
+  await freeProfileForLogin();   // http: render không giữ Chrome → khỏi giết gateway; fetch: pause như cũ
 
   const partition = `persist:dola-${name}`;
   const ses = session.fromPartition(partition);
@@ -794,7 +807,7 @@ pausedHandle("account:login", async (_e, { name, lang }) => {
   if (!name || !/^[A-Za-z0-9_-]{1,32}$/.test(name)) {
     return { ok: false, error: "Tên nick chỉ gồm chữ, số, _ hoặc - (1-32 ký tự)" };
   }
-  gateway.pause();   // profile của nick phải rảnh; pausedHandle bật lại gateway khi xong
+  await freeProfileForLogin();   // http: render không giữ Chrome → khỏi giết gateway; fetch: pause như cũ
   const args = ["login_profile.py", name, lang || "ja"];
   return await new Promise((resolve) => {
     const proc = spawnPy(args);
