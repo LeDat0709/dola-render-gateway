@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, Server, Gauge, Timer, PieChart, Zap, Play, FolderOpen, ArrowRight, Send, CheckCircle2, XCircle, Users, Copy } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { api, cfg, adminAccounts, adminConfig, recentTasks, report as fetchReport, accChip, fmtError, fmtSec, maskProxy, fnameFromUrl, sttFromUrl, timeAgo } from "@/lib/api";
+import { api, cfg, adminAccounts, adminConfig, recentTasks, report as fetchReport, accChip, fmtError, fmtSec, maskProxy, fnameFromUrl, sttFromUrl, timeAgo, STAGE_TEXT } from "@/lib/api";
+import { Insights, StagePipeline, NickGrid, HourlyBars, pipelineGroups, stageOf, MAYBE_CHARGED } from "@/components/OverviewViz";
 
 const POLL_MS = 5000;
 const isToday = (ts) => !!ts && new Date(ts * 1000).toDateString() === new Date().toDateString();
@@ -56,7 +57,7 @@ function Stat({ label, value, sub, tone = "text-foreground", icon }) {
 
 function statusChip(t) {
   if (t.status === "completed") return <Badge variant="success">✓ Thành công</Badge>;
-  if (t.status === "processing") return <Badge variant="default"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />Đang tạo</Badge>;
+  if (t.status === "processing") return <Badge variant="default"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />{(STAGE_TEXT[stageOf(t)] || "Đang tạo").replace(/…$/, "")}</Badge>;
   if (t.status === "queued") return <Badge variant="secondary">Chờ</Badge>;
   const e = fmtError(t.error);
   return <Badge variant={e.kind === "account" ? "danger" : "warn"} title={t.error}>{e.icon} {e.short}</Badge>;
@@ -124,11 +125,14 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
   const shownTasks = reasonFilter ? failed.filter((t) => reasonKey(t) === reasonFilter) : tasks;
   const renders = done.filter((t) => t.started_at && t.finished_at).map((t) => t.finished_at - t.started_at);
   const median = quantile(renders, 0.5), p90 = quantile(renders, 0.9), fastest = renders.length ? Math.min(...renders) : 0;
+  // [nhãn, số lần, gợi ý xử lý, có thể đã trừ lượt?]
   const reasons = useMemo(() => {
     const m = new Map();
-    for (const t of failed) { const e = fmtError(t.error); const k = e.icon + " " + e.short; m.set(k, (m.get(k) || 0) + 1); }
-    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+    for (const t of failed) { const e = fmtError(t.error); const k = e.icon + " " + e.short; const v = m.get(k) || [k, 0, e.hint, MAYBE_CHARGED.test(e.short)]; v[1]++; m.set(k, v); }
+    return [...m.values()].sort((a, b) => b[1] - a[1]).slice(0, 6);
   }, [failed]);
+  const groups = pipelineGroups(running);
+  const resetAt = health?.limit_reset_at ? new Date(health.limit_reset_at * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "";
   const conc = health?.max_concurrency || 1;
   const pending = health?.pending_tasks || 0;
   const eta = pending && median ? Math.ceil(pending / conc) * median : 0;
@@ -144,24 +148,17 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
         {!cfg.remote && <Button variant="secondary" size="sm" className="text-primary" onClick={() => api.restartGateway?.()}>Khởi động lại Gateway</Button>}
       </div>
 
-      {/* Địa chỉ gateway / proxy chung đã có ở dải trạng thái trên cùng và tab Cài đặt — ở đây chỉ còn tải + hàng chờ. */}
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div className="flex flex-col justify-between gap-3 rounded-xl bg-surface-low p-4">
-          <div className="flex items-center justify-between"><span className="flex items-center gap-2 text-[15px] font-medium"><Gauge className="h-4 w-4 text-info" />Tải xử lý</span>
-            <span className="rounded bg-surface px-1.5 py-0.5 font-mono text-[11px] text-info">{Math.round((running.length / conc) * 100)}% slot</span></div>
-          <div>
-            <div className="flex justify-between text-xs text-muted-foreground"><span>Đang render</span><span className="font-mono text-foreground">{running.length} <span className="text-muted-foreground">/ {conc} nick</span></span></div>
-            <div className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-surface"><div className="h-full rounded-full bg-primary transition-all" style={{ width: Math.min(100, (running.length / conc) * 100) + "%" }} /></div>
-          </div>
-          <div className="flex flex-wrap gap-5 font-mono text-[11px] text-muted-foreground">
-            <div>Dựng trung vị hôm nay<div className="text-lg font-semibold text-foreground">{median ? fmtSec(median) : "—"}</div></div>
-            <div>P90<div className="text-[13px] font-medium text-warn">{p90 ? fmtSec(p90) : "—"}</div></div>
-            <div>Nhanh nhất<div className="text-[13px] font-medium text-tertiary">{fastest ? fmtSec(fastest) : "—"}</div></div>
-            <div>Mẫu<div className="text-[13px] font-medium text-foreground">{renders.length}</div></div>
-            <div>Tự thử lại<div className={"text-[13px] font-medium " + (health?.auto_retry ? "text-tertiary" : "text-warn")}>{health ? (health.auto_retry ? "bật" : "tắt") : "—"}</div></div>
-          </div>
+      <Insights today={today} failed={failed} groups={groups} accs={accs} queued={queued} resetAt={resetAt} onGo={onGo} />
+
+      {/* Địa chỉ gateway / proxy chung đã có ở dải trạng thái trên cùng và tab Cài đặt — ở đây chỉ còn dòng chảy job + hàng chờ. */}
+      <div className="grid gap-3 lg:grid-cols-12">
+        <div className="lg:col-span-7">
+          <StagePipeline groups={groups} done={done.length} failed={failed.length} conc={conc} stats={[
+            ["Dựng trung vị", median ? fmtSec(median) : "—"], ["P90", p90 ? fmtSec(p90) : "—", "text-warn"],
+            ["Nhanh nhất", fastest ? fmtSec(fastest) : "—", "text-tertiary"], ["Mẫu", renders.length],
+            ["Tự thử lại", health ? (health.auto_retry ? "bật" : "tắt") : "—", health?.auto_retry ? "text-tertiary" : "text-warn"]]} />
         </div>
-        <div className="flex flex-col gap-3 rounded-xl bg-surface-low p-4">
+        <div className="flex flex-col gap-3 rounded-xl bg-surface-low p-4 lg:col-span-5">
           <div className="flex items-center gap-2"><span className="flex items-center gap-2 text-[15px] font-medium"><Timer className="h-4 w-4 text-info" />Hàng chờ</span>
             <Badge variant={queued.length ? "default" : "secondary"}>{queued.length} tác vụ</Badge><span className="ml-auto" />
             <span className="font-mono text-[11px] text-muted-foreground">{eta ? <>cả đợt xong lúc <b className="text-tertiary">~{new Date(Date.now() + eta * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</b></> : "hàng chờ trống"}</span></div>
@@ -197,6 +194,7 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
           <Chip icon={<Users className="h-4 w-4 text-outline" />} tag="auth" value={chips.dead} label="Chưa đăng nhập" />
           <Chip icon={<Timer className="h-4 w-4 text-info" />} tag="nghỉ" tone="info" value={chips.cooling} label="Nghỉ sau risk-control" />
         </div>
+        <div className="mt-2"><NickGrid accs={accs} today={today} running={running} onGo={onGo} /></div>
       </div>
 
       <div className="grid gap-3 lg:grid-cols-12">
@@ -208,7 +206,7 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
               { value: running.length, cls: "text-primary", label: "Đang chạy" },
               { value: queued.length, cls: "text-outline", label: "Chờ" },
             ]} />
-            <div className="grid w-full flex-1 grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-1">
+            <div className="grid w-full flex-none grid-cols-2 gap-x-4 gap-y-2.5 sm:w-44 sm:grid-cols-1">
               {[["Xong", done.length, "text-tertiary", "bg-tertiary", today.length ? `${Math.round((done.length / today.length) * 100)}% thành công` : "chưa có job"],
                 ["Lỗi", failed.length, "text-error", "bg-error", today.length ? `${Math.round((failed.length / today.length) * 100)}% thất bại` : "—"],
                 ["Đang chạy", running.length, "text-primary", "bg-primary", queued.length ? `${queued.length} chờ slot` : "không có job chờ"]].map(([l, v, tone, dot, sub]) => (
@@ -219,12 +217,9 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
                 </div>
               ))}
             </div>
+            <HourlyBars today={today} />
           </div>
-          <div className="flex flex-wrap items-center gap-3 rounded-xl bg-surface-low p-4 text-xs text-muted-foreground">
-            <Timer className="h-4 w-4 text-primary" />
-            {chips.day > 0 ? <span><b className="text-foreground">{chips.day} nick</b> hết lượt hôm nay sẽ mở lại lúc <b className="font-mono text-foreground">{health?.limit_reset_at ? new Date(health.limit_reset_at * 1000).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "0h giờ Nhật"}</b>.</span> : <span>Không nick nào hết lượt hôm nay.</span>}
-            {reasons.some(([k]) => /gửi quá dày/i.test(k)) && <button type="button" className="text-primary hover:underline" onClick={() => onGo?.("proxy")}>Lỗi "gửi quá dày" giảm khi chia proxy riêng → mở tab Proxy</button>}
-          </div>
+          {reasons.some(([k]) => /gửi quá dày/i.test(k)) && <button type="button" className="rounded-xl bg-surface-low p-3 text-left text-xs text-primary hover:underline" onClick={() => onGo?.("proxy")}>Lỗi "gửi quá dày" giảm khi chia proxy riêng → mở tab Proxy</button>}
         </div>
         <div className="flex flex-col gap-3 rounded-xl bg-surface-low p-4 lg:col-span-5">
           <div className="flex items-center justify-between"><span className="flex items-center gap-2 text-[15px] font-medium"><PieChart className="h-4 w-4 text-error" />Nguyên nhân lỗi ({failed.length})</span><span className="font-mono text-[11px] text-muted-foreground">hôm nay · bấm để lọc bảng</span></div>
@@ -232,11 +227,16 @@ export default function OverviewTab({ health, onPlay, onGo, active = true }) {
             {reasons.map(([k, n], i) => <div key={k} className={"h-full " + colors[i % colors.length]} style={{ width: (n / failed.length) * 100 + "%" }} title={`${k}: ${n}`} />)}
           </div>
           <div className="flex flex-col gap-1">
-            {reasons.map(([k, n], i) => (
-              <button type="button" key={k} onClick={() => setReasonFilter((f) => (f === k ? "" : k))}
-                className={"flex w-full items-center justify-between rounded px-1.5 py-1 text-left text-sm hover:bg-surface " + (reasonFilter === k ? "bg-surface-high ring-1 ring-primary/35" : "")}>
-                <span className="flex items-center gap-2"><span className={"h-2.5 w-2.5 rounded-sm " + colors[i % colors.length]} />{k}</span>
-                <span className="font-mono text-[11px] text-muted-foreground">{n} lần · {Math.round((n / failed.length) * 100)}%</span>
+            {reasons.map(([k, n, hint, charged], i) => (
+              <button type="button" key={k} onClick={() => setReasonFilter((f) => (f === k ? "" : k))} title={hint}
+                className={"flex w-full flex-col gap-1 rounded px-1.5 py-1.5 text-left hover:bg-surface " + (reasonFilter === k ? "bg-surface-high ring-1 ring-primary/35" : "")}>
+                <span className="flex w-full items-center justify-between gap-2 text-sm">
+                  <span className="flex min-w-0 items-center gap-2"><span className={"h-2.5 w-2.5 flex-none rounded-sm " + colors[i % colors.length]} /><span className="truncate">{k}</span>
+                    {charged && <span className="flex-none rounded bg-warn/15 px-1 font-mono text-[9.5px] text-warn">có thể đã trừ lượt</span>}</span>
+                  <span className="flex-none font-mono text-[11px] text-muted-foreground">{n} lần · {Math.round((n / failed.length) * 100)}%</span>
+                </span>
+                <span className="h-1 overflow-hidden rounded-full bg-surface"><span className={"block h-full rounded-full " + colors[i % colors.length]} style={{ width: (n / reasons[0][1]) * 100 + "%" }} /></span>
+                {hint && <span className="truncate pl-[18px] text-[11px] text-muted-foreground">{hint}</span>}
               </button>
             ))}
             {!failed.length && <div className="text-xs text-muted-foreground">Chưa có lỗi nào hôm nay.</div>}
