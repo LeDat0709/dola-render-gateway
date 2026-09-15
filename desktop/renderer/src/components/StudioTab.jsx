@@ -412,6 +412,11 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <span>giây</span>
         <Button variant="outline" size="sm" className="h-7" onClick={applyGap}>Áp dụng</Button>
       </div>
+      {parseInt(conc.send, 10) > 5 && (
+        <div className="rounded-md border border-warn/40 bg-warn/10 px-3 py-1.5 text-[11px] leading-relaxed text-warn">
+          ⚠ Đang để <b>{conc.send} nick gửi cùng lúc</b> — mở nhiều Chrome một lúc dễ làm máy nghẽn (nick kẹt lâu ở "đang kiểm tra nick"). <b>3–4 là tối ưu</b>: gửi xong là trả trình duyệt ngay, render chạy nền nên không chậm hơn.
+        </div>
+      )}
       {gen && <div className="text-xs text-muted-foreground">{gen}</div>}
 
       {/* Thẻ theo nick */}
