@@ -75,7 +75,8 @@ async def _run(tmp, one_nick, proxy, fail_first=None, nicks_per_ip=1):
 
 def main():
     orig = (browser_pool.generate_video, browser_pool._pace, browser.rotate_effective_proxy,
-            config.ONE_NICK, config.PROXY, config.NICKS_PER_IP)
+            config.ONE_NICK, config.PROXY, config.NICKS_PER_IP, config.AUTO_RETRY)
+    config.AUTO_RETRY = True   # ép BẬT: kịch bản 4 kiểm retry+xoay, không phụ thuộc DOLA_AUTO_RETRY của .env.local
     try:
         # N=1: mỗi nick 1 IP → 2 nick đổi IP 2 lần, tuần tự
         with tempfile.TemporaryDirectory() as tmp:
@@ -108,7 +109,7 @@ def main():
         print("test_one_nick: OK")
     finally:
         (browser_pool.generate_video, browser_pool._pace, browser.rotate_effective_proxy,
-         config.ONE_NICK, config.PROXY, config.NICKS_PER_IP) = orig
+         config.ONE_NICK, config.PROXY, config.NICKS_PER_IP, config.AUTO_RETRY) = orig
 
 
 if __name__ == "__main__":
