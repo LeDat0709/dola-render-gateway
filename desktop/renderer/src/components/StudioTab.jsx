@@ -98,6 +98,10 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const row = (n) => rows[n] || { prompt: "", model: def.model, ratio: def.ratio, dur: def.dur, phase: "idle", status: "" };
   const setRow = (n, patch) => setRows((p) => ({ ...p, [n]: { ...(p[n] || row(n)), ...patch } }));
   const elapsed = (ms) => { const s = Math.max(0, Math.floor((Date.now() - ms) / 1000)); return `${Math.floor(s / 60)}p ${String(s % 60).padStart(2, "0")}s`; };
+  // Nick còn điểm NHƯNG không đủ cho thời lượng đang chọn (vd còn 1 mà 30s cần 2) = coi như HẾT ĐIỂM hôm nay:
+  // cho "nghỉ" (không đưa vào Chạy sẵn sàng), đẩy xuống cuối + làm mờ. Điểm tự reset 0h JST nên không đụng lịch.
+  const needForDur = creditCost(def.dur) || 1;
+  const lowCredit = (a) => a.remaining != null && a.remaining < needForDur;
 
   async function runOne(n, promptOverride) {
     const acc = accounts.find((a) => a.account === n);
@@ -165,7 +169,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
 
   // "Chạy sẵn sàng" = đúng nick chip xanh, dùng chung accState (đã tính cả busy/cooling/scheduling).
   const canRun = canRunAccount;
-  const readyNicks = () => accounts.filter(canRun).map((a) => a.account);
+  const readyNicks = () => accounts.filter((a) => canRun(a) && !lowCredit(a)).map((a) => a.account);
   async function runBatch(ns, empty) {
     if (!ns.length) { setGen(empty); return; }
     // Tránh hiểu lầm "13 video giống nhau": nick nào ô prompt RIÊNG còn trống thì khi chạy sẽ lấy DÒNG ĐẦU của
@@ -317,8 +321,9 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const rank = (a) => {
     const ph = rows[a.account]?.phase, st = accState(a);
     if (ph === "running" || st === "busy") return 0;
-    if (st === "ready") return 1;
+    if (st === "ready" && !lowCredit(a)) return 1;   // còn ĐỦ điểm cho thời lượng này → lên đầu
     if (ph === "done" || ph === "error") return 2;
+    if (st === "ready" && lowCredit(a)) return 4;    // còn điểm nhưng KHÔNG đủ → xuống cùng nhóm hết điểm
     return { cooling: 3, quota: 4, off: 5 }[st] ?? 6;
   };
   const ordered = [...accounts].sort((x, y) => rank(x) - rank(y) || String(x.account).localeCompare(String(y.account)));
@@ -335,6 +340,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   Object.entries(rows).forEach(([origin, r]) => { if (r?.ranOn && r.ranOn !== origin) rotatedInto[r.ranOn] = origin; });
   const nickProps = (a) => ({
     a, s: row(a.account), selected: !!sel[a.account], clock, elapsed, proxyCell, rotatedFrom: rotatedInto[a.account] || "",
+    lowCredit: lowCredit(a),   // hết điểm cho thời lượng này → làm mờ + (đã) đẩy xuống cuối
     // prompt THẬT đang dựng trên nick này (job xoay từ nick gốc) → cột Prompt hiện đúng, không còn placeholder.
     rotatedPrompt: rotatedInto[a.account] ? (row(rotatedInto[a.account]).prompt || "") : "",
     onSel: (v) => setSel((p) => ({ ...p, [a.account]: v })), onChange: (patch) => setRow(a.account, patch),
@@ -474,20 +480,20 @@ function Timeline({ s, compact = false }) {
 }
 
 // Dạng bảng: một dòng một nick, cùng dữ liệu và thao tác với thẻ nhưng nhìn được 15–20 nick không cần cuộn.
-function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotatedPrompt, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
+function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotatedPrompt, lowCredit, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
   const n = a.account;
   const chip = stateChip(a, s);
   const tint = s.phase === "done" ? " bg-tertiary/5" : s.phase === "error" ? " bg-error/5" : "";
   const icon = "h-7 w-7 text-muted-foreground hover:text-foreground";
   const td = "px-2 py-1.5 align-middle";
   return (
-    <tr className={"border-b border-surface-high/60 last:border-0" + tint + (isDim(a, s) ? " opacity-60" : "")}>
+    <tr className={"border-b border-surface-high/60 last:border-0" + tint + (isDim(a, s) || (lowCredit && s.phase === "idle") ? " opacity-60" : "")}>
       <td className={td}><input type="checkbox" checked={selected} onChange={(e) => onSel(e.target.checked)} /></td>
       <td className={td + " font-mono text-[11px] text-muted-foreground tabular-nums"}>{idx}</td>
       <td className={td + " whitespace-nowrap"}>
         <div className="font-mono text-[12px] font-semibold">{n}</div>
         {s.ranOn && s.ranOn !== n && <div className="font-mono text-[10px] text-primary" title="Job đã xoay sang nick này">↦ chạy trên {s.ranOn}</div>}
-        <div className="font-mono text-[10.5px] text-muted-foreground">{a.used_today}/{a.limit} hôm nay{a.remaining != null ? ` · còn ${a.remaining}` : ""}</div>
+        <div className="font-mono text-[10.5px] text-muted-foreground">{a.used_today}/{a.limit} hôm nay{a.remaining != null ? ` · còn ${a.remaining}` : ""}{lowCredit && s.phase === "idle" ? <span className="text-warn"> · nghỉ (thiếu điểm)</span> : ""}</div>
       </td>
       <td className={td + " whitespace-nowrap"}><Badge variant={chip.variant}>{chip.text}</Badge></td>
       <td className={td}>
@@ -555,13 +561,13 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotated
   );
 }
 
-function NickCard({ a, s, selected, elapsed, rotatedFrom, rotatedPrompt, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
+function NickCard({ a, s, selected, elapsed, rotatedFrom, rotatedPrompt, lowCredit, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
   const n = a.account;
   const cardChip = stateChip(a, s);
   const border = s.phase === "done" ? " ring-1 ring-tertiary/25" : s.phase === "error" ? " ring-1 ring-error/30" : "";
   const icon = "h-7 w-7 text-muted-foreground hover:text-foreground";
   return (
-    <div className={"flex flex-col gap-2.5 rounded-lg bg-surface p-3" + border + (isDim(a, s) ? " opacity-60" : "")}>
+    <div className={"flex flex-col gap-2.5 rounded-lg bg-surface p-3" + border + (isDim(a, s) || (lowCredit && s.phase === "idle") ? " opacity-60" : "")}>
       <div className="flex items-center gap-2">
         <input type="checkbox" checked={selected} onChange={(e) => onSel(e.target.checked)} />
         <span className="font-mono text-[12.5px] font-semibold">{n}</span>
