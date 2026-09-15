@@ -627,7 +627,8 @@ class BrowserPool:
         return list(await asyncio.gather(*(check(n) for n in wanted)))
 
     async def resume_video(self, account: str, conversation_id: str, timeout: int,
-                           on_poll=None, ratio: str | None = None, duration: int | None = None) -> dict:
+                           on_poll=None, ratio: str | None = None, duration: int | None = None,
+                           prompt: str = "") -> dict:
         """Resumes an accepted session without re-scheduling.
 
         Slot Chrome (semaphore) nhả ngay khi worker chuyển sang theo dõi HTTP — như generate_video.
@@ -659,7 +660,7 @@ class BrowserPool:
                 try:
                     result = await resume_video(account, conversation_id, timeout,
                                                 on_poll=on_poll, on_balance=on_balance,
-                                                ratio=ratio, duration=duration,
+                                                ratio=ratio, duration=duration, prompt=prompt,
                                                 on_browser_free=_release_browser, on_browser_hold=_hold_browser)
                     self._settle(account, result, None, duration, seen["balance"])
                     return result

@@ -382,7 +382,7 @@ async def _resume_task(row: dict):
             _rratio = None
         result = await pool.resume_video(
             row["account"], row["conversation_id"], remaining, on_poll=on_poll,
-            ratio=_rratio, duration=row.get("duration"))
+            ratio=_rratio, duration=row.get("duration"), prompt=row.get("prompt") or "")
         public_url = _public_video_url(result)
         store.update(task_id, status="completed", video_url=public_url,
                      account=result.get("account"), last_poll_at=time.time(),

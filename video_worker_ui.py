@@ -1123,7 +1123,7 @@ async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, dura
                     left = max(60, int(deadline - time.time()))
                     return await resume_video(account, conv_id, left, on_poll=on_poll,
                                               on_balance=on_balance, ratio=ratio, duration=duration,
-                                              answered=answered)
+                                              answered=answered, prompt=prompt)
             return await poll_conversation(account, page, context, conv_id, timeout, on_poll, on_balance, ratio, duration, prompt=prompt)
         finally:
             if not closed:
@@ -1442,7 +1442,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
 async def resume_video(account: str, conversation_id: str, timeout: int,
                        on_poll=None, on_balance=None, ratio: str | None = None,
                        duration: int | None = None, answered: set | None = None,
-                       on_browser_free=None, on_browser_hold=None) -> dict:
+                       on_browser_free=None, on_browser_hold=None, prompt: str = "") -> dict:
     """Recovers accepted session after server restart without re-sending prompt.
 
     Giống đường tạo mới: ở trong trang tới khi Dola hết hỏi lại rồi nhả Chrome, theo dõi tiếp bằng
@@ -1492,7 +1492,7 @@ async def resume_video(account: str, conversation_id: str, timeout: int,
             await on_browser_hold()
         return await resume_video(account, conversation_id, max(30, int(deadline - time.time())), on_poll,
                                   on_balance, ratio, duration, answered=answered,
-                                  on_browser_free=on_browser_free, on_browser_hold=on_browser_hold)
+                                  on_browser_free=on_browser_free, on_browser_hold=on_browser_hold, prompt=prompt)
 
 
 async def generate_video(account: str, prompt: str, ratio: str = None,
