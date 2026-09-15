@@ -210,6 +210,65 @@ def test_submit_timeout_never_resubmits():
         vw.FETCH_SUBMIT_TIMEOUT_SEC, vw._recent_conv_ids = saved
 
 
+def test_uncertain_submit_only_resends_when_probe_is_certain():
+    """Gửi lệnh lỗi không rõ kết quả (stream đứt / 5xx / 710022002): thấy hội thoại mới → dùng; dò ĐỦ mà không thấy →
+    False + được gửi lại; dò hỏng hoặc thiếu ảnh chụp trước khi gửi → _FetchDelivered, KHÔNG gửi lại (trừ 2 lần)."""
+    import video_worker as vwk
+    saved = vw._recent_conv_ids
+
+    def page(outcome):
+        class Page:
+            async def evaluate(self, *a, **kw):
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+            async def wait_for_timeout(self, ms): pass
+        return Page()
+
+    def probes(*seq):   # lần 1 = ảnh chụp trước khi gửi, sau đó mỗi lần dò lấy phần tử kế (hết thì lặp phần tử cuối)
+        it = {"i": 0}
+        async def f(p, t, fp):
+            v = seq[min(it["i"], len(seq) - 1)]; it["i"] += 1
+            return v
+        return f
+
+    def submit(outcome, *seq):
+        vw._recent_conv_ids = probes(*seq)
+        flags = []
+        try:
+            got = asyncio.run(vw._submit_via_fetch(page(outcome), None, "acc1", "p", "9:16", 10, "seedance_v2.5",
+                                                   {"device_id": "d"}, "tok", "fp", on_submitted=lambda a, s: flags.append(s)))
+            return got, flags
+        except Exception as e:  # noqa: BLE001
+            return e, flags
+
+    net = Exception("TypeError: network error")
+    try:
+        got, flags = submit(net, {"1"}, {"1"}, {"1", "12", "9"})
+        assert got == "12" and flags == [True], (got, flags)                        # max theo số, không theo chuỗi
+        got, flags = submit(net, {"1"}, {"1"})
+        assert isinstance(got, vw._FetchSubmitFailed) and flags == [True, False], (got, flags)   # dò đủ → chắc chắn chưa nhận
+        got, flags = submit(net, {"1"}, None)
+        assert isinstance(got, vw._FetchDelivered) and flags == [True], (got, flags)   # dò hỏng → không gửi lại
+        got, flags = submit(net, None, {"1", "2"})
+        assert isinstance(got, vw._FetchDelivered) and flags == [True], (got, flags)   # thiếu ảnh chụp trước → không đoán hội thoại cũ
+        got, flags = submit({"status": 502, "errors": []}, {"1"}, {"1"})
+        assert isinstance(got, vw._FetchSubmitFailed) and flags == [True, False], (got, flags)
+        got, flags = submit({"status": 502, "errors": []}, {"1"}, None)
+        assert isinstance(got, vw._FetchDelivered) and flags == [True], (got, flags)
+        got, flags = submit({"status": 403, "errors": ["<html>Forbidden</html>"]}, {"1"}, None)
+        assert isinstance(got, vw._FetchSubmitFailed) and flags == [True, False], (got, flags)   # 4xx: chặn ở cửa
+        rl = {"status": 200, "errors": ['{"error_code":710022002}']}
+        got, flags = submit(rl, {"1"}, {"1"})
+        assert isinstance(got, vwk.RateLimitedError) and flags == [True, False], (got, flags)
+        got, flags = submit(rl, {"1"}, None)
+        assert isinstance(got, vw._FetchDelivered) and flags == [True], (got, flags)
+        got, flags = submit(rl, {"1"}, {"1", "5"})
+        assert got == "5" and flags == [True], (got, flags)
+    finally:
+        vw._recent_conv_ids = saved
+
+
 def test_generation_started_is_status_not_refusal():
     """Log 11/9 16:51: '直接生成を開始します' = Dola bắt đầu tạo — từng bị coi là từ chối, job chết sau 20s."""
     assert vw._is_status_text("このリクエストは安全チェックの対象外です。直接生成を開始します。")
@@ -391,4 +450,4 @@ if __name__ == "__main__":
     test_http_error_is_not_risk_control(); test_blocked_reason_says_one_thing()
     test_prompt_marks_are_scaled_to_duration(); test_parse_credit_need_from_dola_message()
     test_credits_used_is_read_from_start_message(); test_download_failure_keeps_job_with_cdn_link()
-    test_submit_timeout_never_resubmits(); print("OK")
+    test_submit_timeout_never_resubmits(); test_uncertain_submit_only_resends_when_probe_is_certain(); print("OK")

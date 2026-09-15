@@ -871,7 +871,8 @@ ipcMain.handle("account:setProxy", async (_e, { name, proxy }) => {
   if (!NAME_RE.test(name || "")) return { ok: false, error: "Tên nick không hợp lệ" };
   if (isRemote()) {   // proxy của nick nằm trên máy chủ, không phải file trên máy này
     const v = (proxy || "").trim();
-    if (v && !parseProxy(v)) return { ok: false, error: `Proxy sai định dạng. Chấp nhận: ${PROXY_FORMATS}` };
+    // Proxy XOAY (tmproxy/proxy.vn/get.php) parseProxy trả null → trước đây không lưu được proxy xoay riêng nick trên VPS.
+    if (v && !isRotating(v) && !parseProxy(v)) return { ok: false, error: `Proxy sai định dạng. Chấp nhận: ${PROXY_FORMATS} · tmproxy://KEY · proxyvn://KEY · link get.php?key=…` };
     const c = config();
     return setAccountProxy(c.base, c.adminKey, name, v);
   }

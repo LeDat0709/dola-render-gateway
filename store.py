@@ -71,6 +71,7 @@ class TaskStore:
                 ("client_concurrency_limit", "INTEGER DEFAULT 0"),
                 ("submitted_at", "REAL"),
                 ("attempts", "INTEGER DEFAULT 0"),
+                ("opened_at", "REAL"),   # lúc job có slot Chrome + nick, bắt đầu mở nick (trước đó = đang chờ lượt)
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
@@ -254,7 +255,7 @@ class TaskStore:
         with _LOCK:
             self._conn.execute(
                 "UPDATE tasks SET status='queued', attempts=COALESCE(attempts,0)+1, "
-                "started_at=NULL, submitted_at=NULL, conversation_id=NULL, deadline_at=NULL, "
+                "started_at=NULL, submitted_at=NULL, opened_at=NULL, conversation_id=NULL, deadline_at=NULL, "
                 "error=NULL, failure_code=NULL, updated_at=? WHERE id=?",
                 (time.time(), task_id))
             self._conn.commit()

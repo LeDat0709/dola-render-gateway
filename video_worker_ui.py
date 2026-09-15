@@ -976,7 +976,7 @@ async ({msToken, fp}) => {
       {limit: 20, message_count_per_conv: 1, api_version: 1, conv_version: 0, direction: 3,
        option: {not_need_message: true, need_complete_conversation: true}}},
       sequence_id: crypto.randomUUID(), channel: 2, version: "1"})});
-  if (!r.ok) return [];
+  if (!r.ok) return null;
   const d = await r.json();
   const cells = (((d.downlink_body||{}).pull_recent_conv_chain_downlink_body)||{}).cells || [];
   return cells.map(c => String((c.conversation||{}).conversation_id || c.id || "")).filter(Boolean);
@@ -984,13 +984,46 @@ async ({msToken, fp}) => {
 """
 
 
-async def _recent_conv_ids(page, ms_token: str, fp: str) -> set:
+async def _recent_conv_ids(page, ms_token: str, fp: str) -> set | None:
+    """Hội thoại gần đây của nick. None = KHÔNG dò được (HTTP/mạng lỗi) — khác set() rỗng của nick mới:
+    trừ với set() rỗng giả sẽ ra cả 20 hội thoại CŨ → job nhận video cũ như thành công."""
     try:
         ids = await asyncio.wait_for(
             page.evaluate(RECENT_CONV_IDS_JS, {"msToken": ms_token, "fp": fp}), timeout=20)
-        return {i for i in ids if i.isdigit()}
     except Exception:
-        return set()
+        return None
+    return None if ids is None else {i for i in ids if i.isdigit()}
+
+
+# Dò hội thoại mới sau lần gửi không rõ kết quả: 6 × 2s = cửa sổ Dola cần để hiện hội thoại vừa tạo.
+_PROBE_TRIES = 6
+
+
+async def _new_conv_after(page, ms_token: str, fp: str, before: set | None, tries: int) -> tuple[str, bool]:
+    """(conversation_id Dola vừa tạo, verified). verified=True chỉ khi MỌI lần dò đều thành công — lúc đó
+    "không thấy" mới chứng minh Dola CHƯA nhận lệnh; dò hỏng / thiếu ảnh chụp trước khi gửi → không kết luận."""
+    if before is None:
+        return "", False
+    verified = True
+    for _ in range(tries):
+        try:
+            await page.wait_for_timeout(2000)
+        except Exception:
+            return "", False              # trang đóng giữa lúc dò
+        cur = await _recent_conv_ids(page, ms_token, fp)
+        if cur is None:
+            verified = False
+            continue
+        new = cur - before
+        if new:
+            return max(new, key=int), True   # id số: so theo số, không theo chuỗi
+    return "", verified
+
+
+def _delivered_err(why: str) -> _FetchDelivered:
+    return _FetchDelivered(
+        f"Gửi lệnh không rõ kết quả ({why[:120]}) — không xác nhận được Dola đã nhận hay chưa, KHÔNG gửi lại "
+        "để tránh trừ lượt 2 lần. Kiểm tra dola.com; chưa có video thì chạy lại.")
 
 
 async def _submit_via_fetch(page, context, account: str, prompt: str, ratio: str | None,
@@ -1016,42 +1049,62 @@ async def _submit_via_fetch(page, context, account: str, prompt: str, ratio: str
     except asyncio.TimeoutError as exc:
         # Hết giờ chờ evaluate: lệnh CÓ THỂ đã tới Dola và bị trừ lượt. Dò hội thoại mới trước; không
         # thấy thì KHÔNG cho gửi lại (log 11/9: gửi lần 2 = trừ lượt 2 lần).
-        for _ in range(3):
-            await page.wait_for_timeout(2000)
-            new = await _recent_conv_ids(page, ms_token, fp) - before
-            if new:
-                conv_id = sorted(new)[-1]
-                print(f"[{account}] submit quá giờ nhưng Dola đã nhận; conversation_id={conv_id}", flush=True)
-                return conv_id
-        raise _FetchDelivered(
-            f"Gửi lệnh quá {FETCH_SUBMIT_TIMEOUT_SEC}s không có phản hồi — không xác nhận được Dola đã nhận "
-            "hay chưa, KHÔNG gửi lại để tránh trừ lượt 2 lần. Kiểm tra dola.com; chưa có video thì chạy lại.") from exc
+        conv_id, _ = await _new_conv_after(page, ms_token, fp, before, 3)
+        if conv_id:
+            print(f"[{account}] submit quá giờ nhưng Dola đã nhận; conversation_id={conv_id}", flush=True)
+            return conv_id
+        raise _delivered_err(f"quá {FETCH_SUBMIT_TIMEOUT_SEC}s không có phản hồi") from exc
     except Exception as exc:
-        # The evaluate itself failed → nothing was delivered → safe to fall back to UI.
-        if on_submitted:
-            on_submitted(account, False)
-        raise _FetchSubmitFailed(f"submit call failed: {str(exc)[:160]}") from exc
+        # evaluate lỗi SAU on_submitted(True): fetch có thể đã gửi xong mà stream đứt ('TypeError: network
+        # error'). Trước đây coi là "chưa gửi" → thử lại/UI = trừ lượt 2 lần. Chỉ gửi lại khi dò CHẮC CHẮN.
+        return await _recover_or_raise(page, account, ms_token, fp, before, exc, on_submitted)
     try:
         return _check_submit(result)
     except SubmitRejected as exc:
-        # Dola/WAF/proxy trả HTTP lỗi, chưa nhận lệnh, chưa trừ lượt → thử lại như lỗi mạng,
-        # KHÔNG cho nick nghỉ 30 phút (trước đây cả loạt nick bị "risk-control" oan vì 1 lỗi mạng).
+        status = int(result.get("status") or 0)
+        if 400 <= status < 500 and status != 408:
+            # WAF/cookie/proxy chặn ở cửa (4xx): Dola chưa nhận, chưa trừ lượt → thử lại như lỗi mạng,
+            # KHÔNG cho nick nghỉ 30 phút (trước đây cả loạt nick bị "risk-control" oan vì 1 lỗi mạng).
+            if on_submitted:
+                on_submitted(account, False)
+            raise _FetchSubmitFailed(f"Dola từ chối lệnh ({exc}) — kiểm tra mạng/proxy/cookie") from exc
+        # 5xx/408/0: gateway có thể lỗi SAU khi đã chuyển lệnh vào Dola → dò rồi mới được gửi lại.
+        return await _recover_or_raise(page, account, ms_token, fp, before, exc, on_submitted)
+    except RiskControlError as exc:
+        # 710022002/710022004 (gồm RateLimitedError) không có convId: Dola từ chối rõ. Dò cho chắc — chỉ báo
+        # False (pool được xoay nick/IP) khi dò đủ mà không thấy; dò hỏng thì giữ cờ đã gửi, không gửi lại.
+        conv_id, verified = await _new_conv_after(page, ms_token, fp, before, _PROBE_TRIES)
+        if conv_id:
+            return conv_id
+        if not verified:
+            raise _delivered_err(str(exc)) from exc
         if on_submitted:
             on_submitted(account, False)
-        raise _FetchSubmitFailed(f"Dola từ chối lệnh ({exc}) — kiểm tra mạng/proxy/cookie") from exc
+        raise
     except SubmitDelivered:
         # Delivered but no id parsed: find the conversation Dola just created (do NOT re-submit).
-        for _ in range(6):
-            await page.wait_for_timeout(2000)
-            new = await _recent_conv_ids(page, ms_token, fp) - before
-            if new:
-                conv_id = sorted(new)[-1]
-                print(f"[{account}] fetch delivered; recovered conversation_id={conv_id}", flush=True)
-                return conv_id
+        conv_id, _ = await _new_conv_after(page, ms_token, fp, before, _PROBE_TRIES)
+        if conv_id:
+            print(f"[{account}] fetch delivered; recovered conversation_id={conv_id}", flush=True)
+            return conv_id
         # Couldn't confirm — raise WITHOUT allowing a UI re-submit (guards against double charge).
         raise _FetchDelivered(
             "Đã gửi lệnh tạo video tới Dola nhưng không xác nhận được — KHÔNG gửi lại để tránh trừ lượt 2 lần. "
             "Kiểm tra tài khoản trên dola.com; nếu chưa có video, thử lại.")
+
+
+async def _recover_or_raise(page, account: str, ms_token: str, fp: str, before, exc, on_submitted) -> str:
+    """Lệnh CÓ THỂ đã tới Dola mà không có conversation_id. Thấy hội thoại mới → dùng nó; dò đủ mà không
+    thấy → Dola chưa nhận → báo False + _FetchSubmitFailed (gửi lại an toàn); dò hỏng → _FetchDelivered."""
+    conv_id, verified = await _new_conv_after(page, ms_token, fp, before, _PROBE_TRIES)
+    if conv_id:
+        print(f"[{account}] gửi lệnh lỗi ({str(exc)[:80]}) nhưng Dola đã nhận; conversation_id={conv_id}", flush=True)
+        return conv_id
+    if not verified:
+        raise _delivered_err(str(exc) or type(exc).__name__) from exc
+    if on_submitted:
+        on_submitted(account, False)
+    raise _FetchSubmitFailed(f"Dola chưa nhận lệnh ({str(exc)[:160]})") from exc
 
 
 async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, duration: int,
@@ -1209,7 +1262,13 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
     credits_used = None      # giá Dola báo lúc bắt đầu dựng → pool học giá + trừ credit nick
     answered = set() if answered is None else answered
     from browser import account_proxy_url
-    poll_proxy = account_proxy_url(account) or config.PROXY or None   # poll đi đúng proxy nick, như lúc gửi
+    try:
+        poll_proxy = account_proxy_url(account) or config.PROXY or None   # poll đi đúng proxy nick, như lúc gửi
+    except Exception as e:  # noqa: BLE001
+        # SAU khi gửi (đã trừ credit): nhà bán proxy lỗi (cooldown/whitelist) KHÔNG được làm hỏng job — người dùng
+        # thấy lỗi proxy sẽ bấm chạy lại = trừ lượt 2 lần. Poll chỉ đọc hội thoại → đi proxy chung/thẳng.
+        print(f"[{account}] không lấy được proxy riêng để theo dõi, dùng proxy chung/thẳng: {e}", flush=True)
+        poll_proxy = config.PROXY or None
     async with aiohttp.ClientSession() as session:
         while time.time() - start < timeout:
             await asyncio.sleep(5)
@@ -1522,8 +1581,8 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
     fetch_model = _fetch_model_key(model_key)
     if config.SUBMIT_MODE == "fetch" and fetch_model and not reference_image_paths:
         last_fetch_err = None
-        # _FetchSubmitFailed = lệnh CHƯA tới Dola (evaluate lỗi trước khi gửi) → thử lại an toàn,
-        # không lo trừ lượt 2 lần. Trang/bdms đôi khi chưa sẵn sàng ở lần đầu.
+        # _FetchSubmitFailed = lệnh CHẮC CHẮN chưa tới Dola (thiếu device_id / HTTP 4xx / dò đủ không thấy hội
+        # thoại) → thử lại an toàn. Mọi lỗi "có thể đã gửi" đã thành _FetchDelivered → nổi lên, không gửi lại.
         for attempt in (1, 2):
             try:
                 result = await _generate_via_fetch(account, prompt, ratio, duration or 10, fetch_model,
@@ -1532,6 +1591,8 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 return await _strip_logo(result, model_key, account)
             except _FetchSubmitFailed as exc:
                 last_fetch_err = exc
+                if on_submitted:
+                    on_submitted(account, False)   # chưa tới Dola → pool đặt lại đồng hồ chống treo cho pha kế (lượt 2/UI)
                 if attempt == 1:
                     print(f"[{account}] fetch submit trượt ({exc}); thử lại lần 2...", flush=True)
                     await asyncio.sleep(2)
@@ -1735,13 +1796,14 @@ async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duratio
                     await box.focus()
                 await page.keyboard.insert_text(prompt)   # dán nguyên khối (prompt dài không còn mất ~1 phút gõ)
                 await page.wait_for_timeout(600)
+                if on_submitted:
+                    # TRƯỚC Enter (như đường fetch): Enter lỗi/bị hủy vẫn có thể đã phát đi → không xoay/gửi lại
+                    on_submitted(account, True)
                 await page.keyboard.press("Enter")
             except Exception:
                 await page.screenshot(path="ui_fail.png")
                 raise
             print(f"[{account}] UI submitted prompt: {prompt[:40]}", flush=True)
-            if on_submitted:
-                on_submitted(account, True)
             await page.wait_for_timeout(1500)
             if await _is_logged_out(page, context):
                 raise LoggedOutError(_LOGOUT_MSG)

@@ -16,7 +16,7 @@ const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"];
 const DURS = [["10", "10s"], ["15", "15s"], ["30", "30s"]];
 // Timeline 5 bước trên thẻ nick; giai đoạn server báo (STAGE_TEXT) ánh xạ về bước đang chạy.
 const STEPS = ["Hàng đợi", "Gửi", "Dựng", "Tải về", "Xong"];
-const STEP_OF = { checking: 0, queued: 0, opening: 1, submitting: 1, rendering: 2, processing: 2, downloading: 3 };
+const STEP_OF = { checking: 0, queued: 0, waiting: 0, opening: 1, submitting: 1, rendering: 2, processing: 2, downloading: 3 };
 const H2 = "font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground";
 const TH = "h-9 whitespace-nowrap px-2 text-left font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground";
 

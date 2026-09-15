@@ -172,6 +172,36 @@ def normalize_proxy_input(raw: str) -> str:
     return f"tmproxy://{raw}" if _is_bare_tmproxy_key(raw) else raw
 
 
+def check_proxy_input(raw: str) -> str:
+    """Chuẩn hoá + kiểm DẠNG proxy, KHÔNG gọi mạng (gọi nhà bán lúc lưu = báo sai khi chưa whitelist, TMProxy còn
+    có thể đổi IP của key đang chạy). Trả bản chuẩn ("" = xoá); sai dạng → ValueError."""
+    import re
+    v = normalize_proxy_input(raw)
+    if not v:
+        return ""
+    if v.lower().startswith("tmproxy://"):
+        import tmproxy
+        ok = bool(tmproxy.key_of(v))
+    elif is_rotating_proxy(v):
+        ok = not re.search(r"[?&]key=(?:&|$)", v)   # chỉ chặn key RỖNG; api_key=/token= vẫn nhận như kho proxy
+    else:
+        ok = parse_proxy(v) is not None               # proxy tĩnh: parse_proxy chỉ tách chuỗi
+    if not ok:
+        raise ValueError("proxy không hợp lệ (host:port, user:pass@host:port, host:port:user:pass, "
+                         "tmproxy://KEY, proxyvn://KEY, topproxy://KEY hoặc link get.php?key=…)")
+    return v
+
+
+def rotating_last_error(raw: str) -> str:
+    """Lý do nhà bán trả khi lấy IP hỏng gần nhất — tra theo ĐÚNG khoá resolve_dict đã ghi (chuỗi đã chuẩn hoá)."""
+    s = normalize_proxy_input(raw)
+    if s.lower().startswith("tmproxy://"):
+        import tmproxy
+        return tmproxy.last_error(tmproxy.key_of(s))
+    import proxyxoay
+    return proxyxoay.last_error(s) if proxyxoay.is_key_link(s) else ""
+
+
 def is_rotating_proxy(raw: str) -> bool:
     """Proxy XOAY được (đổi IP theo yêu cầu): key/link TMProxy, hoặc link get.php?key=… (proxyxoay & tương tự).
     Proxy tĩnh (ip:port…) hoặc nối thẳng → False. Dùng để bật chế độ MỖI LẦN MỘT NICK đúng lúc."""
@@ -344,24 +374,21 @@ def account_proxy(account: str) -> dict | None:
     Lets each nick egress from its own IP (Dola flags many nicks on one IP; one dead IP
     then kills only that nick, not the whole pool).
     """
-    try:
-        f = config.ACCOUNTS_DIR / account / "proxy.txt"
-        if f.exists():
-            raw = f.read_text(encoding="utf-8")
-            got = parse_proxy(_sub_session(raw, account))
-            if got:
-                return got
-            if is_rotating_proxy(raw):
-                # Proxy XOAY riêng (tmproxy://KEY, key trần, hoặc link get.php) không lấy được IP: KHÔNG lặng lẽ
-                # rơi về proxy chung/IP máy — nick sẽ lộ IP thật và bị Dola gom chung. Báo lỗi rõ để sửa.
-                import proxyxoay
-                reason = proxyxoay.last_error(raw) if proxyxoay.is_key_link(raw) else ""
-                detail = f": {reason}" if reason else ""   # lý do thật (whitelist/hết hạn/không tới được) → team khỏi đoán
-                raise RuntimeError(
-                    f"Proxy xoay riêng của nick {account} không lấy được IP ({mask_proxy(raw)}){detail} — kiểm tra "
-                    "key/link, hạn dùng và whitelist IP trên trang nhà bán.")
-    except OSError:
-        pass
+    # Chuẩn hoá MỘT lần (qua account_proxy_raw) rồi thay {SESSION}: khoá tra lỗi == khoá resolve_dict đã ghi
+    # (proxyvn://, topproxy://, key trần, {SESSION}), và mask không lộ key trần.
+    raw = _sub_session(account_proxy_raw(account), account)
+    if raw:
+        got = parse_proxy(raw)
+        if got:
+            return got
+        if is_rotating_proxy(raw):
+            # Proxy XOAY riêng (tmproxy://KEY, key trần, hoặc link get.php) không lấy được IP: KHÔNG lặng lẽ
+            # rơi về proxy chung/IP máy — nick sẽ lộ IP thật và bị Dola gom chung. Báo lỗi rõ để sửa.
+            reason = rotating_last_error(raw)
+            detail = f": {reason}" if reason else ""   # lý do thật (whitelist/hết hạn/không tới được) → team khỏi đoán
+            raise RuntimeError(
+                f"Proxy xoay riêng của nick {account} không lấy được IP ({mask_proxy(raw)}){detail} — kiểm tra "
+                "key/link, hạn dùng và whitelist IP trên trang nhà bán.")
     return parse_proxy(config.PROXY)
 
 
@@ -387,7 +414,8 @@ def account_proxy_raw(account: str) -> str:
     """Chuỗi proxy riêng của nick (accounts/<nick>/proxy.txt); "" = dùng proxy chung."""
     try:
         f = config.ACCOUNTS_DIR / account / "proxy.txt"
-        return f.read_text(encoding="utf-8").strip() if f.exists() else ""
+        # Bản CHUẨN: proxy.txt cũ / desktop ghi thẳng 'proxyvn://KEY' vẫn cùng khoá nhịp gửi (_pace, 710022002) với kho.
+        return normalize_proxy_input(f.read_text(encoding="utf-8")) if f.exists() else ""
     except OSError:
         return ""
 
@@ -395,7 +423,7 @@ def account_proxy_raw(account: str) -> str:
 def mask_proxy(raw: str) -> str:
     """Che mật khẩu để trả ra giao diện: scheme://user:•••@host:port hoặc host:port:user:•••."""
     import re
-    s = (raw or "").strip()
+    s = normalize_proxy_input(raw)   # key TMProxy trần / proxyvn://KEY → dạng chuẩn rồi mới che, không lộ key
     if s.lower().startswith("tmproxy://"):
         import tmproxy
         return tmproxy.mask(s)
@@ -433,8 +461,9 @@ def set_account_proxy(account: str, raw: str) -> None:
     d = config.ACCOUNTS_DIR / account
     d.mkdir(parents=True, exist_ok=True)
     f = d / "proxy.txt"
-    if (raw or "").strip():
-        config.atomic_write_text(f, raw.strip())
+    v = normalize_proxy_input(raw)   # mọi nơi ghi (endpoint, cookie_service, import, kho) đều lưu bản chuẩn
+    if v:
+        config.atomic_write_text(f, v)
     elif f.exists():
         f.unlink()
 

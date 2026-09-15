@@ -339,7 +339,13 @@ async def _download(url: str, account: str, prompt: str = "") -> Path:
     thử DOWNLOAD_RETRIES lần, hết thì ném DownloadError mang URL để người dùng tải tay.
     """
     from browser import account_proxy_url
-    proxy = account_proxy_url(account) or None      # tải video đi đúng proxy của nick, không phải IP chung
+    try:
+        proxy = account_proxy_url(account) or None  # tải video đi đúng proxy của nick, không phải IP chung
+    except Exception as e:  # noqa: BLE001
+        # Render xong 9–35 phút sau khi gửi: cache IP đã hết, nhà bán lỗi (cooldown/whitelist) → ĐỪNG làm hỏng job
+        # đã trừ credit (thấy lỗi proxy người dùng bấm chạy lại = trừ lượt 2 lần) → tải đi thẳng.
+        print(f"[{account}] không lấy được proxy để tải, tải đi thẳng: {e}", flush=True)
+        proxy = None
     dl_dir = Path(config.DOWNLOAD_DIR)
     dl_dir.mkdir(parents=True, exist_ok=True)
     parts = [_prompt_slug(prompt), account, time.strftime('%Y%m%d_%H%M%S')]   # theo PROMPT, không STT

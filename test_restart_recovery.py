@@ -16,7 +16,8 @@ def test_decision():
 
 def test_stage_shown_in_ui():
     assert _task_stage({"status": "queued"}) == "queued"
-    assert _task_stage({"status": "processing"}) == "opening"
+    assert _task_stage({"status": "processing"}) == "waiting"                     # chưa có slot Chrome/nick
+    assert _task_stage({"status": "processing", "opened_at": 1.0}) == "opening"
     assert _task_stage({"status": "processing", "submitted_at": 1.0}) == "submitting"
     assert _task_stage({"status": "processing", "submitted_at": 1.0, "conversation_id": "77"}) == "rendering"
 

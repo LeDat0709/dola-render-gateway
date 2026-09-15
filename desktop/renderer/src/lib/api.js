@@ -51,12 +51,17 @@ export function fmtError(raw) {
   const r = String(raw || ""); const L = r.toLowerCase();
   const A = (icon, short, hint) => ({ icon, short, hint, kind: "account" });
   const T = (icon, short, hint) => ({ icon, short, hint, kind: "tool" });
+  // ĐẦU TIÊN: lệnh có thể đã tới Dola (đã trừ lượt) — chữ bên trong có thể chứa "network error"/"failed to fetch".
+  if (/KHÔNG gửi lại để tránh trừ lượt/i.test(r)) return A("📨", "Đã gửi, chưa xác nhận", "ĐỪNG chạy lại ngay — xem dola.com, chưa có video mới chạy lại (tránh trừ lượt 2 lần).");
   if (/failed to fetch|networkerror|load failed|ECONNREFUSED|ERR_CONNECTION_REFUSED/i.test(r)) return T("🔌", "Chưa nối được server", "Server đang bật lại hoặc tắt — chờ 2–3s rồi chạy lại.");
   if (/ERR_INTERNET|ERR_NETWORK|ERR_CONNECTION|ERR_PROXY|ERR_TIMED_OUT|ERR_NAME_NOT|mất mạng|net::/i.test(r)) return T("🌐", "Mất mạng tạm thời", "Kiểm tra internet/proxy rồi chạy lại.");
   if (/đang bận|đang tạo video khác/i.test(r)) return A("⏳", "Nick đang bận", "Chờ video hiện tại xong rồi chạy tiếp.");
   if (/đã thử \d+ nick|đều lỗi — dừng/i.test(r)) { const cuoi = (r.match(/Lỗi cuối:\s*([\s\S]+)$/i) || [])[1] || ""; return T("🔁", "Đã xoay nhiều nick, đều lỗi", (cuoi.trim() || "Xem chi tiết ở Log.").slice(0, 70)); }
+  // Proxy/treo đứng TRƯỚC "no available accounts"/"tạm ngưng"/"quota": lý do nhà bán tự do có thể chứa các chữ đó.
+  if (/không lấy được ip|proxy xoay riêng/i.test(r)) { const why = (r.match(/không lấy được IP \([^)]*\)(?::\s*([^—]+?))?\s*—/i) || [])[1] || ""; return A("🛰", "Proxy xoay chưa lấy được IP", (why.trim() ? why.trim().slice(0, 60) : "Whitelist IP máy trên trang bán proxy, hoặc kiểm tra hạn/key.")); }
+  if (/treo quá \d+s trước khi gửi/i.test(r)) return A("🧊", "Nick treo lúc mở", "Chưa tốn lượt, đã tự xoay nick. Máy yếu: giảm 'Nick gửi cùng lúc'.");
   if (/không tồn tại/i.test(r)) return T("👻", "Nick không còn trong pool", "Bảng đang cũ (đã tự làm mới) — nick có thể vừa bị xoá.");
-  if (/đang nghỉ chống risk-control/i.test(r)) return A("⏰", "Nick đang nghỉ", r.replace(/^.*?còn/, "Còn").slice(0, 60));
+  if (/đang nghỉ chống risk-control|đang nghỉ \(/i.test(r)) return A("⏰", "Nick đang nghỉ", r.replace(/^.*?còn/, "Còn").slice(0, 60));
   if (/tạm ngưng|tắt lịch/i.test(r)) return A("⏸", "Nick đang tạm ngưng", "Bấm chạy nick này là tự mở lại; hoặc 'Cho chạy lại' ở Kho tài khoản.");
   if (/không chạy được|không sẵn sàng/i.test(r)) return A("🚫", "Nick chưa chạy được", r.split(":").pop().trim().slice(0, 60));
   if (/no available accounts|no accounts|không có nick/i.test(r)) return T("🚦", "Hết nick chạy được", "Chờ nick rảnh, hoặc bật lịch thêm nick.");
@@ -65,7 +70,6 @@ export function fmtError(raw) {
   if (/không hiểu prompt|意味不明|内容が不明|内容が不足|not a valid prompt/i.test(r)) return T("✍️", "Dola không hiểu prompt", "Viết mô tả cảnh quay cụ thể (không mất lượt).");
   if (/chặn nội dung|content policy|bản quyền|ポリシー|著作/i.test(r)) return A("🚫", "Bị chặn nội dung", "Đổi prompt nhẹ hơn (không mất lượt).");
   if (/chân dung|portrait|顔/i.test(r)) return A("🧑", "Chặn bảo vệ chân dung", "Dùng ảnh mặt của chính bạn.");
-  if (/không lấy được ip|proxy xoay riêng/i.test(r)) { const why = (r.match(/không lấy được IP[^:]*:\s*([^—]+?)\s*—/i) || [])[1] || ""; return A("🛰", "Proxy xoay chưa lấy được IP", (why.trim() ? why.trim().slice(0, 60) : "Whitelist IP máy trên trang bán proxy, hoặc kiểm tra hạn/key.")); }
   if (/chặn vùng|không khả dụng ở quốc gia|地域ではDolaは利用できません/i.test(r)) return A("🌏", "Dola chặn vùng (proxy)", "Nick đang ra mạng từ nước bị chặn — gán/đổi proxy cho nick ở tab Proxy.");
   if (/đăng xuất|logged out|cookie.{0,10}chết|mất phiên|đăng nhập lại|log ?in/i.test(r)) return A("🔑", "Cookie hết hạn", "Bấm đăng nhập lại nick.");
   if (/lỗi tạm thời|エラーが発生|try again|システムエラー|問題が発生/i.test(r)) return T("⏳", "Dola lỗi tạm thời", "Đã tự thử lại; chạy lại nếu vẫn lỗi.");
@@ -80,7 +84,7 @@ export function fmtError(raw) {
 // Giai đoạn job (server trả ở field `stage`) — gửi và render giờ chạy chồng nhau nên phải
 // nói rõ nick đang ở khúc nào.
 export const STAGE_TEXT = {
-  checking: "đang kiểm tra nick…", queued: "đang xếp hàng…", opening: "đang mở nick…", submitting: "đang gửi prompt…",
+  checking: "đang kiểm tra nick…", queued: "đang xếp hàng…", waiting: "chờ slot Chrome…", opening: "đang mở nick…", submitting: "đang gửi prompt…",
   rendering: "Dola đang dựng video…", processing: "đang tạo…",
 };
 

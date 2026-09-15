@@ -111,16 +111,19 @@ class PoolStore:
             pass
 
     def add_many(self, raws: list[str]) -> int:
-        from browser import parse_proxy, normalize_proxy_input, is_rotating_proxy
+        from browser import check_proxy_input
         added = 0
         for raw in raws:
-            raw = normalize_proxy_input(raw.strip())   # key TMProxy trần (32 hex) → tmproxy://KEY, lưu dạng chuẩn
-            if not raw or raw.startswith("#"):
+            if raw.strip().startswith("#"):
                 continue
-            # Proxy XOAY (tmproxy/proxyxoay/proxy.vn/topproxy): nhận theo ĐỊNH DẠNG, ĐỪNG gọi mạng lấy IP lúc thêm.
-            # proxyxoay/proxy.vn xác thực theo IP whitelist → parse_proxy() lấy IP sẽ FAIL khi chưa whitelist,
-            # trước đây làm proxy.vn không thêm được vào kho. Kiểm sống để nút "Kiểm tra kho" (check_all).
-            if not (is_rotating_proxy(raw) or parse_proxy(raw)):
+            # Chuẩn hoá + kiểm theo ĐỊNH DẠNG (cùng luật với proxy riêng nick & proxy chung), ĐỪNG gọi mạng lấy IP
+            # lúc thêm: proxyxoay/proxy.vn xác thực theo IP whitelist → lấy IP sẽ FAIL khi chưa whitelist (trước đây
+            # proxy.vn không thêm được vào kho). Kiểm sống để nút "Kiểm tra kho" (check_all).
+            try:
+                raw = check_proxy_input(raw)
+            except ValueError:
+                continue
+            if not raw:
                 continue
             pid = _proxy_id(raw)
             if pid not in self.items:

@@ -295,7 +295,11 @@ def _task_stage(row: dict) -> str:
         return "rendering"      # Dola đã nhận việc, trình duyệt đã được trả lại
     if row.get("submitted_at"):
         return "submitting"
-    return "opening"            # đang mở nick / kiểm tra điểm
+    if row.get("opened_at"):
+        return "opening"        # đang mở nick / kiểm tra điểm
+    # Chưa tới lượt: chờ slot Chrome ("Nick gửi cùng lúc") / nhịp gửi. Trước đây gộp chung "đang mở nick" →
+    # ảnh 15/09: 10 dòng "đang mở nick 22p" mà thật ra chỉ vài nick treo giữ hết slot, còn lại đang chờ.
+    return "waiting"
 
 
 def _resolve_ratio(size, ratio):
@@ -328,10 +332,13 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
 
         reference_root, reference_paths = await download_reference_images(
             reference_images or [], task_id)
+        def on_opening(account):
+            store.update(task_id, account=account, opened_at=time.time())
+
         result = await pool.generate_video(
             prompt, ratio, duration, model,
             on_conversation_id=on_conversation_id, on_poll=on_poll,
-            on_submitted=on_submitted,
+            on_submitted=on_submitted, on_opening=on_opening,
             reference_image_paths=reference_paths, account=account)
         public_url = _public_video_url(result)
         store.update(task_id, status="completed", video_url=public_url,
@@ -762,11 +769,13 @@ async def admin_account_proxy(name: str, body: AccountProxy, x_admin_key: str | 
     _admin_auth(x_admin_key)
     if name not in pool.accounts:
         raise HTTPException(404, "account not found")
-    from browser import set_account_proxy, parse_proxy
-    if body.proxy.strip() and not parse_proxy(body.proxy):
-        raise HTTPException(422, "proxy không hợp lệ (host:port, user:pass@host:port, hoặc host:port:user:pass)")
-    set_account_proxy(name, body.proxy)
-    return {"ok": True, "proxy": body.proxy.strip() or "(global)"}
+    from browser import set_account_proxy, check_proxy_input
+    try:
+        v = check_proxy_input(body.proxy)   # kiểm DẠNG, không gọi nhà bán (proxy.vn chưa whitelist vẫn lưu được)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    set_account_proxy(name, v)
+    return {"ok": True, "proxy": v or "(global)"}
 
 
 @app.get("/api/admin/accounts/{name}/proxy")
@@ -935,11 +944,13 @@ async def admin_account_import_cookie(body: AccountCookieImport, x_admin_key: st
     name = body.name.strip()
     if not NAME_RE.match(name):
         raise HTTPException(400, "invalid account name (1-32 chars: letters, numbers, -, _)")
-    from browser import parse_proxy
-    if body.proxy.strip() and not parse_proxy(body.proxy):
-        raise HTTPException(422, "proxy không hợp lệ (host:port, user:pass@host:port, hoặc host:port:user:pass)")
+    from browser import check_proxy_input
     try:
-        res = await apply_cookies_to_account(name, body.cookies, ui_lang=body.ui_lang, proxy=body.proxy.strip())
+        proxy = check_proxy_input(body.proxy)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    try:
+        res = await apply_cookies_to_account(name, body.cookies, ui_lang=body.ui_lang, proxy=proxy)
         if body.email:
             pool.set_email(name, body.email.strip())
         pool.set_login_status(name, res["ok"])
@@ -1023,13 +1034,13 @@ async def admin_set_global_proxy(body: GlobalProxyUpdate, x_admin_key: str | Non
     config.PROXY được browser/poll/tải video đọc lại mỗi lần chạy nên áp dụng cho job mới liền. Nhờ vậy
     app ở chế độ máy chủ từ xa đặt được proxy chung cho VPS thẳng từ giao diện."""
     _admin_auth(x_admin_key)
-    from browser import parse_proxy, is_rotating_proxy, normalize_proxy_input
-    v = normalize_proxy_input((body.proxy or "").strip())   # key TMProxy trần → tmproxy://KEY (lưu bản chuẩn)
-    # Proxy xoay (tmproxy://KEY, key trần, link get.php?key=…): chỉ nhận diện DẠNG, khỏi gọi mạng/tốn 1 lượt
-    # xoay lúc lưu — thẻ làn mới thật sự gọi nhà bán. Proxy tĩnh thì parse_proxy kiểm host:port như cũ.
-    if v and not is_rotating_proxy(v) and not parse_proxy(v):
-        raise HTTPException(422, "proxy không hợp lệ (host:port, user:pass@host:port, host:port:user:pass, "
-                                 "tmproxy://KEY, hoặc link xoay get.php?key=…)")
+    from browser import check_proxy_input
+    # Chuẩn hoá + kiểm DẠNG (key trần → tmproxy://KEY, proxyvn://KEY → link get.php), khỏi gọi mạng/tốn 1 lượt
+    # xoay lúc lưu — thẻ làn mới thật sự gọi nhà bán. Chặn luôn key rỗng ("tmproxy://").
+    try:
+        v = check_proxy_input(body.proxy)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     config.PROXY = v
     config.upsert_env_local("DOLA_PROXY", v)
     print(f"[gateway] proxy chung đổi thành: {v or '(nối thẳng)'}", flush=True)

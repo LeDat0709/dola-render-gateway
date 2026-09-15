@@ -22,10 +22,57 @@ from video_worker_ui import (
     RateLimitedError,
     RiskControlError,
     TransientDolaError,
+    _FetchDelivered,
     generate_video,
     resume_video,
 )
 import config
+
+# Trần cho MỘT pha TRƯỚC khi gửi lệnh (mở Chrome → vào trang → preflight). Các bước có trần riêng cộng lại
+# ~280s (proxy 12s, goto 60s×3, device_id 20s, preflight 30s, dò hội thoại 20s) → 300s: chỉ bắt chỗ KHÔNG có trần
+# (launch/page.evaluate/cookies treo — ảnh 15/09 "đang mở nick" 22–53 phút giữ hết slot Chrome, job sau xếp hàng
+# theo). Hủy trước khi gửi không tốn credit. Máy yếu/proxy rất chậm: tăng DOLA_PRESUBMIT_TIMEOUT.
+PRESUBMIT_TIMEOUT_SEC = float(os.getenv("DOLA_PRESUBMIT_TIMEOUT", "300"))
+# Nick lỗi/treo TRƯỚC khi gửi thì nghỉ ngắn: không nghỉ, nick hỏng còn nhiều điểm nhất luôn đứng đầu danh sách
+# xoay → job nào cũng đâm vào nó trước (≥3 nick như vậy = mọi job "Đã thử 3 nick").
+PRESUBMIT_FAIL_COOLDOWN_SEC = 600
+# Lỗi của CODE/tham số (nick nào cũng gặp y hệt) → nổi lên ngay, không đốt MAX_ROTATE lượt mở Chrome + cho nick nghỉ oan.
+_NOT_NICK_ERRORS = (AttributeError, NameError, TypeError, KeyError, ImportError, AssertionError, ValueError, sqlite3.Error)
+
+
+class PreSubmitStallError(RuntimeError):
+    """Worker treo TRƯỚC khi gửi lệnh tới Dola (chưa trừ credit) → xoay nick an toàn."""
+
+
+async def _presubmit_guard(worker, account, *args, on_submitted, **kwargs):
+    """Hủy worker nếu một pha trước khi gửi quá PRESUBMIT_TIMEOUT_SEC. on_submitted(True) → tắt đồng hồ VĨNH VIỄN
+    (lệnh có thể đã tới Dola; render 30s 9–35 phút không được cắt). False khi chưa từng True (worker chắc chắn lệnh
+    chưa tới Dola, sắp thử fetch lần 2 / UI) → đặt lại hạn cho pha mới."""
+    budget = PRESUBMIT_TIMEOUT_SEC   # đọc lúc gọi, không chốt lúc import
+    loop = asyncio.get_running_loop()
+    cm = asyncio.timeout(budget)
+    sent = False
+
+    def _mark(acc, submitted):
+        nonlocal sent
+        if submitted:
+            sent = True
+            cm.reschedule(None)
+        elif not sent:
+            cm.reschedule(loop.time() + budget)
+        on_submitted(acc, submitted)
+
+    try:
+        async with cm:
+            return await worker(account, *args, on_submitted=_mark, **kwargs)
+    except Exception as exc:
+        # Chỉ đổi loại lỗi khi CHÍNH đồng hồ cắt và lệnh chưa từng gửi (kể cả khi finally đóng Chrome ném lỗi
+        # khác). TimeoutError thật của worker ("Hết 2400s chưa ra video") giữ nguyên → nhánh claim+raise.
+        if cm.expired() and not sent:
+            raise PreSubmitStallError(
+                f"Nick {account} treo quá {budget:.0f}s trước khi gửi lệnh (Chrome/proxy/trang) — "
+                "chưa tốn credit, xoay nick") from exc
+        raise
 
 DAILY_LIMIT = config.DAILY_LIMIT
 COOLDOWN_SEC = 1800  # 30-minute cooldown on risk control (captcha)
@@ -226,6 +273,22 @@ class BrowserPool:
         ).fetchone()
         return row[0] if row else 0
 
+    def _claim_submitted(self, account: str) -> None:
+        """Lệnh đã tới Dola (có thể đã trừ credit) mà job hỏng → ghi lượt, KHÔNG xoay (log 11/9)."""
+        self._claim(account)
+        self._conn.execute("UPDATE accounts_meta SET last_used_at=? WHERE name=?", (time.time(), account))
+        self._conn.commit()
+
+    def _rest_after_presubmit_fail(self, account: str, err: Exception) -> None:
+        """Nick lỗi/treo TRƯỚC khi gửi (chưa tốn credit) mà pool sắp xoay → nghỉ ngắn để job sau khỏi đâm vào nó trước.
+        Tắt tự xoay thì không nghỉ: người dùng sửa proxy/cookie xong chạy lại ngay được."""
+        if not config.AUTO_RETRY:
+            return
+        print(f"[pool] {account}: nghỉ {PRESUBMIT_FAIL_COOLDOWN_SEC // 60} phút vì lỗi trước khi gửi ({str(err)[:80]})", flush=True)
+        self._conn.execute("UPDATE accounts_meta SET cooldown_until=MAX(cooldown_until, ?) WHERE name=?",
+                           (time.time() + PRESUBMIT_FAIL_COOLDOWN_SEC, account))
+        self._conn.commit()
+
     def _claim(self, account: str, cost: int = 1):
         """Cộng CREDIT đã dùng hôm nay (không phải số video): 30s Seedance 2.5 = 2 credit (đo 13/09)."""
         self._conn.execute(
@@ -355,7 +418,8 @@ class BrowserPool:
             return "đang tạm ngưng — bấm 'Cho chạy lại' ở Kho tài khoản (chạy đích danh trong Studio thì tự mở lại)"
         if a["cooling"]:
             left = max(1, int(((a.get("cooldown_until") or 0) - now) / 60))
-            return f"đang nghỉ chống risk-control, còn {left} phút — bấm 'Bỏ nghỉ tất cả' nếu muốn chạy ngay"
+            return (f"đang nghỉ (captcha/gửi quá dày/lỗi lúc mở nick), còn {left} phút — "
+                    "bấm 'Bỏ nghỉ tất cả' nếu muốn chạy ngay")
         if a["rate_limited"]:
             return "hết lượt hôm nay — mai chạy lại hoặc dùng nick khác"
         if a["quota_blocked"]:
@@ -688,11 +752,13 @@ class BrowserPool:
                              model: str = "seedance_v2.0", on_conversation_id=None,
                              on_poll=None, on_balance=None, on_submitted=None,
                              reference_image_paths: list[str] | None = None,
-                             account: str | None = None) -> dict:
+                             account: str | None = None, on_opening=None) -> dict:
         """Picks an idle schedulable account; automatically rotates on quota/risk limits.
 
         account: when set, only that nick is used (no rotation). Raises if it does not
         exist or is not currently usable.
+        on_opening(account): gọi khi đã có slot Chrome + nick và BẮT ĐẦU mở nick — trước đó job chỉ đang chờ
+        lượt (UI tách "chờ slot Chrome" khỏi "đang mở nick" để thấy ngay job nào treo thật).
         """
         # MỖI LẦN MỘT NICK: giữ cổng SUỐT job (submit + render) → 1 nick/lần. Acquire TRƯỚC browser-sema để
         # thứ tự khoá luôn one_nick→browser (nếu acquire trong vòng lặp, nhánh retry gọi lại browser-sema khi
@@ -718,6 +784,45 @@ class BrowserPool:
             if not browser_held:
                 await self.semaphore.acquire()
                 browser_held = True
+
+        # CỔNG "ĐÃ GỬI": Dola TRỪ LƯỢT ngay khi nhận lệnh, không phải khi video xong. Worker gọi on_submitted(True)
+        # ngay TRƯỚC lúc lệnh có thể rời máy, chỉ gọi False khi CHẮC CHẮN Dola không nhận. Lỗi nổ lúc cờ còn True =
+        # có thể đã trừ lượt → xoay/thử lại = gửi lần 2 = trừ 2 lần (log 11/9) → phải nổi lỗi. Cờ sống theo JOB
+        # (biến cục bộ, không để trên self: job song song sẽ ghi đè nhau), không reset theo nick: True thì mọi nhánh
+        # đều raise nên không bao giờ sang nick kế.
+        delivery = {"maybe": False}
+
+        def _on_submitted(acc, submitted: bool):
+            delivery["maybe"] = submitted          # gán TRƯỚC khi chuyển cho server: callback server lỗi vẫn giữ cờ
+            if on_submitted:
+                on_submitted(acc, submitted)       # server ghi submitted_at → restart không chạy lại job đã gửi
+
+        def _raise_if_delivered(acc, e):
+            if delivery["maybe"] or isinstance(e, _FetchDelivered):   # _FetchDelivered: đã/có thể đã tới Dola dù cờ lỡ False
+                print(f"[pool] {acc}: lỗi SAU khi lệnh đã tới Dola → KHÔNG xoay/không gửi lại "
+                      f"(tránh trừ lượt 2 lần): {e}", flush=True)
+                self._claim_submitted(acc)
+                raise e
+
+        async def _run_worker(acc, on_balance, seen):
+            await _pace(account_proxy_raw(acc) or "")
+            await _hold_browser()
+            if on_opening:
+                try:
+                    on_opening(acc)
+                except Exception as e:  # noqa: BLE001 — chỉ là nhãn hiển thị, không được làm nick bị xoay/nghỉ
+                    print(f"[pool] {acc}: ghi trạng thái 'đang mở nick' lỗi (bỏ qua): {e!r}", flush=True)
+            result = await _presubmit_guard(
+                generate_video, acc, prompt, ratio, duration, model=model,
+                on_conversation_id=on_conversation_id, on_poll=on_poll,
+                on_balance=on_balance, on_submitted=_on_submitted,
+                on_browser_free=_release_browser, on_browser_hold=_hold_browser,
+                reference_image_paths=reference_image_paths)
+            try:
+                self._settle(acc, result, model, duration, seen["balance"])
+            except Exception as e:  # noqa: BLE001 — video ĐÃ có: lỗi ghi sổ không được biến job thành lỗi (chạy lại = trừ 2 lần)
+                print(f"[pool] {acc}: video xong nhưng ghi lượt/credit lỗi (bỏ qua): {e!r}", flush=True)
+            return result
 
         try:
             last_err = None
@@ -800,16 +905,7 @@ class BrowserPool:
 
                         from browser import rotate_proxy_session
                         rotate_proxy_session(account, config.PROXY_ROTATE_EVERY)   # sticky: đổi IP sau mỗi N video
-                        await _pace(account_proxy_raw(account) or "")
-                        await _hold_browser()
-                        result = await generate_video(
-                            account, prompt, ratio, duration, model=model,
-                            on_conversation_id=on_conversation_id, on_poll=on_poll,
-                            on_balance=on_balance, on_submitted=on_submitted,
-                            on_browser_free=_release_browser, on_browser_hold=_hold_browser,
-                            reference_image_paths=reference_image_paths)
-                        self._settle(account, result, model, duration, seen["balance"])
-                        return result
+                        return await _run_worker(account, on_balance, seen)
                     except (ContentPolicyViolationError, PortraitProtectionError, PromptUnclearError) as e:
                         # Prompt/image problem, not an account problem: no rotation helps.
                         print(f"[pool] {account} rejected due to content policy: {e}", flush=True)
@@ -817,6 +913,7 @@ class BrowserPool:
                     except LoggedOutError as e:
                         print(f"[pool] {account} logged out (session invalid), disabling until re-login: {e}", flush=True)
                         self.set_login_status(account, False)
+                        _raise_if_delivered(account, e)   # logout lúc poll/resume = sau khi gửi → không xoay
                         last_err = e
                         continue
                     except RegionBlockedError as e:
@@ -826,12 +923,14 @@ class BrowserPool:
                         print(f"[pool] {account} bị Dola chặn vùng: {e}", flush=True)
                         if not account_proxy_raw(account):
                             raise
+                        _raise_if_delivered(account, e)   # resume_video mở lại Dola sau khi gửi cũng ném lỗi này
                         last_err = e
                         continue
                     except CreditInsufficientError as e:
                         # Pre-flight balance too low for any generation: block until reset, rotate.
                         print(f"[pool] {account} insufficient points, skipping: {e}", flush=True)
                         self._mark_quota_blocked(account, str(e))
+                        _raise_if_delivered(account, e)   # preflight ở lần gửi 2/UI: lần 1 có thể đã trừ
                         last_err = e
                         continue
                     except ParameterChangeError as e:
@@ -842,15 +941,17 @@ class BrowserPool:
                             self._remember_cost(model, duration, need_now)
                         if left_now is not None:
                             self._set_credit_balance(account, left_now, "param")
-                        # This specific video costs more credits than remain (e.g. 3 needed, 2 left).
-                        # The account can still make SHORTER videos today, so do NOT block it — and
-                        # rotating to other free nicks (same low credits) just wastes launches.
-                        # Surface Dola's clear "reduce duration" message straight to the caller.
+                        # Video này đắt hơn số credit còn lại (vd cần 4, còn 2). Nick vẫn làm được video rẻ hơn → KHÔNG khoá.
+                        # Hiện Dola chỉ báo câu này TRONG POLL (sau khi gửi) → cổng nổi lỗi, không tạo lại trên nick khác.
+                        # Nếu có lúc báo TRƯỚC khi nhận lệnh thì xoay: _credit_short đã học giá, bỏ qua nick thiếu điểm.
                         print(f"[pool] {account} needs more credits for this video size (not blocking): {e}", flush=True)
-                        raise
+                        _raise_if_delivered(account, e)
+                        last_err = e
+                        continue
                     except AccountLimitedError as e:
                         print(f"[pool] {account} reached daily limit, rotating: {e}", flush=True)
                         self._mark_daily_limit(account, str(e))
+                        _raise_if_delivered(account, e)   # 上限 trong poll: hội thoại chia 2 bản có thể đã trừ bản 1
                         last_err = e
                         continue
                     except CreditError as e:
@@ -860,40 +961,31 @@ class BrowserPool:
                         # hết điểm). cb=0 → không schedulable nữa, UI hiện "còn 0", tự mở lại sau reset 0h JST.
                         print(f"[pool] {account} out of quota, mark 0 credit + rotating: {e}", flush=True)
                         self._set_credit_balance(account, 0, str(e))
+                        _raise_if_delivered(account, e)
                         last_err = e
                         continue
                     except TransientDolaError as e:
-                        # Dola lỗi tạm thời (không phải lỗi tài khoản, thường không trừ lượt) → thử lại
-                        # chính nick này 1 lần; vẫn lỗi thì xoay sang nick khác.
+                        # Dola lỗi tạm thời lúc vào trang (chưa gửi) → thử lại chính nick này 1 lần; vẫn lỗi thì xoay.
                         if not config.AUTO_RETRY:
                             raise   # người dùng tắt tự thử lại: không gửi lần 2 (không tạo thêm cuộc trò chuyện)
+                        _raise_if_delivered(account, e)   # lỗi tạm thời trong poll = SAU khi gửi → thử lại = gửi lần 2
                         print(f"[pool] {account} Dola lỗi tạm thời, thử lại 1 lần: {e}", flush=True)
                         try:
                             await asyncio.sleep(3)
-                            await _pace(account_proxy_raw(account) or "")
-                            await _hold_browser()
-                            result = await generate_video(
-                                account, prompt, ratio, duration, model=model,
-                                on_conversation_id=on_conversation_id, on_poll=on_poll,
-                                on_balance=on_balance, on_submitted=on_submitted,
-                                on_browser_free=_release_browser, on_browser_hold=_hold_browser,
-                                reference_image_paths=reference_image_paths)
-                            self._settle(account, result, model, duration, seen["balance"])
-                            return result
+                            return await _run_worker(account, on_balance, seen)
                         except TimeoutError:
                             # Đã có conversation_id → Dola vẫn đang dựng. Xoay nick ở đây = gửi lần 2 =
                             # trừ lượt 2 lần (log 11/9 11:09, 15:40). Xử lý y như nhánh ngoài.
-                            self._claim(account)
-                            self._conn.execute(
-                                "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
-                                (time.time(), account))
-                            self._conn.commit()
+                            self._claim_submitted(account)
                             raise
-                        except (ContentPolicyViolationError, PortraitProtectionError, PromptUnclearError, ParameterChangeError):
-                            raise   # lỗi của prompt / kích cỡ video này, không phải của nick → xoay vô ích
+                        except (ContentPolicyViolationError, PortraitProtectionError, PromptUnclearError,
+                                ParameterChangeError, *_NOT_NICK_ERRORS):
+                            raise   # lỗi của prompt / kích cỡ video / code, không phải của nick → xoay vô ích
                         except Exception as e2:
+                            _raise_if_delivered(account, e2)   # lần thử lại ĐÃ gửi rồi mới lỗi → nick khác gửi nữa = trừ lần 2
                             # Job ghim nick thì không có nick nào để xoay — nói đúng để người dùng khỏi hiểu nhầm.
                             print(f"[pool] {account} vẫn lỗi sau khi thử lại{'' if pinned else ', xoay nick'}: {e2}", flush=True)
+                            self._rest_after_presubmit_fail(account, e2)
                             last_err = e2
                             continue
                     except RateLimitedError as e:
@@ -909,6 +1001,7 @@ class BrowserPool:
                                 "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
                                 (time.time() + RATE_LIMIT_NICK_SEC, account))
                             self._conn.commit()
+                        _raise_if_delivered(account, e)   # worker chỉ báo False khi dò đủ không thấy hội thoại mới
                         last_err = e
                         continue
                     except RiskControlError as e:
@@ -920,19 +1013,27 @@ class BrowserPool:
                                 "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
                                 (time.time() + COOLDOWN_SEC, account))
                             self._conn.commit()
+                        _raise_if_delivered(account, e)   # captcha UI sau Enter: không xác nhận được → không xoay
                         last_err = e
                         continue
-                    except TimeoutError as e:
+                    except TimeoutError:
                         # Once conversation_id is assigned, task continues on Dola side;
                         # do not re-submit to prevent duplicate credit consumption.
-                        self._claim(account)
-                        self._conn.execute(
-                            "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
-                            (time.time(), account))
-                        self._conn.commit()
+                        self._claim_submitted(account)
                         raise
+                    except _NOT_NICK_ERRORS:
+                        raise   # lỗi code/tham số: nick nào cũng gặp y hệt → xoay chỉ đốt lượt mở Chrome + cho nick nghỉ oan
                     except FileNotFoundError as e:
                         print(f"[pool] {account} profile missing, skipping: {e}", flush=True)
+                        _raise_if_delivered(account, e)   # stat/mkdir file video sau khi xong
+                        last_err = e
+                        continue
+                    except Exception as e:
+                        # Lỗi chưa phân loại (proxy riêng không lấy được IP, Chrome không mở, treo trước khi gửi…):
+                        # chỉ xoay khi lệnh CHƯA tới Dola. Sau khi gửi các lỗi này vẫn nổ được (poll/tải/resume) → nổi lỗi.
+                        _raise_if_delivered(account, e)
+                        print(f"[pool] {account} lỗi trước khi gửi lệnh{'' if pinned and not soft_pin else ', xoay nick'}: {e!r}", flush=True)
+                        self._rest_after_presubmit_fail(account, e)
                         last_err = e
                         continue
             if pinned and last_err is not None:
