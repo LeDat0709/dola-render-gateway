@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Play, RotateCw, Settings, Trash2, FolderOpen, Copy, ArrowDown, Repeat, Stethoscope, Square, RefreshCw, Eraser, Power, Clock, ListOrdered, Zap, CheckCircle2 } from "lucide-react";
+import { Play, RotateCw, Settings, Trash2, FolderOpen, Copy, ArrowDown, Repeat, Stethoscope, Square, RefreshCw, Eraser, Power, Clock, ListOrdered, Zap, CheckCircle2, Film} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import NickVideosDialog from "@/components/NickVideosDialog";
 import { toast } from "@/components/ui/toast";
 import { SelectNative } from "@/components/ui/select-native";
 import { ViewToggle, useView } from "@/components/ui/view-toggle";
@@ -55,6 +56,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const [clock, setClock] = useState(0);
   // nick → { ctl: AbortController, id: job id | null }. Trước là Set: nick kẹt trong fetch treo (gateway bật lại) bị coi
   // "đang chạy" mãi → mọi lệnh Chạy sau bị nuốt trong im lặng, thẻ đứng "chờ server nhận job" hàng phút (15/09).
+  const [videosOf, setVideosOf] = useState("");   // nick đang mở "Quét video trên Dola"
   const inflight = useRef(new Map());
   // Khóa idempotency mỗi nick, giữ trong localStorage tới khi job KẾT THÚC (kể cả khi Dừng / đóng app): gửi lại cùng
   // khóa → server trả job cũ còn sống, không tạo trùng. Chốt chặn trừ lượt 2 lần nằm ở server (live_by_client_id).
@@ -459,6 +461,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     // prompt THẬT đang dựng trên nick này (job xoay từ nick gốc) → cột Prompt hiện đúng, không còn placeholder.
     rotatedPrompt: rotatedInto[a.account] ? (row(rotatedInto[a.account]).prompt || "") : "",
     onSel: (v) => setSel((p) => ({ ...p, [a.account]: v })), onChange: (patch) => setRow(a.account, patch),
+    onScanVideos: () => setVideosOf(a.account),
     onRun: () => {
       if (row(a.account).charged && !window.confirm(`${a.account}: lệnh trước ĐÃ tới Dola (đã trừ lượt) — xem dola.com có video chưa. Chạy lại sẽ trừ lượt lần 2, vẫn chạy?`)) return;
       stop.current = false; runOne(a.account);
@@ -561,6 +564,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
       {gen && <div className="text-xs text-muted-foreground">{gen}</div>}
 
       {/* Thẻ theo nick */}
+      <NickVideosDialog name={videosOf} onOpenChange={(o) => { if (!o) setVideosOf(""); }} />
       {!health && <div className="rounded-lg bg-surface p-6 text-center text-sm text-muted-foreground">Server chưa chạy — bấm "Bật server" ở thanh trên.</div>}
       {health && accounts.length === 0 && <div className="rounded-lg bg-surface p-6 text-center text-sm text-muted-foreground">Chưa có nick — sang Kho tài khoản, bấm "Thêm bằng Facebook" hoặc "Nhập kho".</div>}
       {view === "grid" ? (
@@ -693,7 +697,7 @@ function CookieTag({ a }) {
 }
 
 // Dạng bảng: một dòng một nick, cùng dữ liệu và thao tác với thẻ nhưng nhìn được 15–20 nick không cần cuộn.
-function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotatedPrompt, lowCredit, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
+function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotatedPrompt, lowCredit, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew , onScanVideos}) {
   const n = a.account;
   const chip = stateChip(a, s);
   const tint = s.phase === "done" ? " bg-tertiary/5" : s.phase === "error" ? " bg-error/5" : "";
@@ -768,6 +772,7 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotated
       </td>
       <td className={td + " whitespace-nowrap text-right"}>
         {s.phase !== "running" && <Button variant="ghost" size="icon" className={icon + " text-primary"} title="Chạy nick này" onClick={onRun}><Play className="h-3.5 w-3.5" /></Button>}
+        <Button variant="ghost" size="icon" className={icon + " text-primary"} title="Quét video trên Dola của nick (lấy lại video job lỗi/quá giờ — không tốn lượt)" onClick={onScanVideos}><Film className="h-3.5 w-3.5" /></Button>
         <Button variant="ghost" size="icon" className={icon} title="Đăng nhập lại" onClick={onRelogin}><RotateCw className="h-3.5 w-3.5" /></Button>
         <Button variant="ghost" size="icon" className={icon} title="Proxy riêng" onClick={onProxy}><Settings className="h-3.5 w-3.5" /></Button>
         <Button variant="ghost" size="icon" className={icon} title="Xoá nick" onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>
@@ -776,7 +781,7 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotated
   );
 }
 
-function NickCard({ a, s, selected, elapsed, rotatedFrom, rotatedPrompt, lowCredit, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
+function NickCard({ a, s, selected, elapsed, rotatedFrom, rotatedPrompt, lowCredit, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew , onScanVideos}) {
   const n = a.account;
   const cardChip = stateChip(a, s);
   const border = s.phase === "done" ? " ring-1 ring-tertiary/25" : s.phase === "error" ? " ring-1 ring-error/30" : "";
@@ -809,6 +814,7 @@ function NickCard({ a, s, selected, elapsed, rotatedFrom, rotatedPrompt, lowCred
         <CookieTag a={a} />
         <span className="ml-auto" />
         {s.phase !== "running" && <Button variant="ghost" size="icon" className={icon + " text-primary"} title="Chạy nick này" onClick={onRun}><Play className="h-3.5 w-3.5" /></Button>}
+        <Button variant="ghost" size="icon" className={icon + " text-primary"} title="Quét video trên Dola của nick (lấy lại video job lỗi/quá giờ — không tốn lượt)" onClick={onScanVideos}><Film className="h-3.5 w-3.5" /></Button>
         <Button variant="ghost" size="icon" className={icon} title="Đăng nhập lại" onClick={onRelogin}><RotateCw className="h-3.5 w-3.5" /></Button>
         <Button variant="ghost" size="icon" className={icon} title="Proxy riêng" onClick={onProxy}><Settings className="h-3.5 w-3.5" /></Button>
         <Button variant="ghost" size="icon" className={icon} title="Xoá nick" onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>

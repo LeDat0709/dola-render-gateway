@@ -64,6 +64,11 @@ ACCOUNTS_DIR = Path(os.getenv("DOLA_ACCOUNTS_DIR", "accounts"))
 # Số video/nick mỗi ngày khi CHƯA biết số credit thật (fallback). Biết credit thì dùng credit.
 DAILY_LIMIT = int(os.getenv("DOLA_DAILY_LIMIT", "4"))
 
+# Job báo "đã gửi, chưa xác nhận" thì tự đi nhặt video về: chỉ nhận hội thoại tạo trong khoảng này
+# quanh lúc gửi. Rộng quá dễ vớ nhầm video của job trước/sau trên cùng nick; hẹp quá thì bỏ sót
+# video dựng lâu. 20 phút phủ được cả video 30s (Dola dựng ~15 phút).
+CUU_VIDEO_CUA_SO_SEC = int(os.getenv("DOLA_CUU_VIDEO_CUA_SO", "1200"))
+
 # Số Chrome mở cùng lúc để GỬI video (không phải số video cùng lúc). Với DOLA_HTTP_POLL=1 trình
 # duyệt được trả lại ngay sau khi gửi (~20s) nên số video chạy song song = số nick sẵn sàng.
 MAX_CONCURRENCY = int(os.getenv("DOLA_MAX_CONCURRENCY", "3"))

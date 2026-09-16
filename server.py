@@ -414,7 +414,6 @@ def _hard_timeout(duration) -> int:
 CUU_VIDEO_SAU = (120, 300, 600)
 
 
-CUU_VIDEO_CUA_SO_SEC = 20 * 60   # video phải được tạo trong khoảng này quanh lúc gửi mới coi là của job
 
 
 def _chon_video(ds: list, row: dict, sau_khi: float) -> dict | None:
@@ -432,7 +431,7 @@ def _chon_video(ds: list, row: dict, sau_khi: float) -> dict | None:
                      and str(v.get("conversation_id")) == str(row["conversation_id"])), None)
     ung = [v for v in ds
            if v.get("video_url")
-           and sau_khi - 120 <= (v.get("created_at") or 0) <= sau_khi + CUU_VIDEO_CUA_SO_SEC
+           and sau_khi - 120 <= (v.get("created_at") or 0) <= sau_khi + config.CUU_VIDEO_CUA_SO_SEC
            and not store.task_by_conversation(str(v.get("conversation_id")))]
     return min(ung, key=lambda v: abs((v.get("created_at") or 0) - sau_khi), default=None)
 
@@ -455,10 +454,18 @@ async def _cuu_video_da_tra_luot(task_id: str, account: str, prompt: str, sau_kh
                 local = await _download(v["video_url"], account, prompt)
             except Exception:
                 return
+            # Ghi rõ video được tạo LÚC NÀO và lệch bao nhiêu so với lúc gửi — để người dùng tự kiểm tool có
+            # nhặt đúng video của job này không (ghép không theo tên hội thoại được, xem _chon_video).
+            tao_luc = int(v.get("created_at") or 0)
+            lech = int(tao_luc - sau_khi) if tao_luc else 0
+            ghi_chu = (f"Tự nhặt lại từ Dola — video tạo lúc "
+                       f"{time.strftime('%H:%M %d/%m', time.localtime(tao_luc)) if tao_luc else '?'}"
+                       f" ({'sau' if lech >= 0 else 'trước'} lúc gửi {abs(lech) // 60}p{abs(lech) % 60}s)"
+                       f" · hội thoại {str(v.get('conversation_id'))[:10]}")
             store.update(task_id, status="completed", finished_at=time.time(),
-                         conversation_id=v["conversation_id"], error=None, failure_code=None,
+                         conversation_id=v["conversation_id"], error=ghi_chu, failure_code=None,
                          video_url=_public_video_url({"local_path": str(local), "video_url": v["video_url"]}))
-            print(f"[{account}] đã CỨU video của job {task_id} từ Dola (lượt đã trừ, không tốn thêm)", flush=True)
+            print(f"[{account}] CỨU được video job {task_id}: {ghi_chu}", flush=True)
             return
 
 async def _run_task(task_id, model, prompt, ratio, duration, reference_images, client, account=None):
@@ -1340,8 +1347,11 @@ async def admin_account_videos(name: str, limit: int = 30, x_admin_key: str | No
     except RuntimeError as e:
         raise HTTPException(400, str(e))
     by_conv = {t["conversation_id"]: t for t in store.recent_tasks(2000) if t.get("conversation_id")}
+    used_conv = set()   # 1 hội thoại nhiều video: chỉ video MỚI NHẤT là của job trong tool, video cũ hơn để "remote"
     for v in videos:
-        t = by_conv.get(v["conversation_id"]) or {}
+        cid = v["conversation_id"]
+        t = ({} if cid in used_conv else by_conv.get(cid)) or {}
+        used_conv.add(cid)
         local = "/videos/" in str(t.get("video_url") or "")
         # Prompt lấy từ job trong tool; job đã bị dọn (tắt server) hoặc video tạo ở máy khác thì rơi về TÊN
         # hội thoại — Dola đặt tên theo chính prompt, đủ để gộp nhóm trong Kho video.
