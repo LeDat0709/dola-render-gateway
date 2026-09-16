@@ -70,4 +70,12 @@ async def main():
         print(f"\n[✗] Lỗi trong quá trình tạo video: {e}")
 
 if __name__ == "__main__":
+    # CHỐT: file này GỬI VIDEO THẬT lên Dola bằng cookies_dola.txt (tốn lượt, mở Chrome có cửa sổ). Tên test_*.py nên
+    # vòng "chạy toàn bộ test" (for t in test_*.py) từng kéo nó chạy theo → mỗi lần chạy test là một hội thoại tạo
+    # video thật trên tài khoản (16/09). Giờ phải gõ --send mới chạy, như test_web_submit.py / test_android_submit.py.
+    if "--send" not in sys.argv:
+        print("[bỏ qua] test_video_with_cookie.py gửi video THẬT (tốn lượt). Chạy: "
+              ".venv/bin/python test_video_with_cookie.py --send [prompt]")
+        sys.exit(0)
+    sys.argv.remove("--send")
     asyncio.run(main())
