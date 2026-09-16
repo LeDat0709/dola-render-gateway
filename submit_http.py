@@ -243,7 +243,12 @@ async def submit_via_http(account: str, prompt: str, ratio: str | None, duration
             if on_submitted:
                 on_submitted(account, False)
             raise SubmitHttpRejected(f"Bị chặn/nghi (verify/captcha/a_bogus lệch bản) — signer.last_backend={signer.last_backend()}: {text[:200]}")
-        raise RuntimeError(f"Submit gửi được nhưng không lấy được conversation_id: {text[:200]}")
+        # HTTP 200 nhưng không đọc được conversation_id: lệnh CÓ THỂ đã tới Dola (đã tính lượt) → tuyệt đối
+        # không gửi lại. Hay gặp khi mạng/proxy cắt giữa luồng trả về, hoặc Dola trả lỗi dạng khác.
+        raise RuntimeError(
+            "Dola nhận lệnh nhưng trả về không đọc được — KHÔNG gửi lại để tránh trừ lượt 2 lần. "
+            "Xem dola.com của nick: có video thì thôi, chưa có thì chạy lại. "
+            f"Hay gặp khi proxy/mạng chập chờn. Dola trả: {text[:160]}")
     print(f"[{account}] submit_via_http OK conversation_id={conv_id} (ký {signer.last_backend()})", flush=True)
     return conv_id
 

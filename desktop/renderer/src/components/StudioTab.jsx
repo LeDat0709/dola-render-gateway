@@ -708,10 +708,12 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotated
           </div>
         ) : <span className="text-muted-foreground">—</span>}
       </td>
-      <td className={td + " min-w-[260px]"}>
+      {/* PHẢI có max-w: truncate = white-space:nowrap, mà ô bảng tự co giãn thì cột nở bằng ĐÚNG chiều dài
+          chuỗi không ngắt (prompt 9000 ký tự) → tràn cả bảng ra ngoài màn hình. max-w cho truncate chỗ bấu. */}
+      <td className={td + " w-[300px] min-w-[260px] max-w-[300px]"}>
         {rotatedPrompt
           ? <div className="rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-[12px] leading-tight" title={rotatedPrompt.slice(0, 300)}>
-              <span className="block truncate">{rotatedPrompt}</span>
+              <span className="block min-w-0 truncate">{rotatedPrompt.slice(0, 300)}</span>
               <span className="font-mono text-[10px] text-primary">↳ prompt của job xoay từ {rotatedFrom}</span>
             </div>
           : <Input className="h-8 text-[12.5px]" value={s.prompt} placeholder={`prompt cho ${n}…`} onChange={(e) => onChange({ prompt: e.target.value })} />}
