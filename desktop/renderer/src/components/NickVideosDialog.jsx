@@ -4,6 +4,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { scanNickVideos, redownloadVideo, timeAgo } from "@/lib/api";
+import { runPool } from "@/lib/bundle.js";
 
 // CHECK VIDEO NICK (học đối thủ v1.0.88): quét lịch sử hội thoại của nick — CHỈ ĐỌC, không tốn lượt — để cứu video đã
 // dựng xong trên Dola mà chưa về máy (job báo lỗi / quá giờ / IP chết lúc tải).
@@ -13,23 +14,35 @@ const STATE = {
   remote: ["secondary", "Chỉ trên Dola"],
 };
 
+// `name` nhận MỘT nick (chuỗi) hoặc NHIỀU nick (mảng) — chọn cả loạt rồi quét một lượt, khỏi bấm từng nick.
 export default function NickVideosDialog({ name, onOpenChange }) {
+  const names = Array.isArray(name) ? name.filter(Boolean) : (name ? [name] : []);
+  const khoa = names.join(",");                 // đổi danh sách mới quét lại, không quét lại mỗi lần render
   const [videos, setVideos] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
+  const [xong, setXong] = useState(0);          // đã quét xong mấy nick (hiện tiến trình khi chọn nhiều)
   const [done, setDone] = useState({});   // conversation_id -> link local sau khi tải
 
   const scan = async () => {
-    setErr(""); setVideos(null);
-    try { setVideos((await scanNickVideos(name)).videos || []); }
-    catch (e) { setErr(e?.message || String(e)); setVideos([]); }
+    setErr(""); setVideos(null); setXong(0);
+    const ra = [], loi = [];
+    // 4 nick một lúc: quét là ĐỌC hội thoại (không gửi gì, không tốn lượt) nên không dính giãn nhịp gửi,
+    // nhưng vẫn giới hạn để 18 nick không mở 18 kết nối cùng lúc.
+    await runPool(names, 4, async (n) => {
+      try { ((await scanNickVideos(n)).videos || []).forEach((v) => ra.push({ ...v, account: n })); }
+      catch (e) { loi.push(`${n}: ${e?.message || e}`); }
+      finally { setXong((x) => x + 1); }
+    });
+    if (loi.length) setErr(`${loi.length} nick quét lỗi — ${loi.slice(0, 3).join(" · ")}`);
+    setVideos(ra.sort((a, b) => (b.created_at || 0) - (a.created_at || 0)));
   };
-  useEffect(() => { if (name) { setDone({}); scan(); } }, [name]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (khoa) { setDone({}); scan(); } }, [khoa]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async (v) => {
     setBusy(v.conversation_id);
     try {
-      const r = await redownloadVideo(v.task_id || "", v.video_url, name, v.prompt || v.name || "");
+      const r = await redownloadVideo(v.task_id || "", v.video_url, v.account || names[0] || "", v.prompt || v.name || "");
       setDone((d) => ({ ...d, [v.conversation_id]: r.url }));
     } catch (e) { setErr(`Tải video ${v.conversation_id.slice(-4)} lỗi: ${e?.message || e}`); }
     finally { setBusy(""); }
@@ -37,18 +50,18 @@ export default function NickVideosDialog({ name, onOpenChange }) {
 
   const missing = (videos || []).filter((v) => v.state !== "local" && !done[v.conversation_id]);
   return (
-    <Dialog open={!!name} onOpenChange={onOpenChange}>
+    <Dialog open={!!khoa} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl">
         <div className="flex flex-wrap items-center gap-2">
           <Film className="h-4 w-4 text-primary" />
           <span className="text-[15px] font-semibold">Video trên Dola của nick</span>
-          <span className="font-mono text-[12px] text-muted-foreground">{name}</span>
+          <span className="font-mono text-[12px] text-muted-foreground">{names.length > 1 ? `${names.length} nick` : names[0]}</span>
           <span className="ml-auto" />
           <Button variant="outline" size="sm" className="mr-8" onClick={scan} disabled={videos === null}><RefreshCw className={"h-3.5 w-3.5 " + (videos === null ? "animate-spin" : "")} />Quét lại</Button>
         </div>
         <p className="text-[11.5px] text-muted-foreground">Đọc lịch sử hội thoại gần đây của nick — không gửi tin, <b>không tốn lượt</b>. Dùng để lấy lại video của job báo lỗi/quá giờ mà Dola vẫn dựng xong.</p>
         {err && <div className="rounded-md border border-error/40 bg-error/10 px-3 py-2 text-[12px] text-error">{err}</div>}
-        {videos === null && <div className="py-8 text-center text-sm text-muted-foreground">Đang quét hội thoại…</div>}
+        {videos === null && <div className="py-8 text-center text-sm text-muted-foreground">Đang quét hội thoại… {names.length > 1 ? `(${xong}/${names.length} nick)` : ""}</div>}
         {videos && !videos.length && !err && <div className="py-8 text-center text-sm text-muted-foreground">Không thấy video nào trong các hội thoại gần đây.</div>}
         {!!(videos || []).length && (
           <>

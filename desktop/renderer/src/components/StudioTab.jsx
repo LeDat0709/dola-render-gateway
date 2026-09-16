@@ -56,7 +56,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const [clock, setClock] = useState(0);
   // nick → { ctl: AbortController, id: job id | null }. Trước là Set: nick kẹt trong fetch treo (gateway bật lại) bị coi
   // "đang chạy" mãi → mọi lệnh Chạy sau bị nuốt trong im lặng, thẻ đứng "chờ server nhận job" hàng phút (15/09).
-  const [videosOf, setVideosOf] = useState("");   // nick đang mở "Quét video trên Dola"
+  const [videosOf, setVideosOf] = useState("");   // nick (chuỗi) hoặc DANH SÁCH nick (mảng) đang mở "Quét video trên Dola"
   const inflight = useRef(new Map());
   // Khóa idempotency mỗi nick, giữ trong localStorage tới khi job KẾT THÚC (kể cả khi Dừng / đóng app): gửi lại cùng
   // khóa → server trả job cũ còn sống, không tạo trùng. Chốt chặn trừ lượt 2 lần nằm ở server (live_by_client_id).
@@ -523,6 +523,12 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <Button variant="outline" size="sm" onClick={retryFailed}><RefreshCw className="h-3.5 w-3.5" />Chạy lại lỗi</Button>
         <Button variant="outline" size="sm" className="border-error/40 text-error hover:text-error" onClick={stopAll}><Square className="h-3.5 w-3.5" />Dừng</Button>
         <Button size="sm" onClick={runSelected} disabled={!selected.length}><Play className="h-3.5 w-3.5" />Chạy đã chọn{selected.length ? ` (${selected.length})` : ""}</Button>
+        {/* Quét cả loạt nick đã chọn: CHỈ ĐỌC hội thoại, không gửi gì, không tốn lượt — dùng khi nhiều nick
+            báo lỗi mà Dola thật ra đã dựng xong video. */}
+        <Button variant="outline" size="sm" className="border-primary/40 text-primary hover:text-primary"
+                onClick={() => setVideosOf(selected)} disabled={!selected.length}
+                title="Quét video trên Dola của các nick đã chọn (lấy lại video job lỗi/quá giờ — không tốn lượt)">
+          <Film className="h-3.5 w-3.5" />Quét video đã chọn{selected.length ? ` (${selected.length})` : ""}</Button>
       </div>
       <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-muted-foreground">
         <ViewToggle value={view} onChange={setView} />
