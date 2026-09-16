@@ -23,6 +23,17 @@ if [ ! -x "$py/bin/python3" ]; then
 fi
 
 echo "==> Cài thư viện Python vào runtime"
+# Chốt chặn rò rỉ: bộ lọc đóng gói là "**/*.py" trừ test_/check_/fix_, nên MỌI file .py lạ ở gốc repo đều chui
+# vào app. Đã từng có script VPS kèm mật khẩu root nằm đây. File chưa được git theo dõi = không thuộc tool →
+# dừng build, bắt dọn trước, thay vì lặng lẽ gói nó cho cả team.
+la=$(cd "$root" && git ls-files --others --exclude-standard -- '*.py' 2>/dev/null)
+if [ -n "$la" ]; then
+  echo "DỪNG: có file .py chưa được git theo dõi ở repo — chúng sẽ bị đóng gói vào app:" >&2
+  echo "$la" | sed 's/^/  /' >&2
+  echo "Hãy xoá, chuyển đi, hoặc 'git add' nếu thật sự thuộc tool." >&2
+  exit 1
+fi
+
 "$py/bin/python3" -m pip install -q --disable-pip-version-check --upgrade -r "$root/requirements.txt"
 
 echo "==> Tải Chromium cho patchright (đóng gói kèm — Mac chưa có Chrome vẫn chạy)"

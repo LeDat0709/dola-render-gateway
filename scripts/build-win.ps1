@@ -31,6 +31,14 @@ $pth = (Get-ChildItem "$py\python*._pth" | Select-Object -First 1).FullName
 if (-not (Select-String -Path $pth -Pattern 'app-python' -Quiet)) { Add-Content $pth "..\app-python" }
 
 Write-Host "==> Cài thư viện Python vào runtime"
+# Chốt chặn rò rỉ: bộ lọc đóng gói là "**/*.py" trừ test_/check_/fix_, nên MỌI file .py lạ ở gốc repo đều chui
+# vào app (đã từng có script VPS kèm mật khẩu root nằm đây). Chưa được git theo dõi = không thuộc tool → dừng.
+$la = & git -C $root ls-files --others --exclude-standard -- '*.py'
+if ($la) {
+  Write-Error "DUNG: co file .py chua duoc git theo doi - chung se bi dong goi vao app:`n$($la -join "`n")`nHay xoa, chuyen di, hoac 'git add' neu that su thuoc tool."
+  exit 1
+}
+
 & "$py\python.exe" -m pip install --no-warn-script-location --upgrade -r (Join-Path $root "requirements.txt")
 
 Write-Host "==> Tải Chromium cho patchright (đóng gói kèm, máy đích không cần cài gì)"
