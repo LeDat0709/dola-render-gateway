@@ -402,7 +402,16 @@ def rotate_proxy_session(account: str, every: int) -> str:
 # IP của job đó giữa chừng (đã trừ lượt). Chỉ tự đổi khi sổ = 0; bấm "Đổi IP" tay thì vẫn đổi (giao diện đã cảnh báo).
 _proxy_leases: dict[str, int] = {}
 # IP proxy xoay còn sống ít hơn ngần này (theo nhà bán báo) mà sắp mở nick → xin IP mới TRƯỚC (đủ mở Chrome + gửi).
-PROXY_MIN_LIFE_SEC = int(os.getenv("DOLA_PROXY_MIN_LIFE", "180"))
+# IP proxy xoay phải còn sống ÍT NHẤT ngần này khi mở nick, không thì đổi IP trước. Phải PHỦ trọn một job: phiên thật 16/09
+# IP proxyxoay sống ~25–30 phút, job 30s kèm hỏi-đáp chạy 15–33 phút; ngưỡng cũ 180s cho IP còn 20 phút chạy rồi chết giữa
+# lúc dựng. 30s dựng lâu hơn nên ngưỡng riêng.
+PROXY_MIN_LIFE_SEC = int(os.getenv("DOLA_PROXY_MIN_LIFE", "600"))
+PROXY_MIN_LIFE_30S_SEC = int(os.getenv("DOLA_PROXY_MIN_LIFE_30S", "1200"))
+
+
+def min_life_for(duration) -> int:
+    """Số giây IP proxy xoay cần còn sống để chạy hết một job có độ dài `duration`."""
+    return PROXY_MIN_LIFE_30S_SEC if duration == 30 else PROXY_MIN_LIFE_SEC
 
 
 def _effective_rotating(account: str) -> str:
@@ -461,15 +470,17 @@ def ip_dirty(st: dict) -> bool:
     return any(_dirty_ips.get(k, 0) > now for k in _ip_keys(st))
 
 
-def rotate_if_expiring(account: str) -> bool:
-    """TRƯỚC khi mở nick: IP proxy xoay sắp hết tuổi (< PROXY_MIN_LIFE_SEC) HOẶC là IP bẩn → xin IP mới, để cổng không chết
-    giữa lúc mở Chrome/gửi prompt và nick không nhận IP Dola vừa chặn (đối thủ: xoay_truoc_job). Không gọi mạng nếu IP ổn."""
+def rotate_if_expiring(account: str, min_life: int | None = None) -> bool:
+    """TRƯỚC khi mở nick: IP proxy xoay KHÔNG ĐỦ SỐNG HẾT JOB (< min_life, xem min_life_for) HOẶC là IP bẩn → xin IP mới, để
+    cổng không chết giữa lúc gửi/dựng/tải và nick không nhận IP Dola vừa chặn (đối thủ: xoay_truoc_job). Không gọi mạng nếu
+    IP ổn. Còn job khác trên key thì _rotate_raw giữ IP (không cắt job đó) — IP chết giữa chừng do rotate_dead_proxy lo."""
+    need = min_life or PROXY_MIN_LIFE_SEC
     key = _effective_rotating(account)
     st = rotating_status(key) if key else {}
     if not st:
         return False
     dirty = ip_dirty(st)
-    if not dirty and st.get("expires_in", PROXY_MIN_LIFE_SEC) >= PROXY_MIN_LIFE_SEC:
+    if not dirty and st.get("expires_in", need) >= need:
         return False
     why = "IP bẩn (vừa bị Dola chặn)" if dirty else f"IP còn {st['expires_in']}s"
     label = f"{account} ({why}, đổi trước khi mở nick)"
@@ -486,12 +497,14 @@ def rotate_if_expiring(account: str) -> bool:
     return True
 
 
-def _rotate_raw(raw: str, label: str) -> bool:
+def _rotate_raw(raw: str, label: str, ignore_leases: bool = False) -> bool:
     """Xin IP mới cho MỘT chuỗi proxy xoay (tmproxy://KEY, KEY trần, hoặc link get.php?key=…). Không phải
-    proxy xoay, lỗi mạng, hoặc CÒN JOB KHÁC đang chạy trên proxy này → giữ IP cũ. `label` chỉ để in log."""
+    proxy xoay, lỗi mạng, hoặc CÒN JOB KHÁC đang chạy trên proxy này → giữ IP cũ. `label` chỉ để in log.
+    ignore_leases=True CHỈ khi IP đã chết thật (rotate_dead_proxy): lúc đó mọi job trên key đều đang hỏng, giữ IP chẳng
+    bảo vệ được ai."""
     raw = normalize_proxy_input(raw)
     busy = _proxy_leases.get(raw, 0)
-    if busy:
+    if busy and not ignore_leases:
         print(f"[proxy] {label}: KHÔNG đổi IP — {busy} job khác đang chạy trên proxy này (đổi sẽ cắt IP của chúng)", flush=True)
         return False
     try:
@@ -508,6 +521,26 @@ def _rotate_raw(raw: str, label: str) -> bool:
     except Exception as exc:
         print(f"[proxy] {label}: đổi IP thất bại, giữ IP cũ: {str(exc)[:100]}", flush=True)
         return False
+
+
+# IP chết giữa lúc dựng: nhiều job cùng key cùng phát hiện → chỉ ĐỔI MỘT LẦN mỗi DEAD_ROTATE_COOLDOWN_SEC, job sau dùng IP
+# mới đó. Không có trần này thì job thứ hai đổi tiếp → giết đúng cổng mới job thứ nhất vừa chuyển sang.
+DEAD_ROTATE_COOLDOWN_SEC = 90
+_DEAD_ROTATED_AT: dict[str, float] = {}
+
+
+def rotate_dead_proxy(account: str, reason: str = "") -> bool:
+    """IP proxy xoay của nick đã CHẾT (lỗi KẾT NỐI liên tiếp khi theo dõi) → xin IP MỚI thật từ nhà bán, bỏ qua luật giữ
+    chỗ. Phiên 16/09: theo dõi "đổi đường" lấy lại ĐÚNG cổng chết từ bộ nhớ đệm suốt 17 phút. Video đang dựng nằm trên
+    Dola, đổi IP để đọc không ảnh hưởng video. Proxy tĩnh/đi thẳng → False. Nhà bán chưa cho đổi (nhịp chờ) → giữ IP cũ."""
+    key = _effective_rotating(account)
+    if not key:
+        return False
+    now = time.time()
+    if now - _DEAD_ROTATED_AT.get(key, 0) < DEAD_ROTATE_COOLDOWN_SEC:
+        return False   # job khác cùng key vừa đổi vì IP chết → dùng IP mới đó
+    _DEAD_ROTATED_AT[key] = now
+    return _rotate_raw(key, f"{account} (IP chết giữa lúc theo dõi: {reason[:60]})", ignore_leases=True)
 
 
 def rotate_tmproxy_now(account: str) -> bool:

@@ -1029,13 +1029,13 @@ class BrowserPool:
                 raise e
 
         async def _run_worker(acc, on_balance, seen):
-            from browser import proxy_lease, rotate_if_expiring
+            from browser import min_life_for, proxy_lease, rotate_if_expiring
             # Chờ chỗ trên IP TRƯỚC mọi thứ; lúc chờ nhả slot Chrome (_hold_browser ngay dưới xin lại).
             async with _egress_slot(acc, on_wait=_release_browser):
                 await _pace(account_proxy_raw(acc) or "")
                 await _hold_browser()
                 # IP proxy xoay sắp hết tuổi mà không job nào khác đang dùng → đổi TRƯỚC khi mở nick (không chết giữa lúc gửi).
-                await asyncio.to_thread(rotate_if_expiring, acc)
+                await asyncio.to_thread(rotate_if_expiring, acc, min_life_for(duration))   # IP phải đủ sống hết job
                 if on_opening:
                     try:
                         on_opening(acc)

@@ -1439,30 +1439,45 @@ async def _fetch_single(session, cookie: str, ms_token: str, fp: str, conversati
     """Đọc hội thoại 1 lần qua HTTP (đi `proxy`) → dict như POLL_JS (texts/videos/images/videoModels); lỗi mạng/HTTP → None.
     proxy == PROXY_PENDING (chưa lấy được IP proxy) → None ngay, KHÔNG gửi request nào."""
     if proxy == PROXY_PENDING:
+        _LAST_FETCH_FAIL[conversation_id] = "pending"
         return None
     headers, params, body = _single_request(cookie, ms_token, fp, conversation_id, limit)
+    got_response = False
     try:
         async with session.post(_SINGLE_URL, params=params, data=json.dumps(body), headers=headers,
                                 proxy=proxy, timeout=aiohttp.ClientTimeout(total=30)) as r:
+            got_response = True   # có trả lời HTTP = proxy còn sống (lỗi sau đây là của Dola, không phải proxy chết)
             if r.status != 200:
                 print(f"  Polling http: HTTP {r.status}", flush=True)
+                _LAST_FETCH_FAIL[conversation_id] = "http"
                 return None
-            return _parse_single(await r.json(content_type=None))
+            out = _parse_single(await r.json(content_type=None))
+        _LAST_FETCH_FAIL.pop(conversation_id, None)
+        return out
     except Exception as e:  # noqa: BLE001
         print(f"  Polling exception (http): {str(e)[:120]}", flush=True)
+        _LAST_FETCH_FAIL[conversation_id] = "http" if got_response else "net"
         return None
+
+
+# Lần đọc hội thoại hỏng gần nhất của từng conversation_id: "net" = không nối được/đứt qua proxy (proxy có thể đã chết),
+# "http" = Dola có trả lời (proxy sống), "pending" = chưa có IP proxy. Khoá theo conversation_id nên job song song không lẫn.
+_LAST_FETCH_FAIL: dict[str, str] = {}
 
 
 # Chưa lấy được IP proxy của nick: CHỜ rồi lấy lại, không đọc hội thoại. KHÁC None (None = nick không khai proxy nào).
 PROXY_PENDING = "__proxy_pending__"
 
 
-def _next_poll_proxy(account: str, current):
+def _next_poll_proxy(account: str, current, proxy_dead: bool = False):
     """Đường đọc hội thoại kế tiếp khi đường hiện tại lỗi liên tiếp: LẤY LẠI IP proxy của nick (nhà bán có thể đã cấp IP
     mới; proxy riêng, không thì proxy chung). Không bao giờ rơi về IP máy khi nick đã khai proxy — trước đây bước cuối là
     "đi thẳng", nên giao diện hiện IP proxy mà Dola thấy IP máy đọc hội thoại của cả loạt nick. Lấy IP lỗi → PROXY_PENDING
     (vòng theo dõi chờ rồi thử lại tới hết giờ; video vẫn nằm trên Dola, vòng cứu video nhặt sau)."""
-    from browser import account_proxy_url
+    from browser import account_proxy_url, rotate_dead_proxy
+    if proxy_dead:
+        # Lỗi KẾT NỐI liên tiếp = IP proxy xoay đã chết → xin IP MỚI thật (bộ nhớ đệm vẫn giữ cổng chết tới khi hết hạn).
+        rotate_dead_proxy(account, f"{POLL_NET_FAILS} lần lỗi kết nối liên tiếp khi theo dõi")
     try:
         fresh = account_proxy_url(account) or None
     except Exception as e:  # noqa: BLE001
@@ -1615,17 +1630,19 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
         # cứu video nhặt sau.
         print(f"[{account}] chưa lấy được IP proxy để theo dõi — chờ rồi lấy lại, KHÔNG đọc bằng IP máy: {e}", flush=True)
         poll_proxy = PROXY_PENDING
-    net_fails = 0
+    net_fails = dead_fails = 0
     async with aiohttp.ClientSession() as session:
         while time.time() - start < timeout:
             await asyncio.sleep(5)
             poll = await _fetch_single(session, cookie, ms_token, fp, conversation_id, poll_proxy)
             if poll is None:
                 net_fails += 1
+                dead_fails = dead_fails + 1 if _LAST_FETCH_FAIL.get(conversation_id) == "net" else 0
                 if net_fails >= POLL_NET_FAILS:
-                    poll_proxy, net_fails = _next_poll_proxy(account, poll_proxy), 0
+                    poll_proxy = _next_poll_proxy(account, poll_proxy, proxy_dead=dead_fails >= POLL_NET_FAILS)
+                    net_fails = dead_fails = 0
                 continue
-            net_fails = 0
+            net_fails = dead_fails = 0
             now = time.time()
             if on_poll and now - last_cb >= 30:
                 on_poll(now)
@@ -1731,7 +1748,8 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     last_msg = ""            # latest substantive Dola reply (user messages are not text blocks, see POLL_JS)
     stale_msg, stale_n = "", 0
     credits_used = None      # giá Dola báo lúc bắt đầu dựng → pool học giá + trừ credit nick
-    net_fails, alt_fails, alt_proxy, alt_session = 0, 0, None, None   # đường dự phòng khi mạng trong Chrome chết (IP proxy nick chết)
+    net_fails, alt_fails, alt_proxy, alt_session = 0, 0, None, None
+    chrome_dead = alt_dead = 0   # số lần hỏng LIÊN TIẾP do không nối được (không tính Dola trả mã HTTP lỗi)   # đường dự phòng khi mạng trong Chrome chết (IP proxy nick chết)
     try:
         while time.time() - start < timeout:
             await asyncio.sleep(5)
@@ -1744,7 +1762,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                         "Trình duyệt của nick bị đóng giữa lúc theo dõi (Chrome tắt/crash) — chạy lại nick này."
                     ) from e
                 print(f"  Polling exception: {e}", flush=True)
-                poll = {"ok": False}
+                poll = {"ok": False, "net_error": True}   # fetch trong trang ném lỗi = không nối được (proxy của Chrome có thể chết)
             if not poll.get("ok"):
                 try:   # trang treo thì evaluate trong _is_logged_out cũng treo → có trần
                     logged_out = await asyncio.wait_for(_is_logged_out(page, context), timeout=15)
@@ -1753,20 +1771,24 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 if logged_out:
                     raise LoggedOutError(_LOGOUT_MSG)
                 net_fails += 1
+                chrome_dead = chrome_dead + 1 if poll.get("net_error") else 0
                 if net_fails < POLL_NET_FAILS:
                     continue
                 # Chrome đi IP proxy của nick mà IP đó chết GIỮA lúc Dola dựng: trước đây quay vòng tới hết giờ rồi báo
                 # quá giờ dù video vẫn ra trên Dola (đã trừ lượt). Đọc hội thoại bằng HTTP qua đường khác, không gửi lại gì.
                 if alt_session is None:
                     alt_session = aiohttp.ClientSession()
-                    alt_proxy = _next_poll_proxy(account, "__chrome__")
+                    # Chrome không đổi được proxy khi đang chạy → đọc bằng HTTP; lỗi KẾT NỐI liên tiếp thì xin IP mới luôn.
+                    alt_proxy = _next_poll_proxy(account, "__chrome__", proxy_dead=chrome_dead >= POLL_NET_FAILS)
                 fresh = await context.cookies("https://www.dola.com")
                 cookie_header = "; ".join(f"{c['name']}={c['value']}" for c in fresh if c.get("name") and c.get("value"))
                 poll = await _fetch_single(alt_session, cookie_header, ms_token, fp, conversation_id, alt_proxy)
                 if poll is None:
                     alt_fails += 1
+                    alt_dead = alt_dead + 1 if _LAST_FETCH_FAIL.get(conversation_id) == "net" else 0
                     if alt_fails >= POLL_NET_FAILS:
-                        alt_proxy, alt_fails = _next_poll_proxy(account, alt_proxy), 0
+                        alt_proxy = _next_poll_proxy(account, alt_proxy, proxy_dead=alt_dead >= POLL_NET_FAILS)
+                        alt_fails = alt_dead = 0
                     continue
                 alt_fails = 0
             else:
@@ -1993,7 +2015,8 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             try:
                 result = await _generate_via_fetch(account, prompt, ratio, duration or 10, fetch_model,
                                                    timeout, on_conversation_id, on_poll, on_balance,
-                                                   on_submitted, on_browser_free, on_browser_hold)
+                                                   on_submitted=on_submitted, on_browser_free=on_browser_free,
+                                                   on_browser_hold=on_browser_hold)
                 return await _strip_logo(result, model_key, account)
             except _FetchSubmitFailed as exc:
                 last_fetch_err = exc
