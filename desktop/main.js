@@ -50,6 +50,44 @@ const thieuChromeThat = () => (_IS_WIN ? !hasChromeWin() : process.platform === 
 
 // "Server chưa chạy?" là câu đoán vô dụng khi người dùng cần biết VÌ SAO. Lấy dòng lỗi thật cuối cùng của
 // tiến trình gateway (ImportError thiếu DLL, cổng bị chiếm, thiếu file…) để họ còn biết đường sửa/gửi lại cho mình.
+// Mọi lệnh gọi gateway từ main.js đều phải có HẠN: cổng có thể mở mà không trả lời (python đang kẹt, AV giữ),
+// lúc đó fetch treo vô thời hạn và cả nút bấm trong app đứng im không báo gì.
+// Electron bị tắt cưỡng bức (End Task, mất điện, Windows Update ép reboot) thì python.exe con SỐNG SÓT và vẫn
+// giữ cổng. Lần mở app sau, uvicorn mới chết ngay vì "address already in use" — và LẶP LẠI MÃI mỗi lần mở tới
+// khi có người tự vào Task Manager giết nó. Người dùng chỉ thấy "Server chưa chạy?" nên không ai đoán ra.
+// Chỉ giết tiến trình ĐÚNG LÀ gateway của tool này (dòng lệnh có "uvicorn server:app"), không đụng gì khác.
+function donCongBiChiem(port) {
+  try {
+    if (process.platform === "win32") {
+      const out = require("child_process").execSync(
+        `netstat -ano -p tcp | findstr LISTENING | findstr :${port}`, { encoding: "utf8", windowsHide: true });
+      for (const pid of new Set(out.split(/\r?\n/).map((l) => l.trim().split(/\s+/).pop()).filter((x) => /^\d+$/.test(x)))) {
+        const tl = require("child_process").execSync(
+          `wmic process where processid=${pid} get commandline /value`, { encoding: "utf8", windowsHide: true });
+        if (/uvicorn\s+server:app/.test(tl)) {
+          require("child_process").execSync(`taskkill /pid ${pid} /T /F`, { windowsHide: true });
+          gwLog(`đã dọn gateway mồ côi pid ${pid} đang giữ cổng ${port}`);
+        }
+      }
+    } else {
+      const out = require("child_process").execSync(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t || true`, { encoding: "utf8" });
+      for (const pid of out.split(/\s+/).filter(Boolean)) {
+        const cmd = require("child_process").execSync(`ps -p ${pid} -o command= || true`, { encoding: "utf8" });
+        if (/uvicorn\s+server:app/.test(cmd)) {
+          process.kill(Number(pid), 9);
+          gwLog(`đã dọn gateway mồ côi pid ${pid} đang giữ cổng ${port}`);
+        }
+      }
+    }
+  } catch (_) { /* không có tiến trình nào giữ cổng, hoặc lệnh hệ thống thiếu — cứ thử spawn */ }
+}
+
+function fetchGw(url, opts = {}, ms = 6000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  return fetch(url, { ...opts, signal: ac.signal }).finally(() => clearTimeout(t));
+}
+
 function lyDoGatewayChet(e) {
   const loi = _gwTail.filter((l) => /Error|Traceback|error:|Errno|Address already in use|ModuleNotFound|DLL/i.test(l));
   const cuoi = (loi.length ? loi : _gwTail).slice(-3).join(" | ").slice(0, 300);
@@ -82,10 +120,11 @@ function spawnPy(args, opts = {}) {
 // Vòng đời uvicorn ở một chỗ (gateway.cjs): đăng nhập / nạp cookie tạm dừng gateway rồi TỰ BẬT LẠI.
 const gateway = createGateway({
   isRemote: () => isRemote(),
-  log: (m) => process.stdout.write(`[${logTs()}] ${m}\n`),
+  log: (m) => gwLog(m),
   spawnProc: () => {
     if (!fs.existsSync(VENV_PY)) return { error: `Không thấy Python tại ${VENV_PY} — chạy setup trước (bản dev) hoặc cài lại app.` };
     const port = config().base.split(":").pop();
+    donCongBiChiem(port);   // tiến trình cũ còn giữ cổng thì uvicorn mới chết ngay
     fs.mkdirSync(DATA_DIR, { recursive: true });
     const p = spawnPy(["-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", port, "--app-dir", APP_DIR]);
     openLog(); pipeLog(p.stdout, ""); pipeLog(p.stderr, " ⚠");
@@ -97,7 +136,7 @@ const pausedHandle = (channel, fn) => ipcMain.handle(channel, gateway.withPaused
 
 // Chế độ gửi hiện tại (http/fetch) từ gateway. Hỏi lỗi → coi như "fetch" (an toàn: thà pause thừa còn hơn xung đột profile).
 async function submitModeNow() {
-  try { const j = await (await fetch(config().base + "/health", { cache: "no-store" })).json(); return (j.submit_mode || "fetch").toLowerCase(); }
+  try { const j = await (await fetchGw(config().base + "/health", { cache: "no-store" })).json(); return (j.submit_mode || "fetch").toLowerCase(); }
   catch { return "fetch"; }
 }
 // Đăng nhập / nạp cookie phải nhả Chrome profile của nick. Chỉ chế độ "fetch" mới cần vì worker đang GIỮ profile
@@ -120,8 +159,20 @@ function openLog() {
 // Vài dòng cuối gateway in ra, giữ trong bộ nhớ để CÒN NÓI ĐƯỢC LÝ DO khi tiến trình chết ngay lúc khởi động.
 // Lúc đó server.py chưa kịp bật ghi log nên logs/gateway.log TRỐNG, còn process.stdout của Electron thì vô
 // hình trong bản đóng gói → người dùng chỉ thấy "Server chưa chạy? fetch failed" và không ai chẩn đoán nổi.
+// Chỉ giữ trong BỘ NHỚ: server.py đã tự ghi mọi dòng vào logs/gateway.log (class _Tee), ghi thêm ở đây là
+// mỗi dòng vào file hai lần. Bộ đệm này để trả lời NGAY 'vì sao gateway chết' khi python chết trước lúc
+// server.py kịp bật ghi log — lúc đó file còn trống.
 const _gwTail = [];
 const GW_TAIL_MAX = 60;
+// Mọi thông báo vòng đời gateway ("gateway exit 1", "spawn error: …") cũng phải vào _gwTail — trước đây chúng
+// chỉ ra process.stdout nên lyDoGatewayChet() không bao giờ thấy, đúng lúc cần nhất.
+function gwLog(m) {
+  const line = `[${logTs()}] ${m}`;
+  _gwTail.push(line);
+  if (_gwTail.length > GW_TAIL_MAX) _gwTail.shift();
+  process.stdout.write(line + "\n");
+}
+
 function pipeLog(stream, tag) {
   let buf = "";
   stream.on("data", (d) => {
@@ -132,7 +183,6 @@ function pipeLog(stream, tag) {
       buf = buf.slice(i + 1);
       _gwTail.push(line.trimEnd());
       if (_gwTail.length > GW_TAIL_MAX) _gwTail.shift();
-      try { fs.appendFileSync(LOG_FILE, line); } catch (_) { /* đĩa đầy/không ghi được: đừng làm sập app */ }
       process.stdout.write(line);
     }
   });
@@ -161,7 +211,7 @@ async function adminApi(pathName, method = "GET", body = null) {
   const c = config();
   const headers = { "Content-Type": "application/json" };
   if (c.adminKey) headers["x-admin-key"] = c.adminKey;
-  const r = await fetch(c.base + pathName, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetchGw(c.base + pathName, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
   return j;
@@ -233,7 +283,7 @@ async function runImportRemote(name, file, lang) {
   if (c.apiKey) headers.Authorization = "Bearer " + c.apiKey;
   if (c.adminKey) headers["x-admin-key"] = c.adminKey;
   try {
-    const r = await fetch(c.base + "/api/admin/accounts/import-cookie", {
+    const r = await fetchGw(c.base + "/api/admin/accounts/import-cookie", {
       method: "POST", headers,
       body: JSON.stringify({ name, cookies: fs.readFileSync(file, "utf8"), ui_lang: lang || "ja" }),
     });
@@ -959,7 +1009,7 @@ ipcMain.handle("proxy:getGlobal", async () => {
 // (áp dụng ngay), và nhớ vào .env.local cho lần khởi động sau khi server ở máy này.
 ipcMain.handle("config:getAutoRetry", async () => {
   try {
-    const r = await fetch(config().base + "/health", { cache: "no-store" });
+    const r = await fetchGw(config().base + "/health", { cache: "no-store" });
     const j = await r.json();
     return { ok: true, on: j.auto_retry !== false };
   } catch (e) { return { ok: false, on: true, error: String(e).slice(0, 80) }; }
@@ -969,7 +1019,7 @@ ipcMain.handle("config:setAutoRetry", async (_e, { on }) => {
   const headers = { "Content-Type": "application/json" };
   if (c.adminKey) headers["x-admin-key"] = c.adminKey;
   try {
-    const r = await fetch(c.base + "/api/admin/retry", { method: "POST", headers, body: JSON.stringify({ auto_retry: !!on }) });
+    const r = await fetchGw(c.base + "/api/admin/retry", { method: "POST", headers, body: JSON.stringify({ auto_retry: !!on }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
     if (!c.remote) upsertEnvLocal("DOLA_AUTO_RETRY", on ? "1" : "0");
@@ -979,7 +1029,7 @@ ipcMain.handle("config:setAutoRetry", async (_e, { on }) => {
 // MỖI LẦN MỘT NICK: đọc từ /health, đổi qua /api/admin/one-nick (áp dụng ngay), nhớ vào .env.local.
 ipcMain.handle("config:getOneNick", async () => {
   try {
-    const r = await fetch(config().base + "/health", { cache: "no-store" });
+    const r = await fetchGw(config().base + "/health", { cache: "no-store" });
     const j = await r.json();
     return { ok: true, on: j.one_nick === true, nicksPerIp: j.nicks_per_ip || 2, parallelPerIp: j.parallel_per_ip || 1 };
   } catch (e) { return { ok: false, on: false, error: String(e).slice(0, 80) }; }
@@ -994,7 +1044,7 @@ ipcMain.handle("config:setOneNick", async (_e, { on, nicksPerIp, parallelPerIp }
   const k = parseInt(parallelPerIp, 10);
   if (Number.isFinite(k) && k >= 1) body.parallel_per_ip = Math.min(16, k);
   try {
-    const r = await fetch(c.base + "/api/admin/one-nick", { method: "POST", headers, body: JSON.stringify(body) });
+    const r = await fetchGw(c.base + "/api/admin/one-nick", { method: "POST", headers, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
     if (!c.remote) {
@@ -1013,7 +1063,7 @@ ipcMain.handle("proxy:setGlobal", async (_e, { proxy }) => {
     const headers = { "Content-Type": "application/json" };
     if (c.adminKey) headers["x-admin-key"] = c.adminKey;
     try {
-      const r = await fetch(c.base + "/api/admin/global-proxy", { method: "POST", headers, body: JSON.stringify({ proxy: v }) });
+      const r = await fetchGw(c.base + "/api/admin/global-proxy", { method: "POST", headers, body: JSON.stringify({ proxy: v }) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
       return { ok: true, proxy: j.proxy || v, remote: true };
@@ -1133,7 +1183,7 @@ ipcMain.handle("account:verifyAll", async (_e, names) => {
     const env = readEnvLocal();
     const headers = { "Content-Type": "application/json" };
     if (env.DOLA_ADMIN_KEY) headers["x-admin-key"] = env.DOLA_ADMIN_KEY;
-    const r = await fetch(config().base + "/api/admin/verify-all", {
+    const r = await fetchGw(config().base + "/api/admin/verify-all", {
       method: "POST", headers,
       body: JSON.stringify({ names: Array.isArray(names) && names.length ? names : null }),
     });
@@ -1153,7 +1203,7 @@ ipcMain.handle("config:setConcurrency", async (_e, { send, login }) => {
     const env = readEnvLocal();
     const headers = { "Content-Type": "application/json" };
     if (env.DOLA_ADMIN_KEY) headers["x-admin-key"] = env.DOLA_ADMIN_KEY;
-    const r = await fetch(config().base + "/api/admin/concurrency",
+    const r = await fetchGw(config().base + "/api/admin/concurrency",
                           { method: "POST", headers, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
@@ -1171,7 +1221,7 @@ ipcMain.handle("app:notify", (_e, { title, body }) => {
 });
 
 ipcMain.handle("config:getSubmitMode", async () => {
-  try { const j = await (await fetch(config().base + "/health", { cache: "no-store" })).json(); return { ok: true, mode: j.submit_mode || "fetch" }; }
+  try { const j = await (await fetchGw(config().base + "/health", { cache: "no-store" })).json(); return { ok: true, mode: j.submit_mode || "fetch" }; }
   catch (e) { return { ok: false, mode: "fetch", error: String(e).slice(0, 80) }; }
 });
 ipcMain.handle("config:setSubmitMode", async (_e, { mode }) => {
@@ -1179,7 +1229,7 @@ ipcMain.handle("config:setSubmitMode", async (_e, { mode }) => {
   const headers = { "Content-Type": "application/json" };
   if (c.adminKey) headers["x-admin-key"] = c.adminKey;
   try {
-    const r = await fetch(c.base + "/api/admin/submit-mode", { method: "POST", headers, body: JSON.stringify({ mode }) });
+    const r = await fetchGw(c.base + "/api/admin/submit-mode", { method: "POST", headers, body: JSON.stringify({ mode }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
     if (!c.remote) upsertEnvLocal("DOLA_SUBMIT_MODE", mode);
@@ -1194,7 +1244,7 @@ ipcMain.handle("config:setSubmitGap", async (_e, { minSec, maxSec }) => {
     const env = readEnvLocal();
     const headers = { "Content-Type": "application/json" };
     if (env.DOLA_ADMIN_KEY) headers["x-admin-key"] = env.DOLA_ADMIN_KEY;
-    const r = await fetch(config().base + "/api/admin/submit-gap",
+    const r = await fetchGw(config().base + "/api/admin/submit-gap",
                           { method: "POST", headers, body: JSON.stringify({ min_sec: lo, max_sec: hi }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
@@ -1244,9 +1294,36 @@ function setupAutoUpdate() {
 }
 function notifyMain(title, body) { try { new Notification({ title, body, silent: false }).show(); } catch {} }
 
+// Hai bản app chạy song song sẽ cùng spawn gateway vào CÙNG cổng — bản thứ hai chết vì "address already in
+// use" rồi người dùng thấy "Server chưa chạy" không hiểu vì sao. Chỉ cho một phiên; mở lần hai thì dựng cửa sổ cũ.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const w = BrowserWindow.getAllWindows()[0];
+    if (w) { if (w.isMinimized()) w.restore(); w.focus(); }
+  });
+}
+
 app.whenReady().then(() => {
   createWindow();
-  if (!isRemote()) gateway.start();   // mở app là có server, khỏi bấm "Bật server" mỗi lần
+  // Trước đây gọi kiểu bắn-rồi-quên: spawnProc ném lỗi (thiếu quyền, %APPDATA% bị khoá) là lỗi biến mất sạch,
+  // app im lặng không server. Nay bắt lỗi, ghi lại, và thử lại 2 lần — tiến trình cũ có thể chưa nhả cổng.
+  if (!isRemote()) {
+    (async () => {
+      for (let i = 1; i <= 3; i++) {
+        try {
+          const r = await gateway.start();
+          if (r && r.ok) return;
+          gwLog(`bật gateway lần ${i} không được: ${(r && r.error) || "?"}`);
+        } catch (e) {
+          gwLog(`bật gateway lần ${i} lỗi: ${String(e).slice(0, 160)}`);
+        }
+        if (i < 3) await new Promise((r) => setTimeout(r, 2000));
+      }
+      gwLog('bật gateway thất bại sau 3 lần — bấm "Bật server" ở thanh trên để xem lý do.');
+    })();
+  }
   setupAutoUpdate();
 });
 app.on("activate", () => {
