@@ -524,8 +524,9 @@ def test_option_list_gets_a_letter_not_yes():
     assert vw._answer_key(vw._NeedsBrowser(STREAM_MENU).full) in shared
 
 
-def _http_poll(texts, shared):
-    """poll_conversation_http với aiohttp giả: lượt 1 chỉ có `texts`, lượt 2 có thêm video."""
+def _http_poll(texts, shared, video_now=False):
+    """poll_conversation_http với aiohttp giả: lượt 1 chỉ có `texts` (video_now=True thì có luôn video),
+    lượt 2 có thêm video."""
     import json as _j
 
     def msg(text=None, video=None):
@@ -540,7 +541,8 @@ def _http_poll(texts, shared):
     def page(*msgs):
         return {"downlink_body": {"pull_singe_chain_downlink_body": {"messages": list(msgs)}}}
 
-    pages = [page(*[msg(t) for t in texts]),
+    first = [msg(t) for t in texts] + ([msg(video="https://x/v.mp4")] if video_now else [])
+    pages = [page(*first),
              page(*[msg(t) for t in texts], msg(video="https://x/v.mp4"))]
 
     class Resp:
@@ -593,6 +595,38 @@ def test_generating_notice_is_not_a_refusal():
     assert not vw._is_status_text(STREAM_SHORT) and vw._question_needs_browser(STREAM_SHORT)
 
 
+# Ảnh 16/9: trên dola.com nick ĐÃ ra video («動画が生成されました»), nhưng thẻ trong tool vẫn đỏ. Lý do: các
+# nhánh bắt lỗi chạy TRƯỚC khối lấy video, nên một câu than của Dola nằm cùng lượt đọc là job chết oan
+# (lượt thì đã trừ, video thì đã có).
+COMPLAINTS = (
+    "本日はまだ0動画クレジットが残っています。",                    # số dư sau khi trừ — không phải từ chối
+    "この内容では動画の生成はできません。",                          # chặn nội dung
+    "エラーが発生しました。しばらくしてからもう一度お試しください。",   # lỗi tạm thời
+    "パラメーターを変更してもう一度お試しください。",                 # đổi thông số
+)
+
+
+def test_video_wins_over_complaints():
+    for t in COMPLAINTS:
+        out = _http_poll([t], set(), video_now=True)
+        assert out.get("local_path"), f"có video rồi mà vẫn coi là lỗi: {t}"
+        assert out["conversation_id"] == "77"
+
+
+def test_duration_message_is_not_out_of_credit():
+    """"直接生成できません…4–15秒まで対応" là câu THỜI LƯỢNG; chữ 生成できません từng làm job báo "hết điểm"
+    và nick bị ghi hết điểm oan (tasks.db 16/9)."""
+    t = "直接生成できません。現在の動画生成は 4–15 秒まで対応しており、ご指定の30秒には対応していません。"
+    assert vw.CREDIT_FAIL_PATTERN.search(t) and vw._question_needs_browser(t)
+    try:
+        _http_poll([t], set())
+        assert False, "câu thông số phải xin mở lại nick để trả lời"
+    except vw._NeedsBrowser:
+        pass
+    except vw.CreditError:
+        assert False, "vẫn bị đọc thành hết điểm"
+
+
 def test_http_error_is_not_risk_control():
     """Dola/WAF/proxy trả HTTP lỗi ≠ captcha: không được gắn cooldown 30 phút cho nick.
 
@@ -643,7 +677,7 @@ if __name__ == "__main__":
     test_reply_uses_dola_cap_not_30s(); test_own_directive_is_ignored()
     test_answered_memory_survives_reopen(); test_streaming_message_is_answered_once()
     test_option_list_gets_a_letter_not_yes(); test_http_poll_skips_answered_question()
-    test_http_error_is_not_risk_control(); test_generating_notice_is_not_a_refusal(); test_blocked_reason_says_one_thing()
+    test_http_error_is_not_risk_control(); test_video_wins_over_complaints(); test_duration_message_is_not_out_of_credit(); test_generating_notice_is_not_a_refusal(); test_blocked_reason_says_one_thing()
     test_prompt_marks_are_scaled_to_duration(); test_parse_credit_need_from_dola_message()
     test_credits_used_is_read_from_start_message(); test_download_failure_keeps_job_with_cdn_link()
     test_submit_timeout_never_resubmits(); test_uncertain_submit_only_resends_when_probe_is_certain(); test_guest_session_is_detected_not_credit(); test_dead_proxy_mid_render_switches_route_not_lose_video(); test_scan_account_videos_reads_history_only(); print("OK")

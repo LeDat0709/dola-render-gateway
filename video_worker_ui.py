@@ -1493,6 +1493,12 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
                 if balance is not None and on_balance:
                     on_balance(balance, source)
                 credits_used = _credits_used(text) or credits_used
+                # VIDEO ĐÃ RA rồi thì mọi lời than phiền của Dola trong cùng lượt đọc này không còn là lỗi:
+                # trước đây các nhánh raise ở dưới chạy TRƯỚC khối lấy video nên job có video vẫn bị đánh
+                # "Không đủ điểm/quota" / "Dola chặn nội dung" (ảnh 16/9: nick ra video mà thẻ vẫn đỏ).
+                # Vẫn đọc số dư + giá ở trên để kế toán credit không hụt.
+                if poll["videos"]:
+                    continue
                 if GUEST_REFUSAL_PATTERN.search(text):
                     raise GuestRefusedError(f"{_GUEST_MSG}\n↳ Dola: {text[:140]}")
                 if CONTENT_POLICY_PATTERN.search(text) and not _is_duration_capped(text):
@@ -1508,7 +1514,11 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
                 if PROMPT_UNCLEAR_PATTERN.search(text):
                     raise PromptUnclearError(
                         "Dola không hiểu prompt — viết mô tả cảnh quay cụ thể (không mất lượt).\n↳ Dola: " + text[:140])
-                if CREDIT_FAIL_PATTERN.search(text):
+                # "直接生成できません。現在の動画生成は 4–15 秒まで対応しており…" là câu về THỜI LƯỢNG, nhưng chữ
+                # 「生成できません」 nằm trong CREDIT_FAIL_PATTERN → job bị báo "Không đủ điểm/quota" và nick bị
+                # ghi hết điểm oan (thấy trong tasks.db 16/9). Câu Dola đang hỏi/giới hạn thông số thì để nhánh
+                # hỏi-đáp ở dưới xử lý (trả 'はい' → vẫn ra video), không phải lỗi điểm.
+                if CREDIT_FAIL_PATTERN.search(text) and not _question_needs_browser(text):
                     raise CreditError(f"Không đủ điểm/quota. Dola: {text[:120]}")
                 if _is_transient_error(text):
                     raise TransientDolaError(
@@ -1628,6 +1638,12 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 if balance is not None and on_balance:
                     on_balance(balance, source)
                 credits_used = _credits_used(text) or credits_used
+                # VIDEO ĐÃ RA rồi thì mọi lời than phiền của Dola trong cùng lượt đọc này không còn là lỗi:
+                # trước đây các nhánh raise ở dưới chạy TRƯỚC khối lấy video nên job có video vẫn bị đánh
+                # "Không đủ điểm/quota" / "Dola chặn nội dung" (ảnh 16/9: nick ra video mà thẻ vẫn đỏ).
+                # Vẫn đọc số dư + giá ở trên để kế toán credit không hụt.
+                if poll["videos"]:
+                    continue
                 if GUEST_REFUSAL_PATTERN.search(text):
                     raise GuestRefusedError(f"{_GUEST_MSG}\n↳ Dola: {text[:140]}")
                 if CONTENT_POLICY_PATTERN.search(text) and not _is_duration_capped(text):
@@ -1646,7 +1662,11 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 if PROMPT_UNCLEAR_PATTERN.search(text):
                     raise PromptUnclearError(
                         "Dola không hiểu prompt — viết mô tả cảnh quay cụ thể (không mất lượt).\n↳ Dola: " + text[:140])
-                if CREDIT_FAIL_PATTERN.search(text):
+                # "直接生成できません。現在の動画生成は 4–15 秒まで対応しており…" là câu về THỜI LƯỢNG, nhưng chữ
+                # 「生成できません」 nằm trong CREDIT_FAIL_PATTERN → job bị báo "Không đủ điểm/quota" và nick bị
+                # ghi hết điểm oan (thấy trong tasks.db 16/9). Câu Dola đang hỏi/giới hạn thông số thì để nhánh
+                # hỏi-đáp ở dưới xử lý (trả 'はい' → vẫn ra video), không phải lỗi điểm.
+                if CREDIT_FAIL_PATTERN.search(text) and not _question_needs_browser(text):
                     raise CreditError(f"Không đủ điểm/quota. Dola: {text[:120]}")
                 if _is_transient_error(text):
                     raise TransientDolaError(
