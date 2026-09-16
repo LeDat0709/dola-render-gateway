@@ -153,6 +153,30 @@ class SubmitHttpRejected(RuntimeError):
     """Dola CHẮC CHẮN chưa nhận lệnh (4xx / captcha / thiếu cookie) — an toàn thử lại đường khác, chưa trừ lượt."""
 
 
+# Mã lỗi libcurl xảy ra TRƯỚC khi byte đầu tiên rời máy → chắc chắn Dola chưa nhận, gửi lại không mất lượt.
+# Cố ý KHÔNG có 28 (hết giờ), 55/56 (đứt lúc gửi/nhận), 18/52 (nhận dở) — những cái đó Dola có thể đã nhận.
+_NEVER_SENT_CURL_CODES = frozenset({5, 6, 7, 35, 97})   # RESOLVE_PROXY, RESOLVE_HOST, CONNECT, SSL_CONNECT, PROXY
+
+
+def _never_left_machine(exc: Exception) -> bool:
+    code = getattr(exc, "code", None)
+    if isinstance(code, int):
+        return code in _NEVER_SENT_CURL_CODES
+    return False   # không rõ mã → coi như CÓ THỂ đã gửi (an toàn cho lượt)
+
+
+# Mã lỗi libcurl xảy ra TRƯỚC khi byte đầu tiên rời máy → chắc chắn Dola chưa nhận, gửi lại không mất lượt.
+# Cố ý KHÔNG có 28 (hết giờ), 55/56 (đứt lúc gửi/nhận), 18/52 (nhận dở) — những cái đó Dola có thể đã nhận.
+_NEVER_SENT_CURL_CODES = frozenset({5, 6, 7, 35, 97})   # RESOLVE_PROXY, RESOLVE_HOST, CONNECT, SSL_CONNECT, PROXY
+
+
+def _never_left_machine(exc: Exception) -> bool:
+    code = getattr(exc, "code", None)
+    if isinstance(code, int):
+        return code in _NEVER_SENT_CURL_CODES
+    return False   # không rõ mã → coi như CÓ THỂ đã gửi (an toàn cho lượt)
+
+
 async def submit_via_http(account: str, prompt: str, ratio: str | None, duration: int,
                           model: str | None = None, proxy: str | None = None, on_submitted=None) -> str:
     """Gửi 1 lệnh video qua HTTP thuần (curl_cffi), trả conversation_id. KHÔNG mở Chrome.
@@ -187,24 +211,33 @@ async def submit_via_http(account: str, prompt: str, ratio: str | None, duration
         on_submitted(account, True)   # lệnh sắp rời máy → cổng "đã gửi" của pool chặn xoay/gửi lại
     try:
         status, text = await asyncio.to_thread(_post)
-    except Exception as e:   # noqa: BLE001 — chưa gửi được (mạng/proxy/TLS) → thử lại đường khác an toàn
-        if on_submitted:
-            on_submitted(account, False)
-        raise SubmitHttpRejected(f"không gửi được tới Dola: {str(e)[:160]}") from e
+    except Exception as e:   # noqa: BLE001
+        # Lỗi mạng KHÔNG đồng nghĩa "Dola chưa nhận". Chỉ lỗi xảy ra TRƯỚC khi gói tin rời máy (không phân giải được
+        # tên miền, không bắt tay được TCP/TLS/proxy) mới chắc chắn chưa gửi → an toàn rơi về đường Chrome. Hết giờ
+        # chờ trả lời / đứt lúc đang đọc thì Dola CÓ THỂ đã nhận và đã trừ lượt — gửi lại là mất lượt lần 2.
+        if _never_left_machine(e):
+            if on_submitted:
+                on_submitted(account, False)
+            raise SubmitHttpRejected(f"không nối được tới Dola (chưa gửi): {str(e)[:160]}") from e
+        raise RuntimeError(
+            f"Mất kết nối SAU khi đã gửi lệnh tới Dola — KHÔNG gửi lại để tránh trừ lượt 2 lần. "
+            f"Xem dola.com của nick, chưa có video thì chạy lại: {str(e)[:140]}") from e
     if 400 <= status < 500 and status != 408:
         if on_submitted:
             on_submitted(account, False)   # WAF/cookie/proxy chặn ở cửa → chưa trừ lượt
         raise SubmitHttpRejected(f"Dola từ chối submit (HTTP {status}): {text[:200]}")
     if status != 200:
         raise RuntimeError(f"Dola từ chối submit (HTTP {status}): {text[:200]}")
-    low = text.lower()
-    if any(w in low for w in ("verify", "slide", "captcha")) or '"a_bogus' in low:
-        # a_bogus bị từ chối (ByteDance đổi thuật toán, hoặc IP bẩn) → chưa tạo hội thoại → rơi về đường Chrome an toàn.
-        if on_submitted:
-            on_submitted(account, False)
-        raise SubmitHttpRejected(f"Bị chặn/nghi (verify/captcha/a_bogus lệch bản) — signer.last_backend={signer.last_backend()}: {text[:200]}")
+    # Lấy conversation_id TRƯỚC: có id nghĩa là Dola ĐÃ nhận việc (đã trừ lượt) — dù trong phần trả lời có lẫn chữ
+    # "verify"/"captcha" ở trường khác thì cũng không được coi là bị chặn, vì rơi về đường Chrome sẽ gửi lần 2.
     conv_id = _extract_conversation_id(text)
     if not conv_id:
+        low = text.lower()
+        if any(w in low for w in ("verify", "slide", "captcha")) or '"a_bogus' in low:
+            # a_bogus bị từ chối (ByteDance đổi thuật toán, hoặc IP bẩn) → chưa tạo hội thoại → rơi về Chrome an toàn.
+            if on_submitted:
+                on_submitted(account, False)
+            raise SubmitHttpRejected(f"Bị chặn/nghi (verify/captcha/a_bogus lệch bản) — signer.last_backend={signer.last_backend()}: {text[:200]}")
         raise RuntimeError(f"Submit gửi được nhưng không lấy được conversation_id: {text[:200]}")
     print(f"[{account}] submit_via_http OK conversation_id={conv_id} (ký {signer.last_backend()})", flush=True)
     return conv_id

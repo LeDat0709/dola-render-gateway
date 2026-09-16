@@ -30,7 +30,8 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 GRANT_TTL_SEC = int(os.getenv("BROKER_GRANT_TTL", "3600"))   # vé job sống 1 giờ mặc định
-_spent: dict[str, int] = {}                                  # client_id -> số job đã tải (đếm credit)
+_spent: dict[str, int] = {}                                  # client -> số job ĐÃ TẠO (Dola trừ lượt lúc nhận lệnh)
+_counted: dict[str, set] = {}                                # client -> job id đã tính, để không trừ trùng
 
 
 def _b64(raw: bytes) -> str:
@@ -105,6 +106,9 @@ class JobRequest(BaseModel):
     duration: int | None = Field(None, ge=4, le=30)
     ratio: str | None = None
     account: str | None = None
+    # Khóa chống tạo trùng: client gửi lại cùng khóa (hết giờ chờ, mạng đứt, bấm 2 lần) → trả job cũ thay vì
+    # tạo job thứ hai. Dola trừ lượt lúc nhận lệnh nên tạo trùng = mất lượt 2 lần. Bỏ trống = không chống được.
+    client_id: str | None = Field(default=None, max_length=48, pattern=r"^[A-Za-z0-9_.:-]+$")
 
 
 class DownloadedRequest(BaseModel):
@@ -145,10 +149,19 @@ def make_router(ctx: dict[str, Callable]) -> APIRouter:
         client = g["client"]
         if g.get("credits") is not None and _spent.get(client, 0) >= g["credits"]:
             raise HTTPException(402, "hết credit của grant — xin grant mới")
+        # Khóa phải kèm tên client: hai client khác nhau dùng trùng chuỗi "job-1" không được thấy job của nhau.
+        cid = f"{client}:{body.client_id}" if body.client_id else None
         req = VideoGenRequest(model=body.model, prompt=body.prompt, duration=body.duration,
-                              ratio=body.ratio, account=body.account)
+                              ratio=body.ratio, account=body.account, client_id=cid)
         resp = await create_video(req, _bearer())      # dùng lại đường tạo video sẵn có (pool nick)
-        return {"ok": True, "job": resp.id, "status": resp.status, "client": client}
+        # Trừ credit NGAY khi tạo job, không đợi /downloaded: Dola trừ lượt lúc nhận lệnh, nên client không gọi
+        # /downloaded vẫn phải tiêu credit — nếu không, một grant "10 credit" gửi được vô số job.
+        seen = _counted.setdefault(client, set())
+        if resp.id not in seen:                        # job cũ trả về do trùng khóa → không trừ lần nữa
+            seen.add(resp.id)
+            _spent[client] = _spent.get(client, 0) + 1
+        remaining = None if g.get("credits") is None else max(0, g["credits"] - _spent.get(client, 0))
+        return {"ok": True, "job": resp.id, "status": resp.status, "client": client, "remaining": remaining}
 
     @r.get("/v1/job/{job_id}")
     async def job_status(job_id: str, x_grant: str | None = Header(default=None)):
@@ -161,8 +174,9 @@ def make_router(ctx: dict[str, Callable]) -> APIRouter:
     async def job_downloaded(body: DownloadedRequest, x_grant: str | None = Header(default=None)):
         g = verify_grant(x_grant or "")
         client = g["client"]
-        _spent[client] = _spent.get(client, 0) + 1     # trừ credit khi client báo đã tải xong
-        remaining = None if g.get("credits") is None else max(0, g["credits"] - _spent[client])
+        # Credit đã trừ lúc TẠO job (Dola tính tiền ở đó). Endpoint này giữ lại cho client cũ, chỉ báo số dư —
+        # cộng thêm ở đây sẽ trừ 2 lần cho 1 video.
+        remaining = None if g.get("credits") is None else max(0, g["credits"] - _spent.get(client, 0))
         return {"ok": True, "remaining": remaining}
 
     return r

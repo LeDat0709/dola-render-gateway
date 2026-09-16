@@ -12,13 +12,14 @@ from contextlib import asynccontextmanager
 import hashlib
 import json
 import re
+import secrets
 import shutil
 import time
 import uuid
 from collections import defaultdict
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -206,10 +207,46 @@ def _auth(authorization):
     }
 
 
-def _admin_auth(x_admin_key: str | None):
+# Dò khóa admin: README hướng dẫn chạy VPS bằng --host 0.0.0.0, mà /api/admin/login trước đây thử được vô hạn
+# lần → dò ra ADMIN_KEY là lấy được /api/admin/accounts/export = TOÀN BỘ cookie nick. Đếm số lần sai theo IP,
+# quá ngưỡng thì khoá tạm; so khớp bằng compare_digest (không lộ độ dài/vị trí ký tự đúng qua thời gian đáp).
+ADMIN_MAX_FAILS = 8
+ADMIN_LOCKOUT_SEC = 300.0
+_admin_fails: dict[str, list] = {}   # ip -> [số lần sai, thời điểm khoá tới]
+
+
+def _admin_key_ok(key: str | None) -> bool:
+    return bool(key) and secrets.compare_digest(str(key), config.ADMIN_KEY)
+
+
+def _admin_throttle(ip: str, ok: bool):
+    """Gọi SAU khi so khóa. Sai → cộng dồn; đúng → xoá. Đang khoá thì ném 429 trước cả khi so."""
+    st = _admin_fails.setdefault(ip, [0, 0.0])
+    if ok:
+        _admin_fails.pop(ip, None)
+        return
+    st[0] += 1
+    if st[0] >= ADMIN_MAX_FAILS:
+        st[1] = time.time() + ADMIN_LOCKOUT_SEC
+        st[0] = 0
+
+
+def _admin_locked(ip: str) -> float:
+    st = _admin_fails.get(ip)
+    left = (st[1] - time.time()) if st else 0.0
+    return left if left > 0 else 0.0
+
+
+def _admin_auth(x_admin_key: str | None, request: Request | None = None):
     if not config.ADMIN_KEY:
         return
-    if x_admin_key != config.ADMIN_KEY:
+    ip = (request.client.host if request and request.client else "?")
+    left = _admin_locked(ip)
+    if left:
+        raise HTTPException(429, f"Sai khóa admin quá nhiều lần — thử lại sau {int(left)}s")
+    ok = _admin_key_ok(x_admin_key)
+    _admin_throttle(ip, ok)
+    if not ok:
         raise HTTPException(401, "invalid admin key")
 
 
@@ -346,7 +383,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         public_url = _public_video_url(result)
         store.update(task_id, status="completed", video_url=public_url,
                      account=result.get("account"), last_poll_at=time.time(),
-                     finished_at=time.time())
+                     finished_at=time.time(), error=_short_video_note(result, duration))
     except (AllAccountsLimitedError, AllAccountsQuotaBlockedError) as e:
         store.update(task_id, status="failed", error=str(e)[:500],
                      failure_code="429", finished_at=time.time())
@@ -358,6 +395,26 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             shutil.rmtree(reference_root, ignore_errors=True)
         if acquired:
             await key_limiter.release(api_key_hash)
+
+
+# Dola có lúc trừ đủ lượt 30s nhưng trả clip ngắn hơn. Đo file rồi ghi chú vào job (job vẫn "hoàn tất" — video
+# dùng được) để người dùng biết ngay trên thẻ, thay vì chỉ phát hiện lúc mở file thì lượt đã mất.
+SHORT_VIDEO_TOLERANCE_SEC = 2.0
+
+
+def _short_video_note(result: dict, want_duration) -> str | None:
+    path = result.get("local_path")
+    if not path or not want_duration:
+        return None
+    try:
+        from watermark import probe_duration
+        got = probe_duration(path)
+    except Exception:
+        return None
+    if got is None or got >= want_duration - SHORT_VIDEO_TOLERANCE_SEC:
+        return None
+    return (f"⚠ Dola trả video {got:.0f}s trong khi bạn đặt {want_duration}s (vẫn trừ lượt như {want_duration}s). "
+            "Video vẫn dùng được; muốn đủ giây thì chạy lại (tốn lượt).")
 
 
 def _public_video_url(result: dict) -> str:
@@ -396,7 +453,7 @@ async def _resume_task(row: dict):
         public_url = _public_video_url(result)
         store.update(task_id, status="completed", video_url=public_url,
                      account=result.get("account"), last_poll_at=time.time(),
-                     finished_at=time.time())
+                     finished_at=time.time(), error=_short_video_note(result, row.get("duration")))
     except Exception as e:
         store.update(task_id, status="failed", error=str(e)[:500],
                      finished_at=time.time())
@@ -707,12 +764,18 @@ class KeyPatch(BaseModel):
 
 
 @app.post("/api/admin/login")
-async def admin_login(body: AdminLogin):
+async def admin_login(body: AdminLogin, request: Request):
     if not config.ADMIN_KEY:
         return {"ok": True, "auth_required": False}
-    if body.key == config.ADMIN_KEY:
-        return {"ok": True, "auth_required": True}
-    raise HTTPException(401, "wrong admin key")
+    ip = request.client.host if request.client else "?"
+    left = _admin_locked(ip)
+    if left:
+        raise HTTPException(429, f"Sai khóa admin quá nhiều lần — thử lại sau {int(left)}s")
+    ok = _admin_key_ok(body.key)
+    _admin_throttle(ip, ok)
+    if not ok:
+        raise HTTPException(401, "wrong admin key")
+    return {"ok": True, "auth_required": True}
 
 
 @app.get("/api/admin/accounts")

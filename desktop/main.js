@@ -1224,7 +1224,16 @@ app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 app.on("window-all-closed", () => {
-  gateway.stop();
+  gateway.stop();   // không chờ ở đây: before-quit mới là chỗ chặn thoát để chờ tắt hẳn
   if (process.platform !== "darwin") app.quit();
 });
-app.on("before-quit", () => { gateway.stop(); });
+// Trước đây gọi gateway.stop() rồi thoát ngay, KHÔNG chờ: Electron chết trước khi uvicorn kịp tắt → python (và
+// Chrome của các nick đang render) thành mồ côi, giữ SingletonLock, lần mở app sau nick treo. Nay chặn thoát,
+// chờ tắt hẳn (stop() tự SIGKILL sau EXIT_WAIT_MS) rồi mới thoát thật.
+let _quitting = false;
+app.on("before-quit", (e) => {
+  if (_quitting) return;            // lần thoát thứ hai (sau khi đã chờ xong) → cho đi
+  _quitting = true;
+  e.preventDefault();
+  gateway.stop().catch(() => {}).then(() => app.quit());
+});

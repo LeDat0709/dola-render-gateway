@@ -40,6 +40,25 @@ def _ffmpeg_exe() -> str | None:
     return shutil.which("ffmpeg")
 
 
+def probe_duration(path) -> float | None:
+    """Thời lượng THẬT của file (giây), None nếu không đọc được.
+
+    Dola có lúc trừ đủ credit của 30s nhưng trả clip ngắn hơn (10/15s). Không đo thì tool báo "Hoàn tất"
+    và người dùng chỉ phát hiện khi mở file — lượt đã mất. Dùng cv2 sẵn có, không thêm phụ thuộc.
+    """
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(path))
+        if not cap.isOpened():
+            return None
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+        cap.release()
+        return (frames / fps) if fps > 0 and frames > 0 else None
+    except Exception:
+        return None
+
+
 def _dims(path: Path) -> tuple[int, int, float] | None:
     try:
         import cv2

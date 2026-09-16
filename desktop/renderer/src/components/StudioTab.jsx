@@ -205,7 +205,8 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
       const pk = [pj.proxy_ip, pj.proxy_provider, pj.proxy_used, pj.proxy_per, pj.proxy_fresh, pj.proxy_kind].join("|");   // IP + lượt + NCC + loại → cột Proxy
       if (pk !== pip) { pip = pk; setRow(n, { proxyIp: pj.proxy_ip || "", proxyIsp: pj.proxy_isp || "", proxyProvider: pj.proxy_provider || "", proxyUsed: pj.proxy_used, proxyPer: pj.proxy_per, proxyFresh: pj.proxy_fresh, proxyKind: pj.proxy_kind || "" }); }
       if (pj.account && pj.account !== n) setRow(n, { ranOn: pj.account });   // job đã XOAY sang nick khác → hiện nick thật
-      if (pj.status === "completed") { clearJobKey(n); setRow(n, { phase: "done", stage: "done", videoUrl: pj.video_url, endedAt: Date.now() }); api.saveVideo?.(pj.video_url); return true; }
+      // note = cảnh báo kèm job ĐÃ xong (vd Dola trả clip ngắn hơn số giây đã đặt mà vẫn trừ đủ lượt).
+      if (pj.status === "completed") { clearJobKey(n); setRow(n, { phase: "done", stage: "done", videoUrl: pj.video_url, endedAt: Date.now(), note: pj.error || "" }); api.saveVideo?.(pj.video_url); return true; }
       if (pj.status === "failed") { clearJobKey(n); setRow(n, { phase: "error", errorRaw: pj.error || "?", endedAt: Date.now(), charged: !!pj.charged }); return false; }   // charged: lệnh đã tới Dola → chạy lại là trừ lượt lần 2
       if (pj.stage && pj.stage !== stage) { stage = pj.stage; setRow(n, { stage, stageAt: Date.now() }); }
     }
@@ -799,7 +800,10 @@ function DoneRow({ s, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
       <video className="h-[52px] w-10 flex-none cursor-pointer rounded object-cover" src={s.videoUrl + "#t=0.6"} muted preload="metadata" onClick={() => onPlay(s.videoUrl)} />
       <div className="min-w-0 flex-1 leading-tight">
         <div className="font-mono text-[12px] font-semibold">{stt ? `#${stt}` : "video"}</div>
-        <div className="truncate font-mono text-[10.5px] text-muted-foreground" title={fnameFromUrl(s.videoUrl)}>{fnameFromUrl(s.videoUrl)}</div>
+        {/* Video xong nhưng có điều cần biết (vd Dola trả clip ngắn hơn số giây đã đặt mà vẫn trừ đủ lượt). */}
+        {s.note
+          ? <div className="truncate text-[10.5px] text-warn" title={s.note}>{s.note}</div>
+          : <div className="truncate font-mono text-[10.5px] text-muted-foreground" title={fnameFromUrl(s.videoUrl)}>{fnameFromUrl(s.videoUrl)}</div>}
       </div>
       <Button variant="ghost" size="icon" className="h-7 w-7" title="Xem" onClick={() => onPlay(s.videoUrl)}><Play className="h-3.5 w-3.5" /></Button>
       <Button variant="ghost" size="icon" className="h-7 w-7" title="Mở thư mục" onClick={onOpen}><FolderOpen className="h-3.5 w-3.5" /></Button>

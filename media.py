@@ -48,6 +48,40 @@ def awaitable_getaddrinfo(host: str) -> list[str]:
     return [item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)]
 
 
+def _is_public_ip(raw: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(raw)
+    except ValueError:
+        return False
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                or ip.is_multicast or ip.is_unspecified)
+
+
+class _PublicOnlyResolver(aiohttp.abc.AbstractResolver):
+    """Chặn DNS rebinding: kiểm IP ngay ở LẦN PHÂN GIẢI aiohttp DÙNG ĐỂ NỐI.
+
+    Kiểm trước rồi để aiohttp tự phân giải lại là một cửa sổ TOCTOU: máy chủ DNS của kẻ tấn công trả IP công cộng
+    cho lần kiểm, rồi trả 169.254.169.254 (metadata máy chủ) hoặc IP nội bộ cho lần nối thật. Ở đây không có
+    lần phân giải thứ hai nào ngoài lần này, nên không còn khe để tráo.
+    """
+
+    def __init__(self):
+        self._inner = None   # DefaultResolver cần vòng lặp đang chạy → tạo trễ, lúc resolve
+
+    async def resolve(self, host, port=0, family=socket.AF_INET):
+        if self._inner is None:
+            self._inner = aiohttp.DefaultResolver()
+        hosts = await self._inner.resolve(host, port, family)
+        safe = [h for h in hosts if _is_public_ip(h["host"])]
+        if not safe:
+            raise OSError(f"Reference image host {host} resolved to private/reserved IP (SSRF blocked)")
+        return safe
+
+    async def close(self):
+        if self._inner is not None:
+            await self._inner.close()
+
+
 async def _validate_url_async(url: str) -> str:
     if not isinstance(url, str) or len(url) > 4096:
         raise ValueError("Invalid reference image URL")
@@ -151,7 +185,9 @@ async def download_reference_images(urls: list[str], task_id: str) -> tuple[Path
         return None, []
     root = Path(tempfile.mkdtemp(prefix=f"dola_ref_{task_id}_"))
     try:
-        async with aiohttp.ClientSession() as session:
+        # resolver kiểm IP tại đúng lần phân giải dùng để nối → bịt DNS rebinding (xem _PublicOnlyResolver).
+        connector = aiohttp.TCPConnector(resolver=_PublicOnlyResolver(), use_dns_cache=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
             paths = []
             for index, url in enumerate(urls):
                 paths.append(str(await download_one_image(session, url, root / f"image_{index}")))

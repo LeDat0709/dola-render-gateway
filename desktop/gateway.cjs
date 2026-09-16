@@ -11,7 +11,13 @@ const EXIT_WAIT_MS = 8000;
 // render thành mồ côi, giữ SingletonLock của profile, lần mở sau treo. taskkill /T /F giết cả cây.
 function killTree(p) {
   if (process.platform === "win32" && p.pid) {
-    try { spawn("taskkill", ["/pid", String(p.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }); return; } catch (_) { /* rơi xuống kill thường */ }
+    try {
+      const tk = spawn("taskkill", ["/pid", String(p.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      // spawn() báo lỗi QUA SỰ KIỆN, không ném: thiếu taskkill.exe (PATH lạ) mà không có listener 'error' thì
+      // Node ném lỗi chưa bắt → SẬP CẢ APP đúng lúc người dùng bấm Tắt / khởi động lại server.
+      tk.on("error", () => { try { p.kill(); } catch (_) { /* đã chết */ } });
+      return;
+    } catch (_) { /* rơi xuống kill thường */ }
   }
   try { p.kill(); } catch (_) { /* đã chết */ }
 }
