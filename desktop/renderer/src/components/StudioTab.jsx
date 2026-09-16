@@ -128,7 +128,19 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   async function runOne(n, promptOverride) {
     const acc = accounts.find((a) => a.account === n);
     const s = row(n);
-    const prompt = ((promptOverride ?? s.prompt) || "").trim() || firstLine(bulk);
+    // Ô prompt riêng trống thì LẤY TẠM dòng đầu khung Prompt — CHỈ khi khung đó đúng 1 kịch bản. Trước đây lấy
+    // vô điều kiện: khung có nhiều kịch bản (hoặc 1 khối dài không xuống dòng) thì nick nhận nguyên khối của
+    // người khác — đúng cái "tràn prompt". Nút ▶ từng nick không đi qua rào chắn của runBatch nên lọt ở đây.
+    let prompt = ((promptOverride ?? s.prompt) || "").trim();
+    if (!prompt) {
+      const first = firstLine(bulk);
+      if (first && bulk.trim() !== first) {
+        setRow(n, { phase: "error", status: "warn",
+                    errorRaw: `Nick này chưa có prompt riêng, mà khung Prompt đang có nhiều nội dung — bấm "Mỗi dòng 1 nick" / "Mỗi khối 1 nick" để chia, hoặc gõ prompt riêng cho ${n}.` });
+        return false;
+      }
+      prompt = first;
+    }
     if (!prompt) { setRow(n, { phase: "error", errorRaw: "Chưa nhập prompt", status: "warn" }); return false; }
     // Chỉ cảnh báo, không chặn: bị Dola chặn thì không trừ lượt, còn hộp confirm trước đây bấm Huỷ một lần là
     // prompt đó bị nhớ "chưa gửi" mãi (không thuộc "Chạy lại lỗi") → auto tạo đứng im.
@@ -360,13 +372,26 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     api.notify?.("Dola Studio — auto-drain xong", `Đã chạy hết lượt ${plan.length} nick.`);
   }
   const fillAll = () => { const p = firstLine(bulk); accounts.forEach((a) => setRow(a.account, { prompt: p })); setGen("Đã điền prompt cho tất cả nick."); };
-  const fillLines = () => { const ps = bulk.split(/\r?\n/).map((x) => x.trim()).filter(Boolean); accounts.forEach((a, i) => ps[i] && setRow(a.account, { prompt: ps[i] })); setGen(`Đã chia ${Math.min(ps.length, accounts.length)} prompt.`); };
+  // Chia xong phải NÓI RÕ phần lệch: nick không được gán vẫn giữ prompt CŨ (chạy tiếp là tạo lại video cũ,
+  // tốn lượt), còn kịch bản dư thì không ai nhận. Trước đây im lặng cả hai → prompt cũ "tràn" sang mẻ mới.
+  const chiaMsg = (dat, co, donVi) => {
+    const thua = co - dat, thieu = accounts.length - dat;
+    return `Đã chia ${dat} ${donVi}.`
+      + (thieu > 0 ? ` ⚠ ${thieu} nick KHÔNG được gán — vẫn giữ prompt cũ, chạy sẽ tạo lại video cũ (bấm "Xóa prompt" nếu không muốn).` : "")
+      + (thua > 0 ? ` ⚠ ${thua} ${donVi} dư chưa nick nào nhận (thiếu nick).` : "");
+  };
+  const fillLines = () => { const ps = bulk.split(/\r?\n/).map((x) => x.trim()).filter(Boolean); accounts.forEach((a, i) => ps[i] && setRow(a.account, { prompt: ps[i] })); setGen(chiaMsg(Math.min(ps.length, accounts.length), ps.length, "prompt")); };
   // MỖI KHỐI 1 NICK: kịch bản nhiều dòng (镜头1…mô tả…音频…) là 1 prompt, các kịch bản CÁCH NHAU DÒNG TRỐNG.
   // Giữ NGUYÊN cả khối (không ngắt từng dòng) → khối[i] cho nick[i]. Dùng khi prompt là kịch bản nhiều dòng.
   const fillBlocks = () => {
-    const blocks = bulk.split(/\r?\n\s*\r?\n/).map((b) => b.trim()).filter(Boolean);
+    // Kịch bản hay có dòng trống ngăn TỪNG CẢNH (镜头1 / 音频 / 镜头2) chứ không chỉ ngăn giữa các kịch bản.
+    // Tách theo 1 dòng trống sẽ chẻ vụn 1 kịch bản thành nhiều mảnh, mỗi nick nhận một mảnh cụt. Nên nếu văn bản
+    // có DÒNG TRỐNG ĐÔI thì coi đó mới là ranh giới kịch bản (cảnh vẫn cách nhau 1 dòng trống).
+    const doi = bulk.split(/\r?\n\s*\r?\n\s*\r?\n/).map((b) => b.trim()).filter(Boolean);
+    const blocks = doi.length > 1 ? doi : bulk.split(/\r?\n\s*\r?\n/).map((b) => b.trim()).filter(Boolean);
     accounts.forEach((a, i) => blocks[i] && setRow(a.account, { prompt: blocks[i] }));
-    setGen(`Đã chia ${Math.min(blocks.length, accounts.length)} kịch bản (giữ nguyên cả khối, không ngắt dòng).`);
+    setGen(chiaMsg(Math.min(blocks.length, accounts.length), blocks.length,
+                   doi.length > 1 ? "kịch bản (cách nhau DÒNG TRỐNG ĐÔI)" : "kịch bản"));
   };
   const fillAllWhole = () => { const p = bulk.trim(); if (!p) return; accounts.forEach((a) => setRow(a.account, { prompt: p })); setGen("Đã điền CẢ khối prompt cho tất cả nick (không ngắt)."); };
   // Xóa prompt cũ hàng loạt (Hoài Nam xin): trả các nick về trạng thái trắng như per-row "Làm mới" — bỏ prompt +
@@ -685,7 +710,7 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotated
       </td>
       <td className={td + " min-w-[260px]"}>
         {rotatedPrompt
-          ? <div className="rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-[12px] leading-tight" title={rotatedPrompt}>
+          ? <div className="rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-[12px] leading-tight" title={rotatedPrompt.slice(0, 300)}>
               <span className="block truncate">{rotatedPrompt}</span>
               <span className="font-mono text-[10px] text-primary">↳ prompt của job xoay từ {rotatedFrom}</span>
             </div>
@@ -751,7 +776,7 @@ function NickCard({ a, s, selected, elapsed, rotatedFrom, rotatedPrompt, lowCred
       {s.phase === "done" ? (
         <DoneRow s={s} onPlay={onPlay} onOpen={onOpen} onCopy={onCopy} onRemoveWm={onRemoveWm} onNew={onNew} />
       ) : rotatedPrompt ? (
-        <div className="rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5 text-[12.5px] leading-tight" title={rotatedPrompt}>
+        <div className="rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5 text-[12.5px] leading-tight" title={rotatedPrompt.slice(0, 300)}>
           <span className="block line-clamp-2">{rotatedPrompt}</span>
           <span className="font-mono text-[10px] text-primary">↳ prompt của job xoay từ {rotatedFrom}</span>
         </div>
@@ -781,7 +806,7 @@ function Footer({ s, a, onRun, rotatedFrom }) {
     const f = fmtError(s.errorRaw || "");
     return (
       <div className="flex min-w-0 items-center gap-2">
-        <div className="min-w-0 leading-tight" title={s.errorRaw}>
+        <div className="min-w-0 leading-tight" title={(s.errorRaw || "").slice(0, 300)}>
           <div className={"truncate text-[12px] " + (f.kind === "account" ? "text-warn" : "text-error")}>{f.short}</div>
           {f.hint && <div className="truncate text-[10.5px] text-muted-foreground">{f.hint}</div>}
         </div>
