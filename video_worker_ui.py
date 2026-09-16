@@ -174,6 +174,11 @@ _STATUS_MARKERS = (
     "will be generated", "will complete", "will send", "i'll send", "i'll start", "minutes", "残っています",
     # "安全チェックの対象外です。直接生成を開始します" = Dola BẮT ĐẦU tạo — từng bị coi là từ chối, job chết sau 20s
     "生成を開始", "開始します", "安全チェックの対象外", "start generating", "starting generation", "开始生成",
+    # Dola BÁO là đang/sắp tạo bằng câu kể (không hỏi gì): "…15秒で生成します", "4秒のフック版をまず生成します",
+    # "完了し次第、お知らせします". Thiếu mấy mẫu này thì sau 4 nhịp poll job bị kết luận "Dola báo: …" = LỖI,
+    # trong khi Dola vẫn dựng và LƯỢT ĐÃ TRỪ (ảnh chụp 16/9: 3–5 nick lỗi oan kiểu này).
+    "生成します", "生成いたします", "作成します", "作成いたします", "生成を進め", "生成に入り",
+    "完了し次第", "お知らせします", "お知らせいたします", "will generate", "i'll generate", "让我生成", "为您生成",
 )
 
 # Dola asks to confirm a (different) supported length before rendering, e.g.

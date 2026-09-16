@@ -575,6 +575,24 @@ def test_http_poll_skips_answered_question():
         pass
 
 
+# Nguyên văn Dola trong ảnh chụp 16/9 — cả ba đều là câu KỂ "tôi đang/sắp dựng", không hỏi gì.
+# Trước đây bị coi là câu trả lời cuối cùng → sau 4 nhịp poll job chết với "Dola báo: …" dù lượt ĐÃ TRỪ.
+GENERATING_NOTICES = (
+    "ありがとうございます。動画の生成が完了し次第、お知らせします。",
+    "動画生成には少なくとも4秒が必要です。4秒のフック版をまず生成します。",
+    "18秒はサポートされていないため、最長の15秒で生成します。",
+)
+
+
+def test_generating_notice_is_not_a_refusal():
+    for t in GENERATING_NOTICES:
+        assert vw._is_status_text(t), f"câu Dola đang dựng mà bị tính là lỗi: {t}"
+        assert not vw._question_needs_browser(t), f"câu kể, không hỏi → không được mở lại nick: {t}"
+    # Câu từ chối / hỏi thật vẫn phải giữ nguyên nghĩa cũ
+    assert not vw._is_status_text("この内容では動画を生成できません。")
+    assert not vw._is_status_text(STREAM_SHORT) and vw._question_needs_browser(STREAM_SHORT)
+
+
 def test_http_error_is_not_risk_control():
     """Dola/WAF/proxy trả HTTP lỗi ≠ captcha: không được gắn cooldown 30 phút cho nick.
 
@@ -625,7 +643,7 @@ if __name__ == "__main__":
     test_reply_uses_dola_cap_not_30s(); test_own_directive_is_ignored()
     test_answered_memory_survives_reopen(); test_streaming_message_is_answered_once()
     test_option_list_gets_a_letter_not_yes(); test_http_poll_skips_answered_question()
-    test_http_error_is_not_risk_control(); test_blocked_reason_says_one_thing()
+    test_http_error_is_not_risk_control(); test_generating_notice_is_not_a_refusal(); test_blocked_reason_says_one_thing()
     test_prompt_marks_are_scaled_to_duration(); test_parse_credit_need_from_dola_message()
     test_credits_used_is_read_from_start_message(); test_download_failure_keeps_job_with_cdn_link()
     test_submit_timeout_never_resubmits(); test_uncertain_submit_only_resends_when_probe_is_certain(); test_guest_session_is_detected_not_credit(); test_dead_proxy_mid_render_switches_route_not_lose_video(); test_scan_account_videos_reads_history_only(); print("OK")

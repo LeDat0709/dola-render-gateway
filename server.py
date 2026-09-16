@@ -350,6 +350,14 @@ def _resolve_ratio(size, ratio):
     return ratio
 
 
+HARD_TIMEOUT_GRACE = 600   # thời gian ngoài lúc chờ render: mở Chrome, ký, tải video về
+
+
+def _hard_timeout(duration) -> int:
+    """Trần tuyệt đối của một job — quá là bỏ, để không job nào 'đang chạy' mãi mà giữ nick."""
+    return (config.VIDEO_TIMEOUT_30S if duration == 30 else config.VIDEO_TIMEOUT) + HARD_TIMEOUT_GRACE
+
+
 async def _run_task(task_id, model, prompt, ratio, duration, reference_images, client, account=None):
     api_key_hash = client.get("api_key_hash")
     acquired = False
@@ -377,15 +385,18 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         def on_opening(account):
             store.update(task_id, account=account, opened_at=time.time())
 
-        result = await pool.generate_video(
+        result = await asyncio.wait_for(pool.generate_video(
             prompt, ratio, duration, model,
             on_conversation_id=on_conversation_id, on_poll=on_poll,
             on_submitted=on_submitted, on_opening=on_opening,
-            reference_image_paths=reference_paths, account=account)
+            reference_image_paths=reference_paths, account=account), _hard_timeout(duration))
         public_url = _public_video_url(result)
         store.update(task_id, status="completed", video_url=public_url,
                      account=result.get("account"), last_poll_at=time.time(),
                      finished_at=time.time(), error=_short_video_note(result, duration))
+    except asyncio.TimeoutError:
+        store.update(task_id, status="failed", finished_at=time.time(),
+                     error=f"Job treo quá {_hard_timeout(duration) // 60} phút — đã bỏ để giải phóng nick.")
     except (AllAccountsLimitedError, AllAccountsQuotaBlockedError) as e:
         store.update(task_id, status="failed", error=str(e)[:500],
                      failure_code="429", finished_at=time.time())
@@ -427,43 +438,6 @@ def _public_video_url(result: dict) -> str:
     return result["video_url"]
 
 
-async def _resume_task(row: dict):
-    task_id = row["id"]
-    deadline = row.get("deadline_at") or (
-        time.time() + (config.VIDEO_TIMEOUT_30S if row.get("duration") == 30 else config.VIDEO_TIMEOUT)
-    )
-    remaining = max(1, int(deadline - time.time()))
-    api_key_hash = row.get("api_key_hash")
-    acquired = False
-    try:
-        await key_limiter.acquire(
-            api_key_hash, int(row.get("client_concurrency_limit") or 0)
-        )
-        acquired = True
-        store.update(task_id, status="processing", last_poll_at=time.time(),
-                     started_at=row.get("started_at") or time.time())
-
-        def on_poll(now):
-            store.update(task_id, last_poll_at=now)
-
-        _rratio = row.get("ratio")
-        if _rratio == "default":
-            _rratio = None
-        result = await pool.resume_video(
-            row["account"], row["conversation_id"], remaining, on_poll=on_poll,
-            ratio=_rratio, duration=row.get("duration"), prompt=row.get("prompt") or "")
-        public_url = _public_video_url(result)
-        store.update(task_id, status="completed", video_url=public_url,
-                     account=result.get("account"), last_poll_at=time.time(),
-                     finished_at=time.time(), error=_short_video_note(result, row.get("duration")))
-    except Exception as e:
-        store.update(task_id, status="failed", error=str(e)[:500],
-                     finished_at=time.time())
-    finally:
-        if acquired:
-            await key_limiter.release(api_key_hash)
-
-
 def _task_client(row: dict) -> dict:
     """Restores client context from task snapshot."""
     return {
@@ -483,64 +457,19 @@ def _task_reference_images(raw) -> list[str]:
     return values if isinstance(values, list) else []
 
 
-MAX_AUTO_REQUEUE = 2          # số lần tự chạy lại một job bị restart cắt ngang
-STALE_REQUEUE_SEC = 6 * 3600  # job cũ hơn mức này thì không tự chạy lại nữa (prompt đã lỗi thời)
-STALE_RESUME_SEC = 45 * 60  # job "processing" cũ hơn mức này khi khởi động = treo → bỏ; phải > VIDEO_TIMEOUT_30S (2400s) kẻo bỏ oan job 30s đang dựng
-
-
-def _restart_action(row: dict, now: float) -> tuple[str, str | None]:
-    """Quyết định cho job 'processing' mất conversation_id khi server khởi động lại.
-
-    Chỉ tự chạy lại khi chắc chắn prompt CHƯA tới Dola (submitted_at rỗng) — nếu đã gửi thì
-    chạy lại sẽ trừ lượt lần 2.
-    """
-    if row.get("submitted_at"):
-        nick = row.get("account") or "nick đang dùng"
-        return "failed", (
-            f"Đã gửi prompt tới Dola rồi server mới tắt — không tự chạy lại để khỏi trừ lượt "
-            f"2 lần. Kiểm tra {nick} trên dola.com; chưa có video thì bấm chạy lại.")
-    if int(row.get("attempts") or 0) >= MAX_AUTO_REQUEUE:
-        return "failed", (
-            f"Đã tự chạy lại {MAX_AUTO_REQUEUE} lần sau khi server khởi động lại mà vẫn dở dang "
-            f"— bấm chạy lại thủ công.")
-    if now - (row.get("created_at") or now) > STALE_REQUEUE_SEC:
-        return "failed", "Job quá cũ (server tắt lâu) — không tự chạy lại, bấm chạy lại nếu còn cần."
-    return "requeue", None
+# Tắt server = tắt job. Job dở dang của lần chạy trước KHÔNG được hồi sinh (không resume, không tự xếp
+# hàng chạy lại): tool chỉ chạy đúng những job bạn bấm ở lần bật này, DB không còn job "treo" từ hôm qua.
+RESTART_ERROR = ("Server đã tắt/khởi động lại nên job này dừng theo. Nếu prompt đã gửi thì kiểm tra nick "
+                 "trên dola.com (có thể đã trừ lượt), còn thiếu video thì bấm chạy lại.")
+STOP_GRACE_SEC = 10   # chờ job đang chạy đóng Chrome + nhả nick rồi mới để tiến trình thoát
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Recovers accepted sessions on startup and requeues pending tasks."""
-    now = time.time()
-    recoverable_ids = set()
-    for row in store.recoverable_tasks():
-        recoverable_ids.add(row["id"])
-        started = row.get("started_at") or 0
-        deadline = row.get("deadline_at") or 0
-        if (deadline and now > deadline) or (started and now - started > STALE_RESUME_SEC):
-            store.update(row["id"], status="failed", finished_at=now,
-                         error="Video treo quá lâu (Dola không trả kết quả) — đã bỏ để giải phóng nick.")
-            continue
-        _spawn(_resume_task(row))
-    # Job 'processing' không có conversation_id: server tắt giữa lúc mở trình duyệt / gửi prompt.
-    for row in store.orphan_processing_tasks(recoverable_ids):
-        action, reason = _restart_action(row, now)
-        if action == "requeue":
-            store.requeue(row["id"])  # chưa gửi prompt → chạy lại an toàn, không mất lượt
-            print(f"[recover] {row['id']} bị restart cắt ngang, tự xếp hàng chạy lại", flush=True)
-        else:
-            store.update(row["id"], status="failed", finished_at=now, error=reason)
-    for row in store.recoverable_queued_tasks():
-        ratio = row.get("ratio")
-        if ratio == "default":
-            ratio = None
-        _spawn(_run_task(
-            row["id"], row["model"], row["prompt"], ratio, row["duration"],
-            _task_reference_images(row.get("reference_images")), _task_client(row),
-            # Giữ nick đã GHIM qua lần khởi động lại. Chỉ job của Studio mới ghim nick (luôn kèm client_id); job
-            # API/broker không ghim — nick trong hàng là nick pool vừa thử, tái ghim sẽ khoá job vào đúng nick đó.
-            row.get("account") if row.get("client_id") else None,
-        ))
+    """Bật: dọn job cũ. Tắt: huỷ job đang chạy rồi đánh dấu hỏng — không job nào ở lại trạng thái dở dang."""
+    dropped = store.fail_unfinished(RESTART_ERROR)
+    if dropped:
+        print(f"[gateway] bỏ {dropped} job dở dang của lần chạy trước (tắt server = tắt job)", flush=True)
     from browser import mask_proxy as _mask, probe_proxy
     print(f"[gateway] proxy chung: {_mask(config.PROXY) or '(không — nối thẳng)'}", flush=True)
     if config.PROXY:
@@ -549,6 +478,11 @@ async def lifespan(app: FastAPI):
             print(f"[gateway] ⚠ proxy chung {_mask(config.PROXY)} KHÔNG nối được ({bad}) — mọi nick không có "
                   "proxy riêng sẽ lỗi. Sửa hoặc xoá trống ở Cài đặt → Proxy chung rồi Tắt/Bật server.", flush=True)
     yield
+    for t in list(_BG_TASKS):
+        t.cancel()
+    if _BG_TASKS:
+        await asyncio.wait(list(_BG_TASKS), timeout=STOP_GRACE_SEC)   # để finally đóng Chrome, nhả nick
+    store.fail_unfinished(RESTART_ERROR)
 
 
 app.router.lifespan_context = lifespan

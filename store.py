@@ -236,41 +236,15 @@ class TaskStore:
                 ).fetchone()
         return dict(row) if row else None
 
-    def recoverable_tasks(self) -> list:
-        """Recovers tasks with existing conversation_id after restart without re-submitting prompt."""
+    def fail_unfinished(self, reason: str) -> int:
+        """Tắt server = tắt job: mọi job chưa kết thúc bị đánh hỏng, KHÔNG sống lại ở lần bật sau."""
+        now = time.time()
         with _LOCK:
-            rows = self._conn.execute(
-                "SELECT * FROM tasks WHERE status IN ('queued','processing') "
-                "AND conversation_id IS NOT NULL AND account IS NOT NULL "
-                "ORDER BY created_at"
-            ).fetchall()
-        return [dict(r) for r in rows]
-
-    def orphan_processing_tasks(self, keep_ids) -> list:
-        """Tasks stuck in 'processing' that can't be resumed (no conv/account) — handled on startup."""
-        with _LOCK:
-            rows = self._conn.execute("SELECT * FROM tasks WHERE status='processing'").fetchall()
-        keep = set(keep_ids)
-        return [dict(r) for r in rows if dict(r)["id"] not in keep]
-
-    def requeue(self, task_id):
-        """Puts an unstarted task back in the queue so startup re-runs it instead of failing it."""
-        with _LOCK:
-            self._conn.execute(
-                "UPDATE tasks SET status='queued', attempts=COALESCE(attempts,0)+1, "
-                "started_at=NULL, submitted_at=NULL, opened_at=NULL, conversation_id=NULL, deadline_at=NULL, "
-                "error=NULL, failure_code=NULL, updated_at=? WHERE id=?",
-                (time.time(), task_id))
+            cur = self._conn.execute(
+                "UPDATE tasks SET status='failed', finished_at=?, updated_at=?, error=? "
+                "WHERE status IN ('queued','processing')", (now, now, reason))
             self._conn.commit()
-
-    def recoverable_queued_tasks(self) -> list:
-        """Recovers queued tasks without conversation_id after restart."""
-        with _LOCK:
-            rows = self._conn.execute(
-                "SELECT * FROM tasks WHERE status='queued' "
-                "AND conversation_id IS NULL ORDER BY created_at"
-            ).fetchall()
-        return [dict(r) for r in rows]
+            return cur.rowcount
 
     def pending_task_count(self) -> int:
         with _LOCK:
