@@ -51,9 +51,32 @@ _NOT_NICK_ERRORS = (AttributeError, NameError, TypeError, KeyError, ImportError,
 
 
 def _rotation_order(a: dict) -> tuple:
-    """Thứ tự xoay nick: còn NHIỀU điểm trước (người dùng chọn 15/09); bằng điểm thì nick LÂU CHƯA DÙNG trước — rải đều
-    như vòng tròn của đối thủ v1.0.88 (chon_nick _RR + né nick vừa bận), không dồn liên tục vào vài nick đầu danh sách."""
-    return (-(a.get("remaining") or 0), a.get("last_used_at") or 0)
+    """Thứ tự xoay nick: scoring nhiều chiều để giảm captcha/risk control.
+
+    (1) Còn NHIỀU điểm trước (15/09);
+    (2) Nick lâu chưa dùng trước — rải đều, hành vi tự nhiên hơn dồn 1 nick;
+    (3) Nick vừa bị cooldown (captcha/risk) → đẩy xuống cuối (penalty).
+
+    Sort key = (-score, last_used_at). Score = remaining * 0.6 + idle_bonus * 0.4 - cooldown_penalty.
+    """
+    remaining = a.get("remaining") or 0
+    last_used = a.get("last_used_at") or 0
+    now = time.time()
+    # idle_bonus: mỗi 10 phút nghỉ = +1 điểm (trần 10 = nghỉ > 100 phút)
+    idle_minutes = max(0, (now - last_used) / 60) if last_used else 60
+    idle_bonus = min(10, idle_minutes / 10)
+    # penalty: nick vừa thoát cooldown gần đây → hành vi Dola vẫn đang soi
+    cooldown_until = a.get("cooldown_until") or 0
+    # Nếu cooldown đã hết nhưng mới hết < 10 phút → penalty giảm dần
+    if cooldown_until > 0 and cooldown_until <= now:
+        mins_since_cooldown = (now - cooldown_until) / 60
+        penalty = max(0, 5 - mins_since_cooldown / 2)   # hết dần trong 10 phút
+    elif cooldown_until > now:
+        penalty = 10   # đang cooldown → penalty cao nhất
+    else:
+        penalty = 0
+    score = remaining * 0.6 + idle_bonus * 0.4 - penalty
+    return (-score, last_used)
 
 
 class PreSubmitStallError(RuntimeError):
@@ -83,10 +106,12 @@ async def _presubmit_guard(worker, account, *args, on_submitted, on_browser_hold
         on_submitted(acc, submitted)
 
     async def _hold():
+        if not sent:
+            cm.reschedule(None)              # tạm dừng đồng hồ TRƯỚC khi chờ slot
         if on_browser_hold:
             await on_browser_hold()
         if not sent:
-            cm.reschedule(loop.time() + budget)
+            cm.reschedule(loop.time() + budget)  # có slot rồi mới bấm giờ lại
 
     try:
         async with cm:
@@ -121,7 +146,16 @@ _rate_state: dict[str, dict[str, float]] = {}
 
 
 def _rs(key: str) -> dict[str, float]:
-    return _rate_state.setdefault(key, {"until": 0.0, "pause": 0.0, "boost": 0.0, "boost_at": 0.0, "slot": 0.0})
+    return _rate_state.setdefault(key, {
+        "until": 0.0, "pause": 0.0, "boost": 0.0, "boost_at": 0.0, "slot": 0.0,
+        # Adaptive pacing: phần PHẠT tự học CỘNG THÊM lên config.SUBMIT_GAP_SEC (không phải gap tuyệt đối).
+        # Mỗi 710022002 → +1s (trần _ADAPTIVE_EXTRA_MAX); mỗi 5 job OK liên tiếp → -0.5s, sàn 0.
+        # Lưu phần phạt chứ KHÔNG lưu gap tuyệt đối: gap tuyệt đối chụp config.SUBMIT_GAP_SEC một lần lúc
+        # khoá proxy được tạo, nên /api/admin/submit-gap (đổi nhịp lúc đang chạy) mất tác dụng với mọi proxy
+        # đã gửi — đúng cái núm người ta với tay tới khi đang bị 710022002.
+        "learned_extra": 0.0,
+        "streak": 0.0,   # số job thành công liên tiếp (reset khi dính rate limit)
+    })
 
 
 def _reset_rate_state() -> None:
@@ -135,14 +169,13 @@ RATE_LIMIT_GAP_MAX = 40.0
 
 
 def _effective_gap_boost(now: float, key: str = "") -> float:
-    """Giãn nhịp thêm còn lại của proxy `key`: giảm RATE_LIMIT_GAP_STEP mỗi phút êm kể từ lần chặn gần nhất."""
+    """Giãn nhịp thêm còn lại của proxy `key`: giảm RATE_LIMIT_GAP_STEP mỗi phút êm kể từ lần chặn gần nhất.
+    Hàm NÀY CHỈ ĐỌC, KHÔNG ghi — gọi bao nhiêu lần cũng ra cùng kết quả (cùng `now`)."""
     s = _rs(key)
     if s["boost"] <= 0:
         return 0.0
     decay = ((now - s["boost_at"]) / 60.0) * RATE_LIMIT_GAP_STEP
-    s["boost"] = max(0.0, s["boost"] - max(0.0, decay))
-    s["boost_at"] = now
-    return s["boost"]
+    return max(0.0, s["boost"] - max(0.0, decay))
 
 
 def note_rate_limited(now: float | None = None, key: str = "") -> float:
@@ -157,24 +190,50 @@ def note_rate_limited(now: float | None = None, key: str = "") -> float:
     s["until"] = now + s["pause"]
     s["boost"] = min(RATE_LIMIT_GAP_MAX, _effective_gap_boost(now, key) + RATE_LIMIT_GAP_STEP)
     s["boost_at"] = now
+    # Adaptive pacing: cộng thêm phạt khi bị chặn, reset streak
+    s["learned_extra"] = min(_ADAPTIVE_EXTRA_MAX, s.get("learned_extra", 0.0) + 1.0)
+    s["streak"] = 0.0
     return s["pause"]
+
+
+# Trần phần PHẠT cộng thêm. Sàn là 0 — tức nhịp không bao giờ xuống dưới mức người dùng đặt, và cũng không
+# bao giờ tự vượt config + trần này.
+_ADAPTIVE_EXTRA_MAX = 12.0
+_ADAPTIVE_STREAK_THRESHOLD = 5   # số job thành công liên tiếp để bớt phạt
+
+
+def note_submit_ok(key: str = "") -> None:
+    """Ghi nhận proxy `key` gửi THÀNH CÔNG: tăng streak, bớt phạt nếu đủ điều kiện."""
+    s = _rs(key)
+    s["streak"] = s.get("streak", 0) + 1
+    if s["streak"] >= _ADAPTIVE_STREAK_THRESHOLD:
+        old = s.get("learned_extra", 0.0)
+        s["learned_extra"] = max(0.0, old - 0.5)
+        s["streak"] = 0   # reset streak, bắt đầu đếm lại
+        if s["learned_extra"] < old:
+            print(f"[pace] proxy {key[:30] or 'chung'}: 5 job OK liên tiếp → bớt phạt nhịp {old:.1f}s → "
+                  f"{s['learned_extra']:.1f}s (nhịp = {config.SUBMIT_GAP_SEC:.1f}s + phạt)", flush=True)
 
 
 # Cổng giãn nhịp: mỗi lần gửi lệnh lấy một "khe" cách khe trước >= SUBMIT_GAP + ngẫu nhiên. Khoá chỉ giữ lúc
 # tính khe, ngủ ở ngoài → N job song song tự xếp so le thay vì bắn cùng một giây.
-_PACE_LOCK = asyncio.Lock()
+# Khoá THEO PROXY: job trên proxy A không chặn job trên proxy B.
+_PACE_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 async def _pace(key: str = "") -> None:
     """Giãn nhịp gửi cho proxy `key`: mỗi khe cách khe trước >= SUBMIT_GAP (+giãn nếu vừa bị chặn), và chờ
     qua lệnh tạm dừng của ĐÚNG proxy đó. Proxy khác có khe riêng nên không bị một IP quá tải kéo theo."""
     global _rate_state
-    async with _PACE_LOCK:
+    lock = _PACE_LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:
         s = _rs(key)
         now = time.monotonic()
         base = max(now, s["slot"], s["until"])
         wait = base - now
-        gap = config.SUBMIT_GAP_SEC + _effective_gap_boost(now, key)
+        # Nhịp = mức người dùng đặt (đọc MỖI LẦN, để /api/admin/submit-gap ăn ngay) + phạt tự học + giãn
+        # tạm sau 710022002.
+        gap = config.SUBMIT_GAP_SEC + s.get("learned_extra", 0.0) + _effective_gap_boost(now, key)
         s["slot"] = base + gap + random.uniform(0, config.SUBMIT_JITTER_SEC)
     if wait > 0:
         await asyncio.sleep(wait)
@@ -271,8 +330,9 @@ class BrowserPool:
             try:
                 self._conn.execute(f"ALTER TABLE accounts_meta ADD COLUMN {column} {definition}")
                 self._conn.commit()
-            except sqlite3.OperationalError:
-                pass
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
 
     # ===== Account Discovery & Metadata =====
 
@@ -840,7 +900,11 @@ class BrowserPool:
         from browser import _effective_rotating, _proxy_leases
         key = _effective_rotating(account)
         waited = False
+        deadline = time.monotonic() + 2400   # tối đa 40 phút (video 30s dựng ~35 phút + dự phòng)
         while key and _proxy_leases.get(key, 0) > 0:
+            if time.monotonic() >= deadline:
+                print(f"[pool] {account}: chờ drain IP quá 40 phút — bỏ qua, tránh treo vô hạn", flush=True)
+                break
             if not waited:
                 print(f"[pool] {account}: IP chung đủ lô — chờ {_proxy_leases.get(key, 0)} job đang chạy trên IP này xong rồi đổi IP", flush=True)
                 waited = True
@@ -884,17 +948,8 @@ class BrowserPool:
         if account is not None:
             await self._wait_pinned_nick(account, model, duration)   # TRƯỚC khi giữ cổng/slot Chrome
         one_nick_on = config.ONE_NICK and is_rotating_proxy(config.PROXY)
-        if one_nick_on:
-            want = max(1, config.PARALLEL_PER_IP)
-            if want != self._one_nick_size:   # đổi K lúc đang chạy: job đang chạy không bị đụng, trần mới áp cho job sau
-                resize_semaphore(self._one_nick, want - self._one_nick_size)
-                self._one_nick_size = want
-            await self._one_nick.acquire()
-        # Semaphore = số Chrome chạy cùng lúc (RAM), KHÔNG phải số video cùng lúc: khi bật
-        # DOLA_HTTP_POLL worker gọi on_browser_free ngay sau khi gửi xong (~20s) nên slot được trả
-        # lại trong lúc video vẫn đang render → nhiều nick chạy song song mà không tốn thêm RAM.
-        await self.semaphore.acquire()
-        browser_held = True
+        one_nick_held = False
+        browser_held = False
 
         def _release_browser():
             nonlocal browser_held
@@ -950,11 +1005,27 @@ class BrowserPool:
                 # VIDEO XONG = cookie chắc chắn sống (Studio bỏ qua bước kiểm cho nick này). KHÔNG ghi lúc Dola mới nhận
                 # lệnh: nick cookie chết (KHÁCH) vẫn có conversation_id rồi mới bị từ chối (ảnh 15/09 báo sống oan).
                 self.set_login_status(acc, True)
+                # Adaptive pacing: ghi nhận thành công cho proxy → nếu đủ streak → giảm gap
+                note_submit_ok(key=account_proxy_raw(acc) or "")
             except Exception as e:  # noqa: BLE001 — video ĐÃ có: lỗi ghi sổ không được biến job thành lỗi (chạy lại = trừ 2 lần)
                 print(f"[pool] {acc}: video xong nhưng ghi lượt/credit lỗi (bỏ qua): {e!r}", flush=True)
             return result
 
         try:
+            # MỖI LẦN MỘT NICK: giữ cổng SUỐT job (submit + render) → 1 nick/lần. Acquire TRƯỚC
+            # browser-sema để thứ tự khoá luôn one_nick→browser. NẰM TRONG try...finally để
+            # CancelledError giữa 2 lần acquire không leak lock (BUG-01).
+            if one_nick_on:
+                want = max(1, config.PARALLEL_PER_IP)
+                if want != self._one_nick_size:
+                    resize_semaphore(self._one_nick, want - self._one_nick_size)
+                    self._one_nick_size = want
+                await self._one_nick.acquire()
+                one_nick_held = True
+            # Semaphore = số Chrome chạy cùng lúc (RAM), KHÔNG phải số video cùng lúc.
+            await self.semaphore.acquire()
+            browser_held = True
+
             last_err = None
             pinned = account is not None
             soft_pin = False   # ghim MỀM: vẫn ưu tiên + báo lý do thật của nick thẻ, nhưng cho xoay sang nick khác
@@ -1010,19 +1081,36 @@ class BrowserPool:
                     if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
                         continue  # State changed while waiting
                     tried.add(account)
+                    # ── Pre-flight checks (TRƯỚC khi tốn Chrome) ──────
+                    # 1) Cookie check: kiểm HTTP nhanh, cookie chết → bỏ qua nick
+                    try:
+                        from browser import quick_cookie_check, ensure_proxy_alive
+                        cookie_alive = await quick_cookie_check(account)
+                        if cookie_alive is False:
+                            self.set_login_status(account, False)
+                            last_err = RuntimeError(f"Nick '{account}' cookie chết (pre-flight)")
+                            continue
+                    except Exception as _pf:  # noqa: BLE001
+                        pass  # không kết luận được → để Chrome kiểm
+                    # 2) Proxy warmup: kiểm TCP nhanh, proxy chết → bỏ qua nick
+                    try:
+                        await ensure_proxy_alive(account)
+                    except RuntimeError as _pw:
+                        last_err = _pw
+                        self._record_presubmit_failure(account, _pw)
+                        continue
+                    except Exception:  # noqa: BLE001
+                        pass  # timeout/lỗi lạ → để Chrome xử
                     # MỖI LẦN MỘT NICK: cổng đã giữ ở ĐẦU hàm. Mỗi IP dùng cho ĐÚNG N nick (config.NICKS_PER_IP)
                     # rồi mới xoay → không phí nhịp xoay, vẫn hạn chế trùng IP. N=1 = 1 nick/IP (an toàn nhất).
                     if one_nick_on:
                         n = max(1, config.NICKS_PER_IP)
                         async with self._ip_lock:
                             if self._ip_used >= n:
-                                # IP hiện tại đã đủ N job → lô mới. Còn job chạy trên IP này (K > 1) thì CHỜ chúng xong rồi mới
-                                # đổi IP; nhả slot Chrome trong lúc chờ để job đang chạy xin lại được (không khoá chéo).
                                 _release_browser()
                                 await self._wait_ip_drained(account)
                                 await _hold_browser()
                                 self._ip_used = 0
-                            if self._ip_used == 0:
                                 try:
                                     await asyncio.to_thread(rotate_effective_proxy, account)   # xin IP mới cho lô N nick
                                 except Exception as _e:  # noqa: BLE001 — đổi IP lỗi thì chạy tiếp IP cũ
@@ -1137,9 +1225,12 @@ class BrowserPool:
                             last_err = e2
                             continue
                     except RateLimitedError as e:
-                        from browser import mark_ip_dirty, rotate_tmproxy_now
+                        from browser import mark_ip_dirty, rotate_tmproxy_now, account_proxy_raw as _apr, rotate_effective_proxy
                         mark_ip_dirty(account, str(e))   # IP này Dola vừa chặn → nick sau không nhận lại trong 24 giờ
-                        rotate_tmproxy_now(account)   # nick dùng tmproxy://KEY: Dola chặn IP này → xin IP mới ngay
+                        if _apr(account):
+                            rotate_tmproxy_now(account)   # nick dùng proxy RIÊNG → xin IP mới cho key đó
+                        else:
+                            rotate_effective_proxy(account)   # proxy CHUNG → xoay IP chung (an toàn vì ONE_NICK = 1 nick/lần)
                         if config.NO_COOLDOWN:
                             print(f"[pool] {account}: 710022002 — NO_COOLDOWN bật, không nghỉ/không dừng gửi, xoay ngay: {e}", flush=True)
                         else:
@@ -1200,5 +1291,5 @@ class BrowserPool:
             raise RuntimeError(f"No available accounts in pool: {last_err or 'No accounts'}")
         finally:
             _release_browser()
-            if one_nick_on:
+            if one_nick_held:
                 self._one_nick.release()   # MỖI LẦN MỘT NICK: hết job (xong/lỗi) → mở cổng cho nick sau

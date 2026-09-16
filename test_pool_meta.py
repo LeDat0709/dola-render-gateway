@@ -152,6 +152,7 @@ def test_submits_are_paced():
             stamps.append(time.monotonic())
             return {"ok": True}
         browser_pool.generate_video = gen
+        browser_pool._reset_rate_state()   # reset adaptive pacing learned_gap
         browser_pool.config.SUBMIT_GAP_SEC = 0.3
         try:
             async def main():
@@ -288,13 +289,15 @@ def test_rate_limit_widens_submit_gap_then_decays():
     try:
         b.note_rate_limited(now=1000.0)
         assert b._effective_gap_boost(1000.0) == b.RATE_LIMIT_GAP_STEP
-        # dính lại (qua đợt) → cộng thêm một bậc
-        b.note_rate_limited(now=1000.0 + b.RATE_LIMIT_PAUSE_SEC + 1)
-        after = b._effective_gap_boost(1000.0 + b.RATE_LIMIT_PAUSE_SEC + 1)
-        assert after >= 2 * b.RATE_LIMIT_GAP_STEP - 0.1, after
+        # dính lại (qua đợt, pause=90s > 60s decay → boost cũ đã decay hết)
+        t2 = 1000.0 + b.RATE_LIMIT_PAUSE_SEC + 1
+        b.note_rate_limited(now=t2)
+        after = b._effective_gap_boost(t2)
+        # boost cũ decay hết (90s > 60s), boost mới = STEP
+        assert after == b.RATE_LIMIT_GAP_STEP, f"expected {b.RATE_LIMIT_GAP_STEP}, got {after}"
         assert after <= b.RATE_LIMIT_GAP_MAX
         # để yên vài phút → giãn nhịp giảm về 0
-        assert b._effective_gap_boost(1000.0 + b.RATE_LIMIT_PAUSE_SEC + 1 + 600) == 0.0
+        assert b._effective_gap_boost(t2 + 600) == 0.0
     finally:
         _reset_rate_limit()
 
@@ -364,6 +367,41 @@ def test_rate_limit_is_per_proxy():
         _reset_rate_limit()
 
 
+def test_submit_gap_change_applies_to_proxy_already_running():
+    """Đổi nhịp gửi lúc ĐANG CHẠY (/api/admin/submit-gap) phải ăn ngay với proxy ĐÃ gửi rồi.
+
+    Trước đây adaptive pacing lưu gap TUYỆT ĐỐI, chụp config.SUBMIT_GAP_SEC một lần lúc khoá proxy được tạo →
+    người dùng đang bị 710022002, kéo nhịp 3s lên 8s, UI báo OK mà proxy đang chạy vẫn giữ 3s tới khi restart.
+    Đúng cái núm người ta với tay tới khi đang bị chặn thì lại không có tác dụng.
+    """
+    b = browser_pool
+    _reset_rate_limit()
+    saved = b.config.SUBMIT_GAP_SEC
+    try:
+        b.config.SUBMIT_GAP_SEC = 3.0
+        b._rs("proxyA")                      # proxy A đã gửi job → khoá đã tồn tại
+        b.note_rate_limited(now=1000.0, key="proxyA")
+        b.note_rate_limited(now=1000.0 + b.RATE_LIMIT_PAUSE_SEC + 1, key="proxyA")
+        assert b._rs("proxyA")["learned_extra"] == 2.0, b._rs("proxyA")
+
+        b.config.SUBMIT_GAP_SEC = 8.0        # người dùng kéo nhịp lên trong Cài đặt
+        s = b._rs("proxyA")
+        assert b.config.SUBMIT_GAP_SEC + s["learned_extra"] == 10.0, s
+        # proxy chưa từng gửi cũng phải ra CÙNG mức nền, không lệch nhau
+        assert b.config.SUBMIT_GAP_SEC + b._rs("proxyB")["learned_extra"] == 8.0
+
+        for _ in range(b._ADAPTIVE_STREAK_THRESHOLD):
+            b.note_submit_ok("proxyA")
+        assert b._rs("proxyA")["learned_extra"] == 1.5, "5 job OK liên tiếp → bớt phạt 0.5s"
+        # phạt không bao giờ kéo nhịp xuống dưới mức người dùng đặt
+        for _ in range(b._ADAPTIVE_STREAK_THRESHOLD * 10):
+            b.note_submit_ok("proxyA")
+        assert b._rs("proxyA")["learned_extra"] == 0.0, "sàn phạt là 0"
+    finally:
+        b.config.SUBMIT_GAP_SEC = saved
+        _reset_rate_limit()
+
+
 if __name__ == "__main__":
     test_rate_limit_is_per_proxy()
     test_rate_limited_pauses_everyone_then_rotates()
@@ -381,5 +419,7 @@ if __name__ == "__main__":
     test_pinned_nick_reports_real_reason()
     test_auto_retry_off_fails_fast()
     test_submits_are_paced()
+    test_submit_gap_change_applies_to_proxy_already_running()
+    test_rate_limit_widens_submit_gap_then_decays()   # trước đây định nghĩa mà KHÔNG ai gọi
     test_unpinned_job_stops_after_max_rotate()
     print("OK")
