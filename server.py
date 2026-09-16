@@ -407,6 +407,52 @@ def _hard_timeout(duration) -> int:
     return (config.VIDEO_TIMEOUT_30S if duration == 30 else config.VIDEO_TIMEOUT) + HARD_TIMEOUT_GRACE
 
 
+
+# Job báo "đã gửi, chưa xác nhận" nhưng Dola VẪN dựng xong video — lượt đã trừ rồi mà thẻ vẫn đỏ, người dùng
+# phải tự bấm "Video trên Dola của nick" mới nhặt được. Nay tự quét lại hội thoại của nick (KHÔNG tốn lượt) và
+# gắn video vào đúng job. Quét trễ vài phút vì lúc job hỏng video thường còn đang dựng.
+CUU_VIDEO_SAU = (120, 300, 600)
+
+
+def _khop_video(v: dict, prompt: str, sau_khi: float) -> bool:
+    """Ghép đúng video với đúng job: phải tạo SAU lúc gửi và tên hội thoại mang chính prompt này.
+
+    Chỉ so thời gian là dễ vớ nhầm video của job khác trên cùng nick (mỗi nick chạy nhiều job/ngày).
+    Dola đặt tên hội thoại theo prompt (thấy trong log: "生成された動画： 1Clara: White female rescue-clinic…").
+    """
+    if not v.get("video_url") or (v.get("created_at") or 0) < sau_khi - 120:
+        return False
+    moc = "".join((prompt or "").split())[:12]
+    return bool(moc) and moc in "".join(str(v.get("name") or "").split())
+
+
+async def _cuu_video_da_tra_luot(task_id: str, account: str, prompt: str, sau_khi: float):
+    from video_worker_ui import scan_account_videos
+    from video_worker import _download
+    for cho in CUU_VIDEO_SAU:
+        await asyncio.sleep(cho)
+        row = store.get(task_id)
+        if not row or row["status"] == "completed":
+            return                                   # người dùng đã tự nhặt, hoặc job đã xong
+        try:
+            ds = await scan_account_videos(account, 20)
+        except Exception:
+            continue                                 # nick lỗi mạng/cookie → thử lại lần sau
+        for v in ds:
+            if not _khop_video(v, prompt, sau_khi):
+                continue
+            if store.task_by_conversation(v["conversation_id"]):
+                continue                             # video này đã thuộc về job khác
+            try:
+                local = await _download(v["video_url"], account, prompt)
+            except Exception:
+                return
+            store.update(task_id, status="completed", finished_at=time.time(),
+                         conversation_id=v["conversation_id"], error=None, failure_code=None,
+                         video_url=_public_video_url({"local_path": str(local), "video_url": v["video_url"]}))
+            print(f"[{account}] đã CỨU video của job {task_id} từ Dola (lượt đã trừ, không tốn thêm)", flush=True)
+            return
+
 async def _run_task(task_id, model, prompt, ratio, duration, reference_images, client, account=None):
     api_key_hash = client.get("api_key_hash")
     acquired = False
@@ -452,6 +498,12 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
     except Exception as e:
         store.update(task_id, status="failed", error=str(e)[:500],
                      finished_at=time.time())
+        # Lệnh ĐÃ tới Dola (đã trừ lượt) mà không xác nhận được → video nhiều khi vẫn dựng xong. Tự đi nhặt về
+        # thay vì để thẻ đỏ và bắt người dùng bấm tay.
+        row = store.get(task_id)
+        if row and row.get("submitted_at") and (row.get("account") or account):
+            _spawn(_cuu_video_da_tra_luot(task_id, row.get("account") or account, prompt,
+                                          float(row["submitted_at"])))
     finally:
         if reference_root:
             shutil.rmtree(reference_root, ignore_errors=True)
@@ -1283,7 +1335,9 @@ async def admin_account_videos(name: str, limit: int = 30, x_admin_key: str | No
     for v in videos:
         t = by_conv.get(v["conversation_id"]) or {}
         local = "/videos/" in str(t.get("video_url") or "")
-        v.update(task_id=t.get("id", ""), task_status=t.get("status", ""), prompt=t.get("prompt", ""),
+        # Prompt lấy từ job trong tool; job đã bị dọn (tắt server) hoặc video tạo ở máy khác thì rơi về TÊN
+        # hội thoại — Dola đặt tên theo chính prompt, đủ để gộp nhóm trong Kho video.
+        v.update(task_id=t.get("id", ""), task_status=t.get("status", ""), prompt=t.get("prompt") or v.get("name") or "",
                  local_url=t.get("video_url") if local else "",
                  state="local" if local else "failed_but_made" if t.get("status") == "failed" else "remote")
     return {"ok": True, "account": name, "videos": videos}

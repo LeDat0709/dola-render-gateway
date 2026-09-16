@@ -247,6 +247,13 @@ class TaskStore:
             self._conn.commit()
             return cur.rowcount
 
+    def task_by_conversation(self, conversation_id: str) -> dict | None:
+        """Job nào đang giữ hội thoại này — để khi tự cứu video không gắn nhầm video của job khác."""
+        with _LOCK:
+            row = self._conn.execute(
+                "SELECT * FROM tasks WHERE conversation_id=? LIMIT 1", (conversation_id,)).fetchone()
+        return dict(row) if row else None
+
     def pending_task_count(self) -> int:
         with _LOCK:
             return self._conn.execute(
