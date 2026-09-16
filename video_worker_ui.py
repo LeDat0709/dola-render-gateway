@@ -1158,7 +1158,7 @@ async def _generate_via_http(account: str, prompt: str, ratio: str | None, durat
     # với proxy=None: giao diện vẫn hiện IP proxy (bộ nhớ đệm) mà lệnh thật đi từ IP MÁY → nhiều nick dồn chung một IP
     # → 710022002 hàng loạt, lộ IP thật. Lúc này CHƯA gửi gì (chưa trừ lượt) nên pool chuyển nick an toàn — đúng giao
     # kèo của browser.account_proxy ("không lặng lẽ rơi về IP máy").
-    proxy = account_proxy_url(account) or config.PROXY or None
+    proxy = account_proxy_url(account) or None   # đã gồm proxy chung; "" chỉ khi nick không khai proxy nào
     if on_browser_free:
         on_browser_free()   # không giữ slot Chrome nào cả → trả ngay cho nick khác
     conv_id = await submit_via_http(account, prompt, ratio, duration, model_key, proxy, on_submitted=on_submitted)
@@ -1368,7 +1368,10 @@ def _single_request(cookie: str, ms_token: str, fp: str, conversation_id: str, l
 
 async def _fetch_single(session, cookie: str, ms_token: str, fp: str, conversation_id: str, proxy,
                         limit: int = 20) -> dict | None:
-    """Đọc hội thoại 1 lần qua HTTP (đi `proxy`) → dict như POLL_JS (texts/videos/images/videoModels); lỗi mạng/HTTP → None."""
+    """Đọc hội thoại 1 lần qua HTTP (đi `proxy`) → dict như POLL_JS (texts/videos/images/videoModels); lỗi mạng/HTTP → None.
+    proxy == PROXY_PENDING (chưa lấy được IP proxy) → None ngay, KHÔNG gửi request nào."""
+    if proxy == PROXY_PENDING:
+        return None
     headers, params, body = _single_request(cookie, ms_token, fp, conversation_id, limit)
     try:
         async with session.post(_SINGLE_URL, params=params, data=json.dumps(body), headers=headers,
@@ -1382,21 +1385,25 @@ async def _fetch_single(session, cookie: str, ms_token: str, fp: str, conversati
         return None
 
 
+# Chưa lấy được IP proxy của nick: CHỜ rồi lấy lại, không đọc hội thoại. KHÁC None (None = nick không khai proxy nào).
+PROXY_PENDING = "__proxy_pending__"
+
+
 def _next_poll_proxy(account: str, current):
-    """Đường đọc hội thoại kế tiếp khi đường hiện tại lỗi liên tiếp: IP proxy của nick lấy lại (nhà bán có thể đã cấp IP
-    mới) → proxy chung → đi thẳng. Poll chỉ ĐỌC bằng cookie nên không cần đúng IP lúc gửi (đối thủ v1.0.88 cũng
-    "đổi IP rồi dò tiếp"); bỏ cuộc = mất video đã trừ lượt."""
+    """Đường đọc hội thoại kế tiếp khi đường hiện tại lỗi liên tiếp: LẤY LẠI IP proxy của nick (nhà bán có thể đã cấp IP
+    mới; proxy riêng, không thì proxy chung). Không bao giờ rơi về IP máy khi nick đã khai proxy — trước đây bước cuối là
+    "đi thẳng", nên giao diện hiện IP proxy mà Dola thấy IP máy đọc hội thoại của cả loạt nick. Lấy IP lỗi → PROXY_PENDING
+    (vòng theo dõi chờ rồi thử lại tới hết giờ; video vẫn nằm trên Dola, vòng cứu video nhặt sau)."""
     from browser import account_proxy_url
     try:
         fresh = account_proxy_url(account) or None
-    except Exception:  # noqa: BLE001
-        fresh = None
-    for cand in (fresh, config.PROXY or None, None):
-        if cand != current:
-            shown = re.sub(r"//[^@/]+@", "//***@", cand) if cand else "đi thẳng (không proxy)"
-            print(f"[{account}] theo dõi lỗi mạng {POLL_NET_FAILS} lần liên tiếp → đổi đường đọc hội thoại: {shown}", flush=True)
-            return cand
-    return current
+    except Exception as e:  # noqa: BLE001
+        print(f"[{account}] theo dõi: chưa lấy lại được IP proxy ({str(e)[:90]}) — chờ rồi thử lại, KHÔNG đọc bằng IP máy", flush=True)
+        return PROXY_PENDING
+    if fresh != current:
+        shown = re.sub(r"//[^@/]+@", "//***@", fresh) if fresh else "đi thẳng (nick không khai proxy)"
+        print(f"[{account}] theo dõi lỗi mạng {POLL_NET_FAILS} lần liên tiếp → đổi đường đọc hội thoại: {shown}", flush=True)
+    return fresh
 
 
 SCAN_CONCURRENCY = 4   # đọc song song ngần này hội thoại khi quét video nick
@@ -1490,18 +1497,13 @@ def prompt_from_texts(texts) -> str:
 async def scan_account_videos(account: str, limit: int = 30) -> list[dict]:
     """CHECK VIDEO NICK (đối thủ v1.0.88 kho_nick): quét hội thoại gần đây của nick bằng cookie — CHỈ ĐỌC, không gửi tin,
     không tốn lượt — lấy các video đã dựng xong trên Dola, kể cả của job lỗi / quá giờ / IP chết lúc tải (đã trừ lượt).
-    Trả [{conversation_id, name, created_at, video_url}] mới nhất trước. Proxy nick lỗi → đọc đi thẳng."""
+    Trả [{conversation_id, name, created_at, video_url}] mới nhất trước. Đi đúng proxy của nick; proxy lỗi → nổi lỗi."""
     cookie, ms_token, fp = _account_cookies(account)
     from browser import account_proxy_url
-    try:
-        proxy = account_proxy_url(account) or config.PROXY or None
-    except Exception:  # noqa: BLE001 — chỉ đọc hội thoại, không cần đúng IP nick
-        proxy = None
+    # Proxy nick lỗi → NỔI LỖI (giao diện báo, vòng cứu video thử lại mốc sau). Trước đây đọc bằng IP máy.
+    proxy = account_proxy_url(account) or None
     async with aiohttp.ClientSession() as session:
         convs = await _recent_conversations(session, cookie, ms_token, fp, limit, proxy)
-        if convs is None and proxy:
-            proxy = None
-            convs = await _recent_conversations(session, cookie, ms_token, fp, limit, None)
         if convs is None:
             raise RuntimeError("Không đọc được danh sách hội thoại của nick (cookie chết hoặc mất mạng).")
         sem = asyncio.Semaphore(SCAN_CONCURRENCY)
@@ -1538,12 +1540,13 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
     answered = set() if answered is None else answered
     from browser import account_proxy_url
     try:
-        poll_proxy = account_proxy_url(account) or config.PROXY or None   # poll đi đúng proxy nick, như lúc gửi
+        poll_proxy = account_proxy_url(account) or None   # đúng proxy nick (riêng, không thì chung), như lúc gửi
     except Exception as e:  # noqa: BLE001
-        # SAU khi gửi (đã trừ credit): nhà bán proxy lỗi (cooldown/whitelist) KHÔNG được làm hỏng job — người dùng
-        # thấy lỗi proxy sẽ bấm chạy lại = trừ lượt 2 lần. Poll chỉ đọc hội thoại → đi proxy chung/thẳng.
-        print(f"[{account}] không lấy được proxy riêng để theo dõi, dùng proxy chung/thẳng: {e}", flush=True)
-        poll_proxy = config.PROXY or None
+        # SAU khi gửi (đã trừ lượt): KHÔNG làm hỏng job (người dùng bấm chạy lại = trừ lượt 2 lần), nhưng cũng KHÔNG đọc
+        # bằng IP máy như trước. Chờ rồi lấy lại IP (_next_poll_proxy sau POLL_NET_FAILS nhịp); hết giờ → quá giờ, vòng
+        # cứu video nhặt sau.
+        print(f"[{account}] chưa lấy được IP proxy để theo dõi — chờ rồi lấy lại, KHÔNG đọc bằng IP máy: {e}", flush=True)
+        poll_proxy = PROXY_PENDING
     net_fails = 0
     async with aiohttp.ClientSession() as session:
         while time.time() - start < timeout:

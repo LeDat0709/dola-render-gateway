@@ -544,7 +544,22 @@ def account_proxy(account: str) -> dict | None:
             raise RuntimeError(
                 f"Proxy xoay riêng của nick {account} không lấy được IP ({mask_proxy(raw)}){detail} — kiểm tra "
                 "key/link, hạn dùng và whitelist IP trên trang nhà bán.")
-    return parse_proxy(config.PROXY)
+        # proxy.txt CÓ nội dung mà đọc không ra proxy (sai định dạng, kiểu tool khác xuất ra như host:port@user:pass,
+        # file sửa tay). Trước đây rơi xuống proxy chung/IP máy: đo thật 16/09 thì bước kiểm cookie gọi Dola THẲNG từ
+        # IP máy bằng cookie của nick, nút "Kiểm tra proxy" báo ổn với IP máy. Nick đã khai proxy riêng → không đi thẳng.
+        raise RuntimeError(
+            f"proxy.txt của nick {account} sai định dạng ({mask_proxy(raw)}) — sửa proxy của nick ở bảng Tài khoản "
+            "(host:port, host:port:user:pass, user:pass@host:port, hoặc link/key proxy xoay).")
+    shared = normalize_proxy_input(config.PROXY)
+    if not shared:
+        return None   # nick không khai proxy riêng, cũng không có proxy chung → đi thẳng là cấu hình của người dùng
+    got = parse_proxy(shared)
+    if got:
+        return got
+    # Proxy CHUNG đã khai mà không lấy/đọc được (proxy xoay lỗi, sai định dạng) → cũng không lặng lẽ đi IP máy.
+    reason = rotating_last_error(shared) if is_rotating_proxy(shared) else "sai định dạng"
+    raise RuntimeError(f"Proxy chung ({mask_proxy(shared)}) không dùng được: {reason or 'không lấy được IP'} — "
+                       "kiểm tra Cài đặt → Proxy chung.")
 
 
 def account_proxy_url(account: str) -> str:

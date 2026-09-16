@@ -126,7 +126,8 @@ async function applyParsed(ses, p, send) {
 async function applyProxyRaw(ses, raw, send) {
   if (isRotating(raw)) throw new Error("Proxy xoay phải giải qua gateway — dùng resolveProxy/applyProxy.");
   const p = parseProxy(raw);
-  if (!p && send && raw) send(`⚠ Proxy "${raw}" sai định dạng — đang nối thẳng.`);
+  // Có chuỗi mà đọc không ra proxy → NÉM. Trước đây báo "đang nối thẳng" rồi đi IP máy thật.
+  if (!p && String(raw || "").trim()) throw new Error(`Proxy "${raw}" sai định dạng — KHÔNG nối thẳng bằng IP máy. Chấp nhận: ${PROXY_FORMATS}`);
   return applyParsed(ses, p, send);
 }
 
@@ -146,7 +147,15 @@ function fromServerDict(d) {
 // BẮT BUỘC gọi TRƯỚC freeProfileForLogin(): ở chế độ gửi "fetch" hàm đó GIẾT gateway.
 async function resolveProxy(repoRoot, name) {
   const raw = accountProxy(repoRoot, name);
-  if (!isRotating(raw)) return parseProxy(raw);   // tĩnh hoặc rỗng → null = nối thẳng, y như trước
+  if (!isRotating(raw)) {
+    const p = parseProxy(raw);
+    // Rỗng → null = nối thẳng (nick không khai proxy nào). CÓ chuỗi mà sai định dạng → NÉM: trước đây trả null, cửa sổ
+    // nick nối thẳng bằng IP máy trong khi người dùng tưởng đã gắn proxy (khớp browser.account_proxy bên Python).
+    if (!p && String(raw || "").trim()) {
+      throw new Error(`Proxy của nick "${name}" sai định dạng ("${raw}") — sửa proxy của nick. KHÔNG nối thẳng bằng IP máy.`);
+    }
+    return p;
+  }
   const env = readEnvLocal(repoRoot);
   // 20s chứ không phải 10s mặc định: một lần lấy IP lạnh của proxyxoay tốn tới 5s (hỏi IP máy để tự khai
   // whitelist) + 12s (gọi get.php) → 10s là abort oan rồi báo "gateway không trả lời".
@@ -178,6 +187,26 @@ async function testProxy(raw, url = "https://www.dola.com/") {
   const r = await probeUrl(ses, url);
   if (r.ok) return { ok: true, via, status: r.status };
   return { ok: false, via, error: `Không vào được dola.com qua ${via}: ${r.error}` };
+}
+
+// Tải file (video) QUA SESSION của nick → đi đúng proxy của session (kể cả proxy có mật khẩu, qua sự kiện "login").
+// Trước đây fetch-generate tải bằng https/http của Node: module đó KHÔNG theo proxy của session → file video luôn tải
+// bằng IP máy dù cửa sổ nick đi proxy. request tiêm được để test bằng node thường.
+function downloadViaSession(url, dest, ses, request) {
+  const req0 = request || ((opts) => require("electron").net.request(opts));
+  return new Promise((resolve, reject) => {
+    let req;
+    try { req = req0({ method: "GET", url, session: ses, redirect: "follow" }); } catch (e) { return reject(e); }
+    req.on("response", (res) => {
+      if (res.statusCode !== 200) return reject(new Error("HTTP " + res.statusCode));
+      const file = fs.createWriteStream(dest);
+      res.on("data", (chunk) => file.write(chunk));
+      res.on("end", () => file.end(() => resolve(dest)));
+      res.on("error", (e) => { file.destroy(); fs.unlink(dest, () => {}); reject(e); });
+    });
+    req.on("error", reject);
+    req.end();
+  });
 }
 
 // Mã lỗi mạng của Chromium -> câu tiếng Việt nói rõ phải làm gì.
@@ -267,6 +296,6 @@ async function preflightDola(ses, repoRoot, name, url = "https://www.dola.com/",
 module.exports = {
   readEnvLocal, parseProxy, isKeyLink, isRotating, normalizeProxyInput, globalProxy, accountProxy, applyProxyRaw, applyProxy, hookProxyAuth,
   describeNetError, showLoadError, attachLoadErrorHandler, probeUrl, preflightDola, testProxy,
-  applyParsed, resolveProxy, fromServerDict,   // main.js gọi 2 hàm đầu; test-proxy.cjs kiểm đường proxy xoay
+  applyParsed, resolveProxy, fromServerDict, downloadViaSession,   // main.js gọi 2 hàm đầu; test-proxy.cjs kiểm đường proxy xoay
   DEFAULT_PROXY, PROXY_FORMATS,
 };

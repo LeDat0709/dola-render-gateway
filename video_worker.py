@@ -312,7 +312,9 @@ class DownloadError(RuntimeError):
 async def _fetch_to_file(url: str, fname: Path, proxy: str | None = None):
     timeout = aiohttp.ClientTimeout(total=300)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url, proxy=proxy or config.PROXY or None) as resp:
+        # proxy đã giải sẵn (account_proxy_url gồm cả proxy chung); None = đi thẳng. Không tự lấy config.PROXY thô ở đây:
+        # chuỗi đó có thể là link/key proxy xoay, không phải địa chỉ proxy.
+        async with session.get(url, proxy=proxy) as resp:
             resp.raise_for_status()
             with open(fname, "wb") as f:
                 async for chunk in resp.content.iter_chunked(1 << 16):
@@ -340,19 +342,20 @@ async def _download(url: str, account: str, prompt: str = "") -> Path:
     """
     from browser import account_proxy_url
     try:
-        proxy = account_proxy_url(account) or None  # tải video đi đúng proxy của nick, không phải IP chung
+        proxy = account_proxy_url(account) or None  # đúng proxy của nick (riêng, không thì chung)
     except Exception as e:  # noqa: BLE001
-        # Render xong 9–35 phút sau khi gửi: cache IP đã hết, nhà bán lỗi (cooldown/whitelist) → ĐỪNG làm hỏng job
-        # đã trừ credit (thấy lỗi proxy người dùng bấm chạy lại = trừ lượt 2 lần) → tải đi thẳng.
-        print(f"[{account}] không lấy được proxy để tải, tải đi thẳng: {e}", flush=True)
+        # Chưa lấy được IP proxy: KHÔNG tải bằng IP máy như trước. DownloadError → job "tải hỏng" (không phải lỗi gửi,
+        # không ai bấm chạy lại) và vòng cứu video tải lại bằng URL mới ở mốc sau, lúc proxy đã có IP.
+        if not config.DIRECT_DOWNLOAD_FALLBACK:
+            raise DownloadError(url, f"chưa lấy được IP proxy của nick để tải: {str(e)[:90]}") from e
+        print(f"[{account}] không lấy được proxy để tải, tải đi thẳng (DOLA_DIRECT_DOWNLOAD_FALLBACK=1): {e}", flush=True)
         proxy = None
     dl_dir = Path(config.DOWNLOAD_DIR)
     dl_dir.mkdir(parents=True, exist_ok=True)
     parts = [_prompt_slug(prompt), account, time.strftime('%Y%m%d_%H%M%S')]   # theo PROMPT, không STT
     fname = dl_dir / ("_".join(p for p in parts if p) + ".mp4")   # bỏ phần rỗng, khỏi "__"
-    # Tải qua PROXY của nick trước; rớt hết thì thử ĐI THẲNG (bỏ proxy) — CDN video thường không cần IP nick,
-    # nên proxy chậm/chết không làm mất video (trước đây rớt proxy là mất luôn bản về máy). last giữ lỗi cuối.
-    lanes = [proxy] if not proxy else [proxy, None]
+    # Tải qua PROXY của nick. Đi thẳng chỉ khi người dùng BẬT DOLA_DIRECT_DOWNLOAD_FALLBACK (proxy hay cắt file lớn).
+    lanes = [proxy, None] if proxy and config.DIRECT_DOWNLOAD_FALLBACK else [proxy]
     last, saved = "", False
     for lane in lanes:
         for attempt in range(1, DOWNLOAD_RETRIES + 1):

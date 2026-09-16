@@ -3,11 +3,9 @@
 // gateway, no patchright, no clicking. SUBMIT_JS / POLL_JS are copied verbatim from
 // video_worker.py — keep them in sync if the Python changes.
 const { BrowserWindow, session } = require("electron");
-const { applyProxy, attachLoadErrorHandler, preflightDola } = require("./proxy.cjs");
+const { applyProxy, attachLoadErrorHandler, preflightDola, downloadViaSession } = require("./proxy.cjs");
 const fs = require("fs");
 const path = require("path");
-const https = require("https");
-const http = require("http");
 
 const SUBMIT_JS = `
 async ({prompt, ratio, duration, model, query, ackIdleMs}) => {
@@ -218,24 +216,6 @@ function unwatermarkedUrl(videoModelStr, fallback) {
   return fallback;
 }
 
-function download(url, dest, redirects = 0) {
-  return new Promise((resolve, reject) => {
-    if (redirects > 5) return reject(new Error("too many redirects"));
-    const mod = url.startsWith("https") ? https : http;
-    mod.get(url, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        return download(res.headers.location, dest, redirects + 1).then(resolve, reject);
-      }
-      if (res.statusCode !== 200) { res.resume(); return reject(new Error("HTTP " + res.statusCode)); }
-      const file = fs.createWriteStream(dest);
-      res.pipe(file);
-      file.on("finish", () => file.close(() => resolve(dest)));
-      file.on("error", (e) => { fs.unlink(dest, () => {}); reject(e); });
-    }).on("error", reject);
-  });
-}
-
 // Capture the API query the page itself uses (device_id, tea_uuid, web_id, region, ...).
 function captureQuery(ses, ms = 15000) {
   return new Promise((resolve) => {
@@ -395,7 +375,7 @@ async function fetchGenerate(opts) {
         step("Hoàn thành — đang tải về…");
         fs.mkdirSync(downloadsDir, { recursive: true });
         const dest = path.join(downloadsDir, name + "_" + Date.now() + ".mp4");
-        await download(url, dest);
+        await downloadViaSession(url, dest, ses);   // qua session nick = đúng proxy; KHÔNG dùng https của Node (đi IP máy)
         return { ok: true, file: dest, conversationId: convId };
       }
       step("Đang tạo… (" + Math.round((Date.now() - start) / 1000) + "s)");

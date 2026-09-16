@@ -296,19 +296,28 @@ def _fake_net(dead_proxy):
 
 def test_dead_proxy_mid_render_switches_route_not_lose_video():
     """Đối thủ v1.0.88 "IP đứt giữa lúc chờ dựng → đổi IP rồi dò tiếp". IP proxy của nick chết SAU khi gửi (đã trừ lượt):
-    trước đây quay vòng tới hết giờ rồi báo quá giờ, video mất. Giờ sau POLL_NET_FAILS lỗi liên tiếp đổi đường đọc."""
+    trước đây quay vòng tới hết giờ rồi báo quá giờ, video mất. Sau POLL_NET_FAILS lỗi liên tiếp đổi đường đọc — bằng cách
+    LẤY LẠI IP proxy của nick (nhà bán cấp IP mới), KHÔNG rơi về IP máy (16/09: bản cũ đổi sang đi thẳng, Dola thấy IP máy
+    đọc hội thoại của cả loạt nick trong khi giao diện hiện IP proxy)."""
     import browser
-    dead = "http://u:p@9.9.9.9:1"
+    dead, fresh = "http://u:p@9.9.9.9:1", "http://u:p@8.8.8.8:2"
     saved = (vw.aiohttp.ClientSession, browser.account_proxy_url, vw.config.PROXY)
+    calls = {"n": 0}
+
+    def proxy_then_new_ip(acc):          # lần đầu: IP đang chết; lấy lại: nhà bán đã cấp IP mới
+        calls["n"] += 1
+        return dead if calls["n"] == 1 else fresh
     try:
-        browser.account_proxy_url = lambda acc: dead
+        browser.account_proxy_url = proxy_then_new_ip
         vw.config.PROXY = ""
-        # 1) theo dõi HTTP: đi proxy nick chết 3 lần → chuyển đi thẳng → ra video
+        # 1) theo dõi HTTP: đi proxy nick chết 3 lần → lấy lại IP proxy mới → ra video
         Session, used = _fake_net(dead)
         vw.aiohttp.ClientSession = Session
         out = asyncio.run(vw.poll_conversation_http("acc1", "c=1", "", "", "77", 60, answered=set()))
-        assert out.get("local_path") and used[:vw.POLL_NET_FAILS] == [dead] * vw.POLL_NET_FAILS and used[-1] is None, used
-        # 2) theo dõi TRONG Chrome: mạng trong trang chết → đọc qua HTTP (IP nick lấy lại vẫn chết → đi thẳng) → ra video
+        assert out.get("local_path") and used[:vw.POLL_NET_FAILS] == [dead] * vw.POLL_NET_FAILS and used[-1] == fresh, used
+        assert None not in used, f"đã đọc hội thoại bằng IP máy: {used}"
+        # 2) theo dõi TRONG Chrome: mạng trong trang chết → đọc qua HTTP bằng IP proxy (chết) → lấy lại IP mới → ra video
+        calls["n"] = 0
         Session, used = _fake_net(dead)
         vw.aiohttp.ClientSession = Session
 
@@ -320,14 +329,15 @@ def test_dead_proxy_mid_render_switches_route_not_lose_video():
             async def cookies(self, *a): return [{"name": "sessionid", "value": "s"}]
         out = asyncio.run(vw.poll_conversation("acc1", Page(), Ctx(), "77", timeout=60, answered=set()))
         assert out.get("local_path") and out["conversation_id"] == "77", out
-        assert used[:vw.POLL_NET_FAILS] == [dead] * vw.POLL_NET_FAILS and used[-1] is None, used
+        assert used[:vw.POLL_NET_FAILS] == [dead] * vw.POLL_NET_FAILS and used[-1] == fresh, used
+        assert None not in used, f"đã đọc hội thoại bằng IP máy: {used}"
     finally:
         vw.aiohttp.ClientSession, browser.account_proxy_url, vw.config.PROXY = saved
 
 
 def test_scan_account_videos_reads_history_only():
     """Check Video Nick: quét hội thoại gần đây bằng cookie (chỉ đọc) → chỉ trả hội thoại có video, mới nhất trước;
-    proxy nick lỗi thì đọc đi thẳng."""
+    mọi request đi đúng proxy của nick; proxy nick lỗi thì BÁO LỖI, không đọc bằng IP máy (16/09)."""
     import json as _j
     import browser
     tmp = Path(tempfile.mkdtemp())
@@ -351,10 +361,13 @@ def test_scan_account_videos_reads_history_only():
         async def __aenter__(self): return self
         async def __aexit__(self, *a): return False
 
+    via = []
+
     class Session:
-        def post(self, url, data=None, **k):
+        def post(self, url, data=None, proxy=None, **k):
             body = _j.loads(data)
             sent.append(body["cmd"])
+            via.append(proxy)
             if "recent_conv" in url:
                 return Resp(cells)
             cid = body["uplink_body"]["pull_singe_chain_uplink_body"]["conversation_id"]
@@ -362,14 +375,27 @@ def test_scan_account_videos_reads_history_only():
         async def __aenter__(self): return self
         async def __aexit__(self, *a): return False
 
+    nick_proxy = "http://u:p@7.7.7.7:3"
+
     def boom(acc): raise RuntimeError("proxy nick lỗi")
     saved = (vw.aiohttp.ClientSession, vw.config.ACCOUNTS_DIR, browser.account_proxy_url)
     try:
-        vw.aiohttp.ClientSession, vw.config.ACCOUNTS_DIR, browser.account_proxy_url = Session, tmp, boom
+        vw.aiohttp.ClientSession, vw.config.ACCOUNTS_DIR = Session, tmp
+        browser.account_proxy_url = lambda acc: nick_proxy
         vids = asyncio.run(vw.scan_account_videos("n1", 10))
         assert [v["conversation_id"] for v in vids] == ["333", "111"], vids        # mới nhất trước, bỏ hội thoại không có video
         assert vids[1]["created_at"] == 1_700_000_000 and vids[0]["video_url"] == "https://x/c.mp4", vids   # ms → giây
         assert set(sent) == {3200, 3100}, "chỉ lệnh ĐỌC (recent_conv + single), không gửi tin"
+        assert via and set(via) == {nick_proxy}, f"quét phải đi đúng proxy của nick: {via}"
+        # proxy nick lỗi → báo lỗi, KHÔNG gửi request nào (trước đây đọc bằng IP máy)
+        sent.clear(); via.clear()
+        browser.account_proxy_url = boom
+        try:
+            asyncio.run(vw.scan_account_videos("n1", 10))
+            raise AssertionError("proxy nick lỗi mà quét vẫn chạy (bằng IP máy)")
+        except RuntimeError as e:
+            assert "proxy nick lỗi" in str(e), e
+        assert via == [] and sent == [], f"đã gọi Dola khi proxy lỗi: {via}"
     finally:
         vw.aiohttp.ClientSession, vw.config.ACCOUNTS_DIR, browser.account_proxy_url = saved
 

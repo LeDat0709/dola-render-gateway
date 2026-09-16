@@ -114,8 +114,12 @@ async def add_account_flow(account: str, email: str, password: str, secret: str)
                   "locale": "ja-JP", "timezone_id": "Asia/Tokyo"}
         if config.BROWSER_CHANNEL:
             kwargs["channel"] = config.BROWSER_CHANNEL
-        if config.PROXY:
-            kwargs["proxy"] = {"server": config.PROXY}
+        # Proxy RIÊNG của nick (không thì proxy chung). Trước đây chỉ gắn proxy chung → nick có proxy riêng đăng nhập bằng
+        # proxy chung/IP máy rồi chạy bằng IP khác. Lấy proxy lỗi → NÉM, không đăng nhập bằng IP máy.
+        from browser import account_proxy
+        proxy_cfg = await asyncio.to_thread(account_proxy, account)
+        if proxy_cfg:
+            kwargs["proxy"] = proxy_cfg
         context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
         try:
             page = context.pages[0] if context.pages else await context.new_page()

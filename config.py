@@ -144,6 +144,10 @@ PARALLEL_PER_IP = max(1, int(os.getenv("DOLA_PARALLEL_PER_IP", "1")))
 # từ lúc gửi tới lúc tải xong; hết chỗ thì CHỜ chứ không mở nick (đối thủ v1.0.88: "Đang chờ chỗ trên IP chung").
 # 0 = không giới hạn (mặc định, như cũ). Nhiều nick chung một IP mà hay dính 710022002 → đặt 2–3.
 MAX_JOBS_PER_IP = max(0, int(os.getenv("DOLA_MAX_JOBS_PER_IP", "0")))
+# Nick ĐÃ khai proxy thì mọi đường tới Dola/CDN (gửi, theo dõi, quét, tải) đi đúng proxy đó — lỗi thì chờ/báo lỗi, KHÔNG
+# rơi về IP máy. Ngoại lệ DUY NHẤT, mặc định tắt: tải file video từ CDN đi thẳng khi proxy cắt ngang lúc tải (proxy rẻ
+# hay cắt file lớn). Bật = 1 nếu video hay "tải hỏng" qua proxy; đổi lại CDN thấy IP máy.
+DIRECT_DOWNLOAD_FALLBACK = os.getenv("DOLA_DIRECT_DOWNLOAD_FALLBACK", "0").strip().lower() in ("1", "true", "yes", "on")
 
 # Tự xóa watermark "Dola AI" ngay khi tải video xong (BẬT mặc định; DOLA_AUTO_REMOVE_WM=0 để tắt)
 AUTO_REMOVE_WM = os.getenv("DOLA_AUTO_REMOVE_WM", "1").strip().lower() not in ("0", "false", "no", "off", "")

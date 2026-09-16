@@ -1093,8 +1093,12 @@ async def admin_account_check_proxy(name: str, x_admin_key: str | None = Header(
     from browser import account_proxy_url, account_proxy_raw
     import aiohttp
     raw = account_proxy_raw(name)
-    url = account_proxy_url(name) or None      # proxy nick, thiếu thì rơi về proxy chung
     out = {"ok": False, "has_own": bool(raw), "via": "riêng" if raw else ("chung" if config.PROXY else "nối thẳng")}
+    try:
+        url = account_proxy_url(name) or None      # proxy nick, thiếu thì rơi về proxy chung
+    except Exception as e:  # noqa: BLE001 — sai định dạng / proxy xoay không lấy được IP: báo rõ, KHÔNG kiểm bằng IP máy
+        out["error"] = str(e)[:200]
+        return out
     t0 = time.time()
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:

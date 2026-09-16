@@ -4,7 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { parseProxy, describeNetError, accountProxy, globalProxy, DEFAULT_PROXY,
-        applyProxyRaw, resolveProxy, fromServerDict } = require("./proxy.cjs");
+        applyProxyRaw, resolveProxy, fromServerDict, downloadViaSession } = require("./proxy.cjs");
 
 // Mọi định dạng browser.py hỗ trợ đều phải ra host/port/scheme đúng.
 const cases = [
@@ -101,5 +101,39 @@ assert.strictEqual(accountProxy(tmp, "acc1"), "9.9.9.9:8080", "proxy riêng củ
     globalThis.fetch = fetchGoc;
   }
 
-  console.log("ALL PASS (" + (cases.length + 12 + 9) + " assertions)");
+  // 6) KHÔNG nối thẳng bằng IP máy khi nick CÓ proxy.txt nhưng sai định dạng (trước đây trả null → cửa sổ nối thẳng).
+  const tmp3 = fs.mkdtempSync(path.join(os.tmpdir(), "dola-proxy-bad-"));
+  fs.mkdirSync(path.join(tmp3, "accounts", "bad"), { recursive: true });
+  fs.writeFileSync(path.join(tmp3, "accounts", "bad", "proxy.txt"), "1.2.3.4:8080@user:pass");
+  let e3 = null;
+  try { await resolveProxy(tmp3, "bad"); } catch (e) { e3 = e; }
+  assert.ok(e3 && /sai định dạng/.test(e3.message), "proxy.txt sai định dạng phải NÉM, không nối thẳng: " + (e3 && e3.message));
+  let e4 = null;
+  try { await applyProxyRaw({ setProxy: async () => {} }, "khong-phai-proxy", null); } catch (e) { e4 = e; }
+  assert.ok(e4, "applyProxyRaw với chuỗi sai định dạng phải NÉM, không setProxy direct");
+  fs.mkdirSync(path.join(tmp3, "accounts", "plain"), { recursive: true });
+  assert.strictEqual(await resolveProxy(tmp3, "plain"), null, "nick không khai proxy nào vẫn nối thẳng như cũ");
+
+  // 7) Tải video đi QUA SESSION của nick (đúng proxy), không bằng https của Node (IP máy).
+  const { EventEmitter } = require("events");
+  const nickSes = { name: "persist:dola-n1" };
+  let opts = null;
+  const fakeRequest = (o) => {
+    opts = o;
+    const req = new EventEmitter();
+    req.end = () => setImmediate(() => {
+      const res = new EventEmitter(); res.statusCode = 200;
+      req.emit("response", res);
+      res.emit("data", Buffer.from("video-")); res.emit("data", Buffer.from("bytes")); res.emit("end");
+    });
+    return req;
+  };
+  const dest = path.join(tmp3, "v.mp4");
+  await downloadViaSession("https://cdn.example/v.mp4", dest, nickSes, fakeRequest);
+  assert.strictEqual(opts.session, nickSes, "tải phải đi qua session của nick (proxy của session)");
+  assert.strictEqual(fs.readFileSync(dest, "utf8"), "video-bytes", "file tải về phải đủ dữ liệu");
+  const src = fs.readFileSync(path.join(__dirname, "fetch-generate.cjs"), "utf8");
+  assert.ok(!/require\("https?"\)/.test(src), "fetch-generate.cjs không được dùng lại https/http của Node (đi IP máy)");
+
+  console.log("ALL PASS (" + (cases.length + 12 + 9 + 6) + " assertions)");
 })().catch((e) => { console.error(e); process.exit(1); });
