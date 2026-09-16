@@ -2,6 +2,7 @@
 import tempfile, time
 from pathlib import Path
 
+import server
 from server import RESTART_ERROR, _hard_timeout, _task_stage
 from store import TaskStore
 import config
@@ -22,6 +23,23 @@ def test_boot_sweep_kills_unfinished_only():
         assert store.get("done")["status"] == "completed"                        # job đã xong giữ nguyên
         assert store.pending_task_count() == 0
         assert store.fail_unfinished(RESTART_ERROR) == 0                         # bật lại lần nữa: sạch rồi
+
+
+def test_second_instance_must_not_touch_jobs():
+    """Bật trùng bản thứ hai (./run.sh + nút Bật server): uvicorn chạy lifespan TRƯỚC khi chiếm cổng, nên
+    nếu không có khoá thì bản thừa quét sạch job của bản đang render rồi mới chết vì cổng bận."""
+    keep = config.DB_PATH
+    with tempfile.TemporaryDirectory() as d:
+        config.DB_PATH = str(Path(d) / "t.db")
+        try:
+            assert server._claim_single_instance() is True          # bản đầu: được dọn job cũ
+            held, server._INSTANCE_LOCK = server._INSTANCE_LOCK, None
+            assert server._claim_single_instance() is False         # bản thừa: KHÔNG được đụng job
+            held.close()                                            # bản đầu thoát → nhả khoá
+            assert server._claim_single_instance() is True
+            server._INSTANCE_LOCK.close()
+        finally:
+            config.DB_PATH, server._INSTANCE_LOCK = keep, None
 
 
 def test_hard_timeout_covers_render_plus_overhead():
@@ -58,5 +76,6 @@ def test_client_id_dedupe():
 
 
 if __name__ == "__main__":
-    test_boot_sweep_kills_unfinished_only(); test_hard_timeout_covers_render_plus_overhead()
+    test_boot_sweep_kills_unfinished_only(); test_second_instance_must_not_touch_jobs()
+    test_hard_timeout_covers_render_plus_overhead()
     test_stage_shown_in_ui(); test_client_id_dedupe(); print("OK")

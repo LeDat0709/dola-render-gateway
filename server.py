@@ -464,11 +464,42 @@ RESTART_ERROR = ("Server đã tắt/khởi động lại nên job này dừng th
 STOP_GRACE_SEC = 10   # chờ job đang chạy đóng Chrome + nhả nick rồi mới để tiến trình thoát
 
 
+_INSTANCE_LOCK = None   # giữ mở suốt đời tiến trình; đóng file = nhả khoá
+
+
+def _claim_single_instance() -> bool:
+    """True khi tiến trình này là gateway DUY NHẤT dùng tasks.db — chỉ khi đó mới được dọn job.
+
+    uvicorn chạy lifespan TRƯỚC lúc chiếm cổng (Server.startup): bật trùng một bản nữa (bấm "Bật server"
+    trong khi ./run.sh đang chạy, hoặc mở app hai lần) thì bản thừa vẫn kịp quét sạch job của bản ĐANG
+    CHẠY rồi mới chết vì "address already in use" — đúng cảnh job đang render bỗng báo "Server đã tắt".
+    """
+    global _INSTANCE_LOCK
+    f = open(Path(config.DB_PATH).with_suffix(".lock"), "a+")
+    try:
+        if _os.name == "nt":
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return False
+    _INSTANCE_LOCK = f
+    return True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Bật: dọn job cũ. Tắt: huỷ job đang chạy rồi đánh dấu hỏng — không job nào ở lại trạng thái dở dang."""
-    dropped = store.fail_unfinished(RESTART_ERROR)
-    if dropped:
+    solo = _claim_single_instance()
+    if not solo:
+        print("[gateway] ⚠ Đã có một gateway khác đang chạy trên thư mục dữ liệu này — bản thừa này KHÔNG "
+              "đụng tới job đang chạy. Tắt bớt một bản (cửa sổ ./run.sh hoặc nút Bật server trong app).",
+              flush=True)
+    elif (dropped := store.fail_unfinished(RESTART_ERROR)):
         print(f"[gateway] bỏ {dropped} job dở dang của lần chạy trước (tắt server = tắt job)", flush=True)
     from browser import mask_proxy as _mask, probe_proxy
     print(f"[gateway] proxy chung: {_mask(config.PROXY) or '(không — nối thẳng)'}", flush=True)
@@ -478,6 +509,8 @@ async def lifespan(app: FastAPI):
             print(f"[gateway] ⚠ proxy chung {_mask(config.PROXY)} KHÔNG nối được ({bad}) — mọi nick không có "
                   "proxy riêng sẽ lỗi. Sửa hoặc xoá trống ở Cài đặt → Proxy chung rồi Tắt/Bật server.", flush=True)
     yield
+    if not solo:
+        return                                    # bản thừa thoát: job là của bản kia, không được đụng
     for t in list(_BG_TASKS):
         t.cancel()
     if _BG_TASKS:
