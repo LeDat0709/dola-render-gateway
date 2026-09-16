@@ -37,6 +37,16 @@ const CHROME_WIN_PATHS = [
   process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe") : "",
 ];
 const hasChromeWin = () => CHROME_WIN_PATHS.some((p) => p && fs.existsSync(p));
+// Mac cũng phải dò: build-mac.sh đóng gói sẵn Chromium để "Mac chưa có Chrome vẫn chạy", nhưng trước đây
+// chỉ Windows được rơi về nó — Mac chưa cài Chrome thì patchright báo "distribution chrome is not found"
+// ngay lần thêm nick đầu tiên, tức người dùng mới trên Mac không dùng được gì.
+const CHROME_MAC_PATHS = [
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  path.join(process.env.HOME || "", "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+];
+const hasChromeMac = () => CHROME_MAC_PATHS.some((p) => p && fs.existsSync(p));
+// true = máy này KHÔNG có Chrome thật → phải dùng Chromium đóng gói kèm.
+const thieuChromeThat = () => (_IS_WIN ? !hasChromeWin() : process.platform === "darwin" ? !hasChromeMac() : false);
 
 function pyEnv() {
   const env = { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" };
@@ -46,7 +56,7 @@ function pyEnv() {
     env.PATCHRIGHT_BROWSERS_PATH = BROWSERS_DIR;
     // Mặc định worker mở Chrome thật (giả lập tốt hơn). Máy chưa cài Chrome thì phải
     // rơi về Chromium kèm theo, nếu không mọi nick đều lỗi ngay từ lần mở đầu.
-    if (_IS_WIN && !hasChromeWin()) env.DOLA_BROWSER_CHANNEL = "";
+    if (thieuChromeThat()) env.DOLA_BROWSER_CHANNEL = "";
   }
   return env;
 }

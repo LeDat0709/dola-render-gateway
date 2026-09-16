@@ -53,6 +53,7 @@
         "filter": [
           "**/*.py",
           "web/**/*",
+              "assets/**/*",
           "extensions/**/*",
           "requirements.txt",
           "!.venv/**",

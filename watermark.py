@@ -10,6 +10,7 @@ Box is expressed as fractions of width/height, calibrated on a 1280x720 render
 (logo ≈ x 0.86–0.995, y 0.905–0.99). Override via DOLA_WM_X/Y/W/H if Dola moves it.
 """
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -59,6 +60,30 @@ def probe_duration(path) -> float | None:
         return None
 
 
+def _dims_ffmpeg(path: Path) -> tuple[int, int, float] | None:
+    """Đo kích thước bằng chính ffmpeg (imageio-ffmpeg đã kèm) — KHÔNG cần cv2.
+
+    cv2 là điểm lỗi hay gặp trên Windows (thiếu VC++ runtime -> ImportError). Không có đường này thì cv2 hỏng
+    là mọi video lặng lẽ không được xoá logo, dù ffmpeg chạy tốt và delogo vốn không cần cv2.
+    """
+    exe = _ffmpeg_exe()
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, "-hide_banner", "-i", str(path)],
+                           capture_output=True, timeout=30, creationflags=_NO_WINDOW)
+        err = r.stderr.decode(errors="replace")
+    except Exception:
+        return None
+    m = re.search(r"Video:.*?\b(\d{2,5})x(\d{2,5})\b", err, re.S)
+    if not m:
+        return None
+    w, h = int(m.group(1)), int(m.group(2))
+    f = re.search(r"\b([\d.]+) fps\b", err)
+    fps = float(f.group(1)) if f else 24.0
+    return (w, h, fps) if w > 0 and h > 0 else None
+
+
 def _dims(path: Path) -> tuple[int, int, float] | None:
     try:
         import cv2
@@ -69,9 +94,9 @@ def _dims(path: Path) -> tuple[int, int, float] | None:
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
         cap.release()
-        return (w, h, fps) if w > 0 and h > 0 else None
+        return (w, h, fps) if w > 0 and h > 0 else _dims_ffmpeg(path)
     except Exception:
-        return None
+        return _dims_ffmpeg(path)   # cv2 thiếu/hỏng → đo bằng ffmpeg, đừng bỏ luôn việc xoá logo
 
 
 def _box(w: int, h: int) -> tuple[int, int, int, int]:

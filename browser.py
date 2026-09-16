@@ -3,6 +3,7 @@ import asyncio
 import contextlib
 import hashlib
 import os
+import sys
 import re
 import shutil
 import subprocess
@@ -605,6 +606,29 @@ def assert_profile_free(profile_dir: Path) -> None:
     a second launch silently hands off to it and exits, surfacing only as TargetClosedError.
     Stale locks from dead pids are cleaned up automatically.
     """
+    # Windows: Chromium dùng file khoá tên "lockfile" (không phải symlink "SingletonLock") — xem chính driver
+    # patchright: lockFile = process.platform === "win32" ? "lockfile" : "SingletonLock". Trước đây hàm này
+    # thoát ngay ở is_symlink() nên trên Windows KHÔNG dọn được Chrome mồ côi: job crash một lần là nick đó
+    # treo mãi với TargetClosedError khó hiểu. Windows khoá file độc quyền → mở được = không ai giữ.
+    if sys.platform == "win32":
+        wlock = profile_dir / "lockfile"
+        if not wlock.exists():
+            return
+        try:
+            with open(wlock, "r+b"):
+                pass
+        except PermissionError:
+            raise RuntimeError(
+                f"Profile {profile_dir.name} đang bị một Chrome khác giữ — đóng cửa sổ Chrome của nick này "
+                "(hoặc Tắt/Bật server) rồi chạy lại.")
+        except OSError:
+            return
+        for f in ("lockfile", "SingletonLock", "SingletonCookie", "SingletonSocket"):
+            try:
+                (profile_dir / f).unlink(missing_ok=True)
+            except Exception:
+                pass
+        return
     lock = profile_dir / "SingletonLock"
     if not lock.is_symlink():
         return
