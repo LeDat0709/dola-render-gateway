@@ -55,3 +55,4 @@ docs/design/*.html
 broker_secret
 .claude/
 *.mp4
+tasks.lock
