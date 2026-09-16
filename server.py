@@ -411,7 +411,7 @@ def _hard_timeout(duration) -> int:
 # Job báo "đã gửi, chưa xác nhận" nhưng Dola VẪN dựng xong video — lượt đã trừ rồi mà thẻ vẫn đỏ, người dùng
 # phải tự bấm "Video trên Dola của nick" mới nhặt được. Nay tự quét lại hội thoại của nick (KHÔNG tốn lượt) và
 # gắn video vào đúng job. Quét trễ vài phút vì lúc job hỏng video thường còn đang dựng.
-CUU_VIDEO_SAU = (120, 300, 600)
+CUU_VIDEO_SAU = (120, 300, 600, 1200, 2400)   # 2/5/10/20/40 phút
 
 
 
@@ -452,8 +452,12 @@ async def _cuu_video_da_tra_luot(task_id: str, account: str, prompt: str, sau_kh
         if v:
             try:
                 local = await _download(v["video_url"], account, prompt)
-            except Exception:
-                return
+            except Exception as exc:
+                # ĐỪNG bỏ cuộc: link CDN Dola có chữ ký hết hạn, mốc sau quét lại sẽ ra URL MỚI. Trước đây
+                # tải hỏng một lần là dừng hẳn, mất luôn video đã trả lượt.
+                print(f"[{account}] cứu video job {task_id}: tải hỏng ({str(exc)[:90]}) — thử lại mốc sau",
+                      flush=True)
+                continue
             # Ghi rõ video được tạo LÚC NÀO và lệch bao nhiêu so với lúc gửi — để người dùng tự kiểm tool có
             # nhặt đúng video của job này không (ghép không theo tên hội thoại được, xem _chon_video).
             tao_luc = int(v.get("created_at") or 0)
@@ -500,10 +504,22 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             on_conversation_id=on_conversation_id, on_poll=on_poll,
             on_submitted=on_submitted, on_opening=on_opening,
             reference_image_paths=reference_paths, account=account), _hard_timeout(duration))
-        public_url = _public_video_url(result)
-        store.update(task_id, status="completed", video_url=public_url,
-                     account=result.get("account"), last_poll_at=time.time(),
-                     finished_at=time.time(), error=_short_video_note(result, duration))
+        acc_that = result.get("account") or account
+        if not result.get("local_path"):
+            # Dola dựng XONG (đã trừ lượt) nhưng CDN/proxy làm hỏng lượt tải. Trước đây vẫn ghi "completed" kèm
+            # link CDN — người dùng tưởng video đã về máy, tới lúc bấm thì link ký đã hết hạn, mất trắng.
+            # Ghi đúng sự thật + tự đi tải lại bằng URL MỚI quét từ hội thoại.
+            store.update(task_id, status="failed", failure_code="download_failed",
+                         video_url=result.get("video_url"), conversation_id=result.get("conversation_id"),
+                         account=acc_that, finished_at=time.time(),
+                         error="Dola đã dựng xong nhưng chưa tải được về máy "
+                               f"({str(result.get('download_error') or '')[:90]}) — đang tự tải lại, "
+                               "không tốn thêm lượt. Hoặc bấm nút quét video của nick.")
+            _spawn(_cuu_video_da_tra_luot(task_id, acc_that, prompt, time.time()))
+        else:
+            store.update(task_id, status="completed", video_url=_public_video_url(result),
+                         account=acc_that, last_poll_at=time.time(),
+                         finished_at=time.time(), error=_short_video_note(result, duration))
     except asyncio.TimeoutError:
         store.update(task_id, status="failed", finished_at=time.time(),
                      error=f"Job treo quá {_hard_timeout(duration) // 60} phút — đã bỏ để giải phóng nick.")
