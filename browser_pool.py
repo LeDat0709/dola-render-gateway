@@ -1105,7 +1105,7 @@ class BrowserPool:
                         await ensure_proxy_alive(account)
                     except RuntimeError as _pw:
                         last_err = _pw
-                        self._record_presubmit_failure(account, _pw)
+                        self._rest_after_presubmit_fail(account, _pw)
                         continue
                     except Exception:  # noqa: BLE001
                         pass  # timeout/lỗi lạ → để Chrome xử
