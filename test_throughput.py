@@ -19,6 +19,9 @@ def _pool(tmp: str, nicks=("acc1", "acc2")) -> BrowserPool:
 async def _scenario(tmp: str) -> float:
     pool = _pool(tmp)
     submitting = 0
+    # Đo TRẦN CHROME, không đo giãn nhịp: .env.local của máy thật đặt DOLA_SUBMIT_GAP=2 nên _pace chèn 2–4,5s
+    # vào giữa hai lần gửi và test đo được 3–5s → hỏng vì cấu hình máy, không phải vì code.
+    browser_pool.config.SUBMIT_GAP_SEC, browser_pool.config.SUBMIT_JITTER_SEC = 0, 0
 
     async def fake_generate(account, prompt, *a, on_browser_free=None, **kw):
         nonlocal submitting

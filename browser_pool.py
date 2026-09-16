@@ -60,10 +60,14 @@ class PreSubmitStallError(RuntimeError):
     """Worker treo TRƯỚC khi gửi lệnh tới Dola (chưa trừ credit) → xoay nick an toàn."""
 
 
-async def _presubmit_guard(worker, account, *args, on_submitted, **kwargs):
+async def _presubmit_guard(worker, account, *args, on_submitted, on_browser_hold=None, **kwargs):
     """Hủy worker nếu một pha trước khi gửi quá PRESUBMIT_TIMEOUT_SEC. on_submitted(True) → tắt đồng hồ VĨNH VIỄN
     (lệnh có thể đã tới Dola; render 30s 9–35 phút không được cắt). False khi chưa từng True (worker chắc chắn lệnh
-    chưa tới Dola, sắp thử fetch lần 2 / UI) → đặt lại hạn cho pha mới."""
+    chưa tới Dola, sắp thử fetch lần 2 / UI) → đặt lại hạn cho pha mới.
+
+    CHỜ SLOT CHROME KHÔNG PHẢI LÀ TREO: engine HTTP bị từ chối thì worker xin lại slot (on_browser_hold) và có thể
+    xếp hàng sau các nick khác. Tính cả lúc xếp hàng vào đồng hồ thì càng tăng luồng càng nhiều nick bị báo
+    "treo quá 300s" rồi bị xoay oan — đúng cảnh "tăng luồng là lỗi". Có slot rồi mới bấm giờ lại cho pha mở Chrome."""
     budget = PRESUBMIT_TIMEOUT_SEC   # đọc lúc gọi, không chốt lúc import
     loop = asyncio.get_running_loop()
     cm = asyncio.timeout(budget)
@@ -78,9 +82,16 @@ async def _presubmit_guard(worker, account, *args, on_submitted, **kwargs):
             cm.reschedule(loop.time() + budget)
         on_submitted(acc, submitted)
 
+    async def _hold():
+        if on_browser_hold:
+            await on_browser_hold()
+        if not sent:
+            cm.reschedule(loop.time() + budget)
+
     try:
         async with cm:
-            return await worker(account, *args, on_submitted=_mark, **kwargs)
+            return await worker(account, *args, on_submitted=_mark,
+                                on_browser_hold=_hold if on_browser_hold else None, **kwargs)
     except Exception as exc:
         # Chỉ đổi loại lỗi khi CHÍNH đồng hồ cắt và lệnh chưa từng gửi (kể cả khi finally đóng Chrome ném lỗi
         # khác). TimeoutError thật của worker ("Hết 2400s chưa ra video") giữ nguyên → nhánh claim+raise.

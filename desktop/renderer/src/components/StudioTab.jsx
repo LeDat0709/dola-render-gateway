@@ -544,11 +544,20 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
         <span>giây</span>
         <Button variant="outline" size="sm" className="h-7" onClick={applyGap}>Áp dụng</Button>
       </div>
-      {parseInt(conc.send, 10) > 5 && (
-        <div className="rounded-md border border-warn/40 bg-warn/10 px-3 py-1.5 text-[11px] leading-relaxed text-warn">
-          ⚠ Đang để <b>{conc.send} nick gửi cùng lúc</b> — mở nhiều Chrome một lúc dễ làm máy nghẽn (nick kẹt lâu ở "đang kiểm tra nick"). <b>3–4 là tối ưu</b>: gửi xong là trả trình duyệt ngay, render chạy nền nên không chậm hơn.
-        </div>
-      )}
+      {/* Trần luồng an toàn phụ thuộc ENGINE: engine "http" không mở Chrome nên máy chịu được nhiều nick —
+          chỗ vỡ là Dola chặn 710022002 "gửi quá dày" THEO IP. Engine "fetch" mới là mỗi nick một Chrome. */}
+      {(() => {
+        const n = parseInt(conc.send, 10) || 0;
+        const noChrome = (health?.submit_mode || "http") === "http";
+        if (n <= (noChrome ? 12 : 5)) return null;
+        return (
+          <div className="rounded-md border border-warn/40 bg-warn/10 px-3 py-1.5 text-[11px] leading-relaxed text-warn">
+            {noChrome
+              ? <>⚠ Đang để <b>{n} nick gửi cùng lúc</b> với engine <b>không mở Chrome</b> — máy thì chịu được, nhưng Dola chặn <b>710022002 "gửi quá dày" theo IP</b>: nhiều nick chung một IP là dính cả loạt. Muốn cao hơn thì <b>mỗi nick một proxy riêng</b> (tab Proxy) và giữ <b>Chờ ngẫu nhiên ≥ 5–15 giây</b>.</>
+              : <>⚠ Đang để <b>{n} nick gửi cùng lúc</b> với engine <b>mở Chrome</b> — mỗi nick một Chrome, dễ làm máy nghẽn (nick kẹt lâu ở "đang kiểm tra nick"). <b>3–4 là tối ưu</b>: gửi xong là trả trình duyệt ngay, render chạy nền nên không chậm hơn. Muốn nhiều luồng thì bật engine không mở Chrome ở Cài đặt.</>}
+          </div>
+        );
+      })()}
       {gen && <div className="text-xs text-muted-foreground">{gen}</div>}
 
       {/* Thẻ theo nick */}

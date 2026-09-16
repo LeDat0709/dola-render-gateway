@@ -293,6 +293,26 @@ def test_worker_timeout_after_submit_claims_not_rotates():
         assert pool.used_today("n1") >= 1, "đã gửi mà hỏng → phải ghi lượt"
 
 
+# ---------- R10b: chờ SLOT CHROME không phải là "treo trước khi gửi" ----------
+def test_waiting_for_browser_slot_is_not_a_stall():
+    """Engine HTTP nhả slot rồi bị Dola từ chối → xin lại slot và phải xếp hàng sau nick khác. Nếu tính cả lúc
+    xếp hàng vào đồng hồ chống treo thì càng tăng luồng càng nhiều nick bị "treo quá Ns" + xoay oan."""
+    with tempfile.TemporaryDirectory() as tmp, _budget(0.4):
+        pool = _pool(tmp)
+
+        async def gen(acc, *a, on_submitted=None, on_browser_free=None, on_browser_hold=None, **kw):
+            on_browser_free()                 # gửi bằng HTTP: trả slot Chrome ngay
+            await asyncio.sleep(0.3)          # Dola từ chối ký → sắp rơi về Chrome
+            await on_browser_hold()           # xin lại slot (thực tế: xếp hàng sau các nick đang mở Chrome)
+            await asyncio.sleep(0.3)          # mở Chrome + gửi
+            on_submitted(acc, True)
+            return {"video_url": "u", "local_path": "/tmp/v.mp4", "account": acc}
+        browser_pool.generate_video = gen
+        out = _run(pool.generate_video("p", "9:16", 10))
+        assert out["account"] == "n1"
+        assert pool.semaphore._value == pool.max_concurrency, "job xong phải trả lại slot Chrome"
+
+
 # ---------- R11: bị hủy lúc treo mà đóng Chrome lỗi → vẫn là treo, vẫn xoay, nhả khoá + slot ----------
 def test_cancel_with_failing_finally_still_rotates():
     with tempfile.TemporaryDirectory() as tmp, _budget(0.2):
