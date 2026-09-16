@@ -1154,10 +1154,11 @@ async def _generate_via_http(account: str, prompt: str, ratio: str | None, durat
     lại (30s/thông số) mà HTTP không trả lời được → mở Chrome bằng resume_video, giữ conversation_id (không gửi lại)."""
     from submit_http import submit_via_http
     from browser import account_proxy_url
-    try:
-        proxy = account_proxy_url(account) or config.PROXY or None
-    except Exception:  # noqa: BLE001 — proxy xoay lỗi lúc lấy IP: gửi đi thẳng còn hơn chặn cả job
-        proxy = None
+    # Lấy IP proxy lỗi (chưa whitelist, key đang chờ, nhà bán lỗi…) → ĐỂ LỖI NỔI LÊN, KHÔNG gửi thẳng. Trước đây gửi
+    # với proxy=None: giao diện vẫn hiện IP proxy (bộ nhớ đệm) mà lệnh thật đi từ IP MÁY → nhiều nick dồn chung một IP
+    # → 710022002 hàng loạt, lộ IP thật. Lúc này CHƯA gửi gì (chưa trừ lượt) nên pool chuyển nick an toàn — đúng giao
+    # kèo của browser.account_proxy ("không lặng lẽ rơi về IP máy").
+    proxy = account_proxy_url(account) or config.PROXY or None
     if on_browser_free:
         on_browser_free()   # không giữ slot Chrome nào cả → trả ngay cho nick khác
     conv_id = await submit_via_http(account, prompt, ratio, duration, model_key, proxy, on_submitted=on_submitted)
