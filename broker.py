@@ -31,6 +31,8 @@ from pydantic import BaseModel, Field
 
 GRANT_TTL_SEC = int(os.getenv("BROKER_GRANT_TTL", "3600"))   # vé job sống 1 giờ mặc định
 _spent: dict[str, int] = {}                                  # client -> số job ĐÃ TẠO (Dola trừ lượt lúc nhận lệnh)
+# ponytail: set chỉ lớn dần, xoá khi khởi động lại (như _spent vốn đã vậy — credit grant là hạn ngắn hạn).
+# Vài nghìn job mới đáng kể. Cần bền qua restart thì đưa cả hai vào store.py.
 _counted: dict[str, set] = {}                                # client -> job id đã tính, để không trừ trùng
 
 

@@ -68,6 +68,8 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     return k;
   };
   const clearJobKey = (n) => { keyMem.current.delete(n); try { localStorage.removeItem(KEY(n)); } catch {} };
+  // ponytail: quét tuần tự cả localStorage mỗi job lúc mở app — vài chục nick thì không đáng kể.
+  // Hàng nghìn nick mới cần bảng ngược (khóa → nick) lưu kèm.
   const nickOfKey = (k) => {   // thẻ chủ của một job theo khóa — đúng cả khi server đã XOAY job sang nick khác
     try { for (let i = 0; i < localStorage.length; i++) { const kk = localStorage.key(i); if (kk?.startsWith("dolaJobKey:") && localStorage.getItem(kk) === k) return kk.slice(11); } } catch {}
     return null;

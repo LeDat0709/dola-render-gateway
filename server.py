@@ -212,6 +212,8 @@ def _auth(authorization):
 # quá ngưỡng thì khoá tạm; so khớp bằng compare_digest (không lộ độ dài/vị trí ký tự đúng qua thời gian đáp).
 ADMIN_MAX_FAILS = 8
 ADMIN_LOCKOUT_SEC = 300.0
+# ponytail: dict không bao giờ dọn — mỗi IP sai để lại 1 ô nhỏ, kẻ dò từ hàng vạn IP sẽ làm nó phình.
+# Đủ cho máy cá nhân/VPS nội bộ. Cần chặt hơn thì dọn ô hết hạn trong _admin_throttle, hoặc đẩy ra fail2ban.
 _admin_fails: dict[str, list] = {}   # ip -> [số lần sai, thời điểm khoá tới]
 
 
