@@ -333,6 +333,19 @@ export async function scanNickVideos(name, limit = 30) {
   if (!r.ok) throw new Error(j.detail || (r.status === 401 ? "sai admin key" : "HTTP " + r.status));
   return j;
 }
+// Quét video trên Dola của NHIỀU nick (gọi lần lượt để không đánh sập gateway; mỗi nick server tự bung
+// song song các hội thoại). onStep(i, tổng, tên nick) để hiện tiến độ. Nick cookie chết → ghi vào errors, chạy tiếp.
+export async function scanAllNickVideos(names, limit = 50, onStep = null) {
+  const videos = [], errors = [];
+  for (let i = 0; i < names.length; i++) {
+    onStep?.(i + 1, names.length, names[i]);
+    try {
+      const r = await scanNickVideos(names[i], limit);
+      (r.videos || []).forEach((v) => videos.push({ ...v, account: v.account || names[i] }));
+    } catch (e) { errors.push(`${names[i]}: ${e?.message || e}`); }
+  }
+  return { videos, errors };
+}
 export async function redownloadVideo(taskId, url, account = "", prompt = "") {
   await ensureConfig();
   const r = await fetch(cfg.base + "/api/admin/redownload", {
