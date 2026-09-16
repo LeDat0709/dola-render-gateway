@@ -455,8 +455,13 @@ async def add_account_via_facebook(
         }
         if config.BROWSER_CHANNEL:
             kw["channel"] = config.BROWSER_CHANNEL
-        if config.PROXY:
-            kw["proxy"] = {"server": config.PROXY}
+        # Đăng nhập phải đi ĐÚNG proxy riêng của nick (kể cả proxy xoay — account_proxy tự giải ra IP thật).
+        # Trước đây chỉ dùng proxy CHUNG: Facebook thấy nick đăng nhập từ một IP rồi hoạt động từ IP khác —
+        # đúng thứ hệ thống chống gian lận soi kỹ nhất. account_proxy tự rơi về proxy chung nếu nick chưa gán.
+        from browser import account_proxy
+        proxy_cfg = await asyncio.to_thread(account_proxy, account)
+        if proxy_cfg:
+            kw["proxy"] = proxy_cfg
 
         ctx = await p.chromium.launch_persistent_context(str(profile_dir), **kw)
         try:
