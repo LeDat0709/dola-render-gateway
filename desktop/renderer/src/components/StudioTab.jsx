@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { SelectNative } from "@/components/ui/select-native";
 import { ViewToggle, useView } from "@/components/ui/view-toggle";
-import { api, submitJob, pollJob, fmtError, creditCost, cheaperHint, firstLine, fnameFromUrl, sttFromUrl, accState, accChip, canRunAccount, deleteAccount, STAGE_TEXT, riskyPrompt, durationMismatch, deadNicks, setConcurrency, patchAccount, wakeAccount, inflightTasks, cookieInfo, accState as accStateOf } from "@/lib/api";
+import { api, submitJob, pollJob, fmtError, creditCost, cheaperHint, firstLine, leadingDuration, fnameFromUrl, sttFromUrl, accState, accChip, canRunAccount, deleteAccount, STAGE_TEXT, riskyPrompt, durationMismatch, deadNicks, setConcurrency, patchAccount, wakeAccount, inflightTasks, cookieInfo, accState as accStateOf } from "@/lib/api";
 
 const MODELS = ["seedance-2.0", "seedance-2.5"];
 const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"];
@@ -147,6 +147,11 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     const risky = riskyPrompt(prompt);
     if (risky) setRow(n, { status: `gửi thử — có từ dễ bị chặn: ${risky}` });
     // Server tự co các mốc thời gian trong prompt về đúng thời lượng (fit_prompt_to_duration) — chỉ báo, không chặn.
+    // Prompt mở đầu bằng "18s"/"20s"… trong khi thẻ chọn 30s: Dola ĐỌC chữ đó rồi cãi ("18秒はサポートされて
+    // いない…最長の15秒で生成します") — tốn lượt mà ra video sai độ dài. durationMismatch không bắt được vì nó chỉ
+    // xét prompt DÀI HƠN lựa chọn. Cảnh báo, không tự sửa prompt (người dùng muốn giữ nguyên chữ của mình).
+    const khaiBao = leadingDuration(prompt, s.dur);
+    if (khaiBao) setRow(n, { status: `⚠ prompt mở đầu "${khaiBao}s" nhưng đang chọn ${s.dur}s — Dola sẽ cãi thời lượng, bỏ chữ đó đi` });
     const over = durationMismatch(prompt, s.dur);
     if (over) setRow(n, { status: `prompt ~${over}s → tự co về ${s.dur}s` });
     if (acc && acc.remaining != null) {

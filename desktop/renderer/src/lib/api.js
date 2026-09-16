@@ -153,6 +153,16 @@ export function promptSeconds(p) {
   for (const m of String(p || "").matchAll(/(\d+(?:[.,]\d+)?)\s*(?:秒|giây|sec(?:ond)?s?\b|s\b)/gi)) max = Math.max(max, parseFloat(m[1].replace(",", ".")));
   return max;
 }
+// Prompt mở đầu bằng khai báo thời lượng ("18s ...", "20s ...") là Dola ĐỌC ĐƯỢC và sẽ cãi: "18秒はサポート
+// されていないため、最長の15秒で生成します" — tốn lượt mà ra video sai độ dài. durationMismatch chỉ bắt khi prompt
+// DÀI HƠN thời lượng chọn nên bỏ lọt trường hợp này (18 không lớn hơn 30). Trả số giây khai báo nếu khác lựa chọn.
+export function leadingDuration(p, dur) {
+  const m = String(p || "").match(/^["'\s]*(\d{1,3})\s*(?:s\b|sec\b|giây|秒)/i);
+  if (!m) return 0;
+  const s = parseInt(m[1], 10);
+  return s && s !== Number(dur) ? s : 0;
+}
+
 export function durationMismatch(p, dur) {
   const s = promptSeconds(p);
   return s > Number(dur) * 1.2 ? Math.round(s) : 0;
