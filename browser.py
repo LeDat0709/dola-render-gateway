@@ -345,6 +345,10 @@ def parse_proxy(raw: str) -> dict | None:
         host, port = parts[0], parts[1]
     else:
         return None
+    # Trước đây chỉ đếm số phần: ":" hay "abc:def" cũng lọt thành {"server": "http://:"} rồi được LƯU làm proxy
+    # của nick (dán nhầm 1 ký tự là nick đó hỏng, báo lỗi khó hiểu lúc chạy). Đòi host có thật + port là số hợp lệ.
+    if not host.strip() or not port.strip().isdigit() or not (0 < int(port) < 65536):
+        return None
     out = {"server": f"{scheme}://{host}:{port}"}
     if user:
         out["username"] = user

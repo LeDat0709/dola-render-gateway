@@ -1052,6 +1052,12 @@ class BrowserPool:
                         if not account_proxy_raw(account):
                             raise
                         _raise_if_delivered(account, e)   # resume_video mở lại Dola sau khi gửi cũng ném lỗi này
+                        # IP này Dola chặn theo VÙNG → đánh dấu bẩn + xin IP mới ngay, y như khi dính 710022002.
+                        # Trước đây chỉ xoay nick: nick sau dễ nhận lại đúng IP vừa bị chặn, tốn thêm ~1 phút/nick.
+                        from browser import mark_ip_dirty, rotate_tmproxy_now
+                        mark_ip_dirty(account, f"chặn vùng: {e}")
+                        if rotate_tmproxy_now(account):
+                            print(f"[pool] {account}: xin IP mới do bị chặn VÙNG (khác 710022002)", flush=True)
                         last_err = e
                         continue
                     except CreditInsufficientError as e:

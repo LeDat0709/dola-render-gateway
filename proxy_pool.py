@@ -192,6 +192,13 @@ class PoolStore:
         info = {"alive": False, "last_check": time.time(), "error": "", "exit_ip": "", "isp": "", "city": "",
                 "latency_ms": None}
         url = await asyncio.to_thread(_aiohttp_url, raw)   # tmproxy://KEY / get.php → gọi API nhà bán (đồng bộ) ngoài vòng lặp
+        # aiohttp KHÔNG đỡ proxy socks (không có aiohttp-socks trong requirements). Trước đây vẫn đưa URL socks
+        # cho nó → luôn ném lỗi → mọi proxy SOCKS bị gắn "chết" oan, dễ tưởng hết proxy sống rồi đi mua thêm.
+        if url and url.split("://", 1)[0].lower().startswith("socks"):
+            info["error"] = "chưa kiểm được (SOCKS — công cụ kiểm chỉ đỡ http/https)"
+            it.update(info)
+            self._save()
+            return
         if not url:
             from browser import is_rotating_proxy, rotating_last_error
             info["error"] = (rotating_last_error(raw) if is_rotating_proxy(raw) else "") or "không lấy được proxy"

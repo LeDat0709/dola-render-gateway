@@ -87,7 +87,31 @@ def test_account_proxy_error_has_real_reason_and_hides_key():
         proxyxoay._cache.clear(); tmproxy._cache.clear()
 
 
+def test_garbage_is_rejected_not_stored_as_proxy():
+    """Trước đây MỌI chuỗi có dấu ':' đều lọt: ':' thành {"server": "http://:"} rồi được lưu làm proxy của nick
+    (dán nhầm 1 ký tự là nick đó hỏng, tới lúc chạy mới báo lỗi khó hiểu). Đòi host có thật + port là số hợp lệ."""
+    import browser
+    for rac in (":", "::", ":::", " : ", "abc:def", "1.2.3.4:abc", "1.2.3.4:0",
+                "1.2.3.4:70000", ":8080", "1.2.3.4:"):
+        assert browser.parse_proxy(rac) is None, f"{rac!r} phải bị từ chối"
+        try:
+            browser.check_proxy_input(rac)
+            raise AssertionError(f"{rac!r} lọt vào kho proxy")
+        except ValueError:
+            pass
+    # Proxy thật vẫn phải qua nguyên vẹn
+    for tot, server in (("1.2.3.4:8080", "http://1.2.3.4:8080"),
+                        ("user:pw@1.2.3.4:8080", "http://1.2.3.4:8080"),
+                        ("http://user:pw@5.6.7.8:8080", "http://5.6.7.8:8080"),
+                        ("socks5://1.2.3.4:1080", "socks5://1.2.3.4:1080"),
+                        ("1.2.3.4:8080:user:pw", "http://1.2.3.4:8080"),
+                        ("proxy.nhaban.vn:9999", "http://proxy.nhaban.vn:9999")):
+        got = browser.parse_proxy(tot)
+        assert got and got["server"] == server, f"{tot!r} -> {got}"
+
+
 if __name__ == "__main__":
     test_check_proxy_input_normalizes_without_network()
     test_account_proxy_error_has_real_reason_and_hides_key()
+    test_garbage_is_rejected_not_stored_as_proxy()
     print("OK")
