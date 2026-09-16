@@ -14,6 +14,8 @@ import json
 import re
 import secrets
 import shutil
+import threading
+import signal
 import time
 import uuid
 from collections import defaultdict
@@ -62,6 +64,53 @@ def _setup_file_log():
         pass
 
 _setup_file_log()
+
+
+def _canh_tien_trinh_cha():
+    """App cha chết kiểu gì thì gateway cũng phải chết theo — nếu không sẽ 'trùng server' ở lần mở sau.
+
+    Electron bị tắt cưỡng bức (End Task, mất điện, Windows Update ép reboot) thì before-quit KHÔNG chạy, tiến
+    trình python này sống sót và vẫn giữ cổng. Lần mở app kế tiếp uvicorn mới chết vì "address already in use",
+    lặp lại mãi tới khi có người tự vào Task Manager. Ở đây tự canh: cha biến mất thì xin tắt êm (SIGTERM để
+    lifespan kịp đóng Chrome + nhả nick), quá hạn thì thoát cứng.
+    """
+    ppid = int(_os.getenv("DOLA_PARENT_PID") or 0)
+    if not ppid:
+        return
+
+    def _cha_con_song() -> bool:
+        if _sys.platform == "win32":
+            import ctypes
+            SYNCHRONIZE = 0x00100000
+            h = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, ppid)
+            if not h:
+                return False
+            still = ctypes.windll.kernel32.WaitForSingleObject(h, 0) != 0   # 0 = WAIT_OBJECT_0 = đã thoát
+            ctypes.windll.kernel32.CloseHandle(h)
+            return still
+        try:
+            _os.kill(ppid, 0)
+            return True
+        except OSError:
+            return False
+
+    def _vong():
+        while True:
+            time.sleep(3)
+            if _cha_con_song():
+                continue
+            print(f"[gateway] app cha (pid {ppid}) đã tắt — gateway tự dừng để không giữ cổng", flush=True)
+            try:
+                signal.raise_signal(signal.SIGTERM)   # uvicorn tắt êm: lifespan đóng Chrome, nhả nick
+            except Exception:
+                pass
+            time.sleep(15)
+            _os._exit(0)          # tắt êm không xong trong 15s thì thoát cứng, đừng giữ cổng nữa
+
+    threading.Thread(target=_vong, daemon=True, name="canh-cha").start()
+
+
+_canh_tien_trinh_cha()
 from add_account import add_account_flow
 from browser_pool import (AllAccountsLimitedError, AllAccountsQuotaBlockedError, BrowserPool,
                           MAX_BROWSER_SLOTS, resize_semaphore)

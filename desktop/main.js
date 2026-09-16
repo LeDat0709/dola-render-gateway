@@ -100,6 +100,9 @@ function lyDoGatewayChet(e) {
 function pyEnv() {
   const env = { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" };
   env.DOLA_DOWNLOAD_DIR = resolveDownloadsDir();   // Python lưu video ĐÚNG thư mục dễ thấy (tuyệt đối)
+  // Gateway tự canh PID này: app bị tắt cưỡng bức (End Task, mất điện) thì before-quit KHÔNG chạy, python
+  // con sống sót giữ cổng → lần mở sau "trùng server". Biết PID cha thì nó tự thoát khi cha biến mất.
+  env.DOLA_PARENT_PID = String(process.pid);
   if (BROWSERS_DIR) {
     env.PLAYWRIGHT_BROWSERS_PATH = BROWSERS_DIR;   // dùng Chromium đóng gói kèm
     env.PATCHRIGHT_BROWSERS_PATH = BROWSERS_DIR;
