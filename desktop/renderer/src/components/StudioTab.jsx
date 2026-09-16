@@ -8,6 +8,7 @@ import NickVideosDialog from "@/components/NickVideosDialog";
 import { toast } from "@/components/ui/toast";
 import { SelectNative } from "@/components/ui/select-native";
 import { ViewToggle, useView } from "@/components/ui/view-toggle";
+import { planPromptFill } from "../lib/promptFill.js";
 import { api, submitJob, pollJob, fmtError, creditCost, cheaperHint, firstLine, leadingDuration, fnameFromUrl, sttFromUrl, accState, accChip, canRunAccount, deleteAccount, STAGE_TEXT, riskyPrompt, durationMismatch, deadNicks, setConcurrency, patchAccount, wakeAccount, inflightTasks, cookieInfo, accState as accStateOf } from "@/lib/api";
 
 const MODELS = ["seedance-2.0", "seedance-2.5"];
@@ -378,29 +379,36 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     setGen(`Auto-drain xong. Xem tiến trình từng nick ở bảng dưới.`);
     api.notify?.("Dola Studio — auto-drain xong", `Đã chạy hết lượt ${plan.length} nick.`);
   }
-  const fillAll = () => { const p = firstLine(bulk); accounts.forEach((a) => setRow(a.account, { prompt: p })); setGen("Đã điền prompt cho tất cả nick."); };
-  // Chia xong phải NÓI RÕ phần lệch: nick không được gán vẫn giữ prompt CŨ (chạy tiếp là tạo lại video cũ,
-  // tốn lượt), còn kịch bản dư thì không ai nhận. Trước đây im lặng cả hai → prompt cũ "tràn" sang mẻ mới.
-  const chiaMsg = (dat, co, donVi) => {
-    const thua = co - dat, thieu = accounts.length - dat;
-    return `Đã chia ${dat} ${donVi}.`
-      + (thieu > 0 ? ` ⚠ ${thieu} nick KHÔNG được gán — vẫn giữ prompt cũ, chạy sẽ tạo lại video cũ (bấm "Xóa prompt" nếu không muốn).` : "")
-      + (thua > 0 ? ` ⚠ ${thua} ${donVi} dư chưa nick nào nhận (thiếu nick).` : "");
+  // CHIA PROMPT chỉ cho nick chạy được NGAY — đúng tập "Chạy sẵn sàng" (sẵn sàng + đủ điểm cho video đang chọn). Trước đây
+  // duyệt MỌI nick: prompt rơi vào nick Tạm ngưng / Hết lượt / thiếu điểm, nick sẵn sàng thì trống (ảnh 16/09). Logic ở
+  // lib/promptFill.js (có test: desktop/test-prompt-fill.cjs).
+  const readyForPrompt = (n) => { const a = accounts.find((x) => x.account === n); return !!a && canRun(a) && !lowCredit(a); };
+  const idleRow = (n) => { const ph = rows[n]?.phase; return !ph || ph === "idle"; };
+  const applyFill = (mode) => {
+    const plan = planPromptFill(mode, bulk, accounts.map((a) => a.account), readyForPrompt, idleRow);
+    if (!plan.readyCount) {
+      setGen(`Không có nick nào chạy được ngay (sẵn sàng + đủ ${needForDur} điểm) để gắn prompt.`);
+      return;
+    }
+    plan.assign.forEach(([n, prompt]) => setRow(n, { prompt }));
+    plan.clear.forEach((n) => setRow(n, { prompt: "" }));
+    const boQua = plan.clear.length ? ` Bỏ prompt cũ ở ${plan.clear.length} nick không chạy được (tạm ngưng / hết lượt / thiếu điểm).` : "";
+    if (mode === "all" || mode === "whole") {
+      setGen(`Đã điền ${mode === "whole" ? "CẢ khối prompt (không ngắt)" : "prompt"} cho ${plan.assign.length} nick sẵn sàng.${boQua}`);
+      return;
+    }
+    // Nói rõ phần lệch: nick sẵn sàng không được gán vẫn giữ prompt CŨ (chạy là tạo lại video cũ); kịch bản dư không ai nhận.
+    const thieu = plan.readyCount - plan.assign.length;
+    setGen(`Đã chia ${plan.assign.length} ${plan.unit} cho nick sẵn sàng.`
+      + (thieu > 0 ? ` ⚠ ${thieu} nick sẵn sàng KHÔNG được gán — vẫn giữ prompt cũ, chạy sẽ tạo lại video cũ (bấm "Xóa prompt" nếu không muốn).` : "")
+      + (plan.extra > 0 ? ` ⚠ ${plan.extra} ${plan.unit} dư chưa nick nào nhận (thiếu nick sẵn sàng).` : "")
+      + boQua);
   };
-  const fillLines = () => { const ps = bulk.split(/\r?\n/).map((x) => x.trim()).filter(Boolean); accounts.forEach((a, i) => ps[i] && setRow(a.account, { prompt: ps[i] })); setGen(chiaMsg(Math.min(ps.length, accounts.length), ps.length, "prompt")); };
-  // MỖI KHỐI 1 NICK: kịch bản nhiều dòng (镜头1…mô tả…音频…) là 1 prompt, các kịch bản CÁCH NHAU DÒNG TRỐNG.
-  // Giữ NGUYÊN cả khối (không ngắt từng dòng) → khối[i] cho nick[i]. Dùng khi prompt là kịch bản nhiều dòng.
-  const fillBlocks = () => {
-    // Kịch bản hay có dòng trống ngăn TỪNG CẢNH (镜头1 / 音频 / 镜头2) chứ không chỉ ngăn giữa các kịch bản.
-    // Tách theo 1 dòng trống sẽ chẻ vụn 1 kịch bản thành nhiều mảnh, mỗi nick nhận một mảnh cụt. Nên nếu văn bản
-    // có DÒNG TRỐNG ĐÔI thì coi đó mới là ranh giới kịch bản (cảnh vẫn cách nhau 1 dòng trống).
-    const doi = bulk.split(/\r?\n\s*\r?\n\s*\r?\n/).map((b) => b.trim()).filter(Boolean);
-    const blocks = doi.length > 1 ? doi : bulk.split(/\r?\n\s*\r?\n/).map((b) => b.trim()).filter(Boolean);
-    accounts.forEach((a, i) => blocks[i] && setRow(a.account, { prompt: blocks[i] }));
-    setGen(chiaMsg(Math.min(blocks.length, accounts.length), blocks.length,
-                   doi.length > 1 ? "kịch bản (cách nhau DÒNG TRỐNG ĐÔI)" : "kịch bản"));
-  };
-  const fillAllWhole = () => { const p = bulk.trim(); if (!p) return; accounts.forEach((a) => setRow(a.account, { prompt: p })); setGen("Đã điền CẢ khối prompt cho tất cả nick (không ngắt)."); };
+  const fillAll = () => applyFill("all");
+  const fillLines = () => applyFill("lines");
+  // MỖI KHỐI 1 NICK: kịch bản nhiều dòng là 1 prompt, các kịch bản cách nhau DÒNG TRỐNG — giữ nguyên cả khối.
+  const fillBlocks = () => applyFill("blocks");
+  const fillAllWhole = () => { if (bulk.trim()) applyFill("whole"); };
   // Xóa prompt cũ hàng loạt (Hoài Nam xin): trả các nick về trạng thái trắng như per-row "Làm mới" — bỏ prompt +
   // reset lỗi/tiến trình, KHÔNG đụng video đã tạo (video nằm ở thư viện). Nick đang chạy thì bỏ qua cho an toàn.
   const clearPrompts = (nicks, label) => {
