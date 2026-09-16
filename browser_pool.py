@@ -1,5 +1,6 @@
 """Browser Account Pool: Manages accounts/ profiles with concurrency control and daily limits."""
 import asyncio
+import contextlib
 import os
 import random
 import shutil
@@ -10,7 +11,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from dola_client import CreditError
-from browser import RegionBlockedError, account_proxy_raw
+from browser import RegionBlockedError, account_proxy_raw, mask_proxy, normalize_proxy_input
 from video_worker_ui import (
     AccountLimitedError,
     ContentPolicyViolationError,
@@ -219,6 +220,43 @@ def note_submit_ok(key: str = "") -> None:
 # tính khe, ngủ ở ngoài → N job song song tự xếp so le thay vì bắn cùng một giây.
 # Khoá THEO PROXY: job trên proxy A không chặn job trên proxy B.
 _PACE_LOCKS: dict[str, asyncio.Lock] = {}
+
+# CHỜ CHỖ TRÊN IP (học từ đối thủ v1.0.88: "Đang chờ chỗ trên IP chung — còn …", "1 key = 1 IP sống"): tối đa
+# config.MAX_JOBS_PER_IP job CHẠY CÙNG LÚC trên một IP ra — proxy riêng của nick, proxy chung, hoặc IP máy (khoá "").
+# Giữ chỗ suốt job (gửi → dựng → tải). Hết chỗ thì CHỜ, không mở nick. _pace chỉ giãn lúc BẮT ĐẦU job; trần này mới
+# chặn được cảnh 10 job cùng dội vào một IP (log: 27 nick không proxy, 10 job song song → 710022002 hàng loạt).
+_egress_busy: dict[str, int] = {}
+EGRESS_POLL_SEC = 0.5
+
+
+def _egress_key(account: str) -> str:
+    return normalize_proxy_input(account_proxy_raw(account) or config.PROXY)
+
+
+@contextlib.asynccontextmanager
+async def _egress_slot(account: str, on_wait=None):
+    """Giữ 1 chỗ trên IP ra của nick. on_wait() gọi MỘT lần khi phải chờ (nhả slot Chrome: job trên IP rảnh vẫn chạy)."""
+    key = _egress_key(account)
+    waited = False
+    # ponytail: dò vòng + đọc config mỗi nhịp (đổi trần lúc chạy là ăn ngay); không xếp hàng công bằng — cần FIFO thì Condition.
+    while 0 < config.MAX_JOBS_PER_IP <= _egress_busy.get(key, 0):
+        if not waited:
+            waited = True
+            where = mask_proxy(key) if key else "IP máy (không proxy)"
+            print(f"[pool] {account}: chờ chỗ trên {where} — đang có {_egress_busy.get(key, 0)}/"
+                  f"{config.MAX_JOBS_PER_IP} job chạy", flush=True)
+            if on_wait:
+                on_wait()
+        await asyncio.sleep(EGRESS_POLL_SEC)
+    _egress_busy[key] = _egress_busy.get(key, 0) + 1   # không có await giữa kiểm và cộng → nguyên tử trong asyncio
+    try:
+        yield
+    finally:
+        left = _egress_busy.get(key, 1) - 1
+        if left > 0:
+            _egress_busy[key] = left
+        else:
+            _egress_busy.pop(key, None)
 
 
 async def _pace(key: str = "") -> None:
@@ -992,22 +1030,24 @@ class BrowserPool:
 
         async def _run_worker(acc, on_balance, seen):
             from browser import proxy_lease, rotate_if_expiring
-            await _pace(account_proxy_raw(acc) or "")
-            await _hold_browser()
-            # IP proxy xoay sắp hết tuổi mà không job nào khác đang dùng → đổi TRƯỚC khi mở nick (không chết giữa lúc gửi).
-            await asyncio.to_thread(rotate_if_expiring, acc)
-            if on_opening:
-                try:
-                    on_opening(acc)
-                except Exception as e:  # noqa: BLE001 — chỉ là nhãn hiển thị, không được làm nick bị xoay/nghỉ
-                    print(f"[pool] {acc}: ghi trạng thái 'đang mở nick' lỗi (bỏ qua): {e!r}", flush=True)
-            with proxy_lease(acc):   # giữ chỗ proxy suốt job: nick khác không tự đổi IP dưới chân job này
-                result = await _presubmit_guard(
-                    generate_video, acc, prompt, ratio, duration, model=model,
-                    on_conversation_id=on_conversation_id, on_poll=on_poll,
-                    on_balance=on_balance, on_submitted=_on_submitted,
-                    on_browser_free=_release_browser, on_browser_hold=_hold_browser,
-                    reference_image_paths=reference_image_paths)
+            # Chờ chỗ trên IP TRƯỚC mọi thứ; lúc chờ nhả slot Chrome (_hold_browser ngay dưới xin lại).
+            async with _egress_slot(acc, on_wait=_release_browser):
+                await _pace(account_proxy_raw(acc) or "")
+                await _hold_browser()
+                # IP proxy xoay sắp hết tuổi mà không job nào khác đang dùng → đổi TRƯỚC khi mở nick (không chết giữa lúc gửi).
+                await asyncio.to_thread(rotate_if_expiring, acc)
+                if on_opening:
+                    try:
+                        on_opening(acc)
+                    except Exception as e:  # noqa: BLE001 — chỉ là nhãn hiển thị, không được làm nick bị xoay/nghỉ
+                        print(f"[pool] {acc}: ghi trạng thái 'đang mở nick' lỗi (bỏ qua): {e!r}", flush=True)
+                with proxy_lease(acc):   # giữ chỗ proxy suốt job: nick khác không tự đổi IP dưới chân job này
+                    result = await _presubmit_guard(
+                        generate_video, acc, prompt, ratio, duration, model=model,
+                        on_conversation_id=on_conversation_id, on_poll=on_poll,
+                        on_balance=on_balance, on_submitted=_on_submitted,
+                        on_browser_free=_release_browser, on_browser_hold=_hold_browser,
+                        reference_image_paths=reference_image_paths)
             try:
                 self._settle(acc, result, model, duration, seen["balance"])
                 # VIDEO XONG = cookie chắc chắn sống (Studio bỏ qua bước kiểm cho nick này). KHÔNG ghi lúc Dola mới nhận

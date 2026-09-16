@@ -140,6 +140,10 @@ XOAY_THEO_LUOT = os.getenv("DOLA_XOAY_THEO_LUOT", "0").strip().lower() in ("1", 
 # Trong lô đó, tối đa K job CHẠY SONG SONG trên cùng 1 IP (đối thủ v1.0.88 "IP chung mẻ": ≤6 job/IP). 1 = tuần tự như cũ.
 # IP đủ N job thì job kế CHỜ các job còn chạy trên IP xong mới đổi IP (đổi lúc đang chạy = cắt IP của chúng).
 PARALLEL_PER_IP = max(1, int(os.getenv("DOLA_PARALLEL_PER_IP", "1")))
+# Tối đa job CHẠY CÙNG LÚC trên MỘT IP ra: proxy riêng của nick, proxy chung, hoặc IP máy khi không proxy. Job giữ chỗ
+# từ lúc gửi tới lúc tải xong; hết chỗ thì CHỜ chứ không mở nick (đối thủ v1.0.88: "Đang chờ chỗ trên IP chung").
+# 0 = không giới hạn (mặc định, như cũ). Nhiều nick chung một IP mà hay dính 710022002 → đặt 2–3.
+MAX_JOBS_PER_IP = max(0, int(os.getenv("DOLA_MAX_JOBS_PER_IP", "0")))
 
 # Tự xóa watermark "Dola AI" ngay khi tải video xong (BẬT mặc định; DOLA_AUTO_REMOVE_WM=0 để tắt)
 AUTO_REMOVE_WM = os.getenv("DOLA_AUTO_REMOVE_WM", "1").strip().lower() not in ("0", "false", "no", "off", "")
