@@ -640,6 +640,23 @@ def test_prompt_read_back_from_conversation():
     assert vw.prompt_from_texts(['動画が生成されました。']) == ""            # không thấy → để người gọi rơi về nguồn khác
 
 
+def test_each_video_gets_its_own_prompt():
+    """Một hội thoại nhiều lượt (prompt khác nhau) → mỗi video mang ĐÚNG prompt sinh ra nó, không đội chung
+    prompt mới nhất. Dola trả tin mới trước, nên prompt của video là tin "đã gửi" đầu tiên đứng SAU nó."""
+    poll = {"stream": [("v", "https://x/v2.mp4", "m2"),
+                       ("t", "動画が生成されました。"),
+                       ("t", "生成された動画：prompt hai、9:16"),
+                       ("v", "https://x/v1.mp4", "m1"),
+                       ("t", "生成された動画：prompt một、9:16")]}
+    out = vw.conversation_videos(poll)
+    assert [o["prompt"] for o in out] == ["prompt hai", "prompt một"], out
+    assert [o["video_url"] for o in out] == ["https://x/v2.mp4", "https://x/v1.mp4"]
+    # Server cũ (chưa có stream) vẫn chạy: 1 video + prompt đọc từ texts
+    old = {"videos": ["https://x/v1.mp4"], "videoModels": [""], "texts": ["生成された動画：chỉ một prompt、9:16"]}
+    assert [o["prompt"] for o in vw.conversation_videos(old)] == ["chỉ một prompt"]
+    assert vw.conversation_videos({"texts": ["không có video"]}) == []
+
+
 def test_http_error_is_not_risk_control():
     """Dola/WAF/proxy trả HTTP lỗi ≠ captcha: không được gắn cooldown 30 phút cho nick.
 
@@ -690,7 +707,7 @@ if __name__ == "__main__":
     test_reply_uses_dola_cap_not_30s(); test_own_directive_is_ignored()
     test_answered_memory_survives_reopen(); test_streaming_message_is_answered_once()
     test_option_list_gets_a_letter_not_yes(); test_http_poll_skips_answered_question()
-    test_http_error_is_not_risk_control(); test_video_wins_over_complaints(); test_prompt_read_back_from_conversation(); test_duration_message_is_not_out_of_credit(); test_generating_notice_is_not_a_refusal(); test_blocked_reason_says_one_thing()
+    test_http_error_is_not_risk_control(); test_video_wins_over_complaints(); test_prompt_read_back_from_conversation(); test_each_video_gets_its_own_prompt(); test_duration_message_is_not_out_of_credit(); test_generating_notice_is_not_a_refusal(); test_blocked_reason_says_one_thing()
     test_prompt_marks_are_scaled_to_duration(); test_parse_credit_need_from_dola_message()
     test_credits_used_is_read_from_start_message(); test_download_failure_keeps_job_with_cdn_link()
     test_submit_timeout_never_resubmits(); test_uncertain_submit_only_resends_when_probe_is_certain(); test_guest_session_is_detected_not_credit(); test_dead_proxy_mid_render_switches_route_not_lose_video(); test_scan_account_videos_reads_history_only(); print("OK")

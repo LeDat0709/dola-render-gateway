@@ -1287,6 +1287,7 @@ def _parse_single(data: dict) -> dict:
     """Mirror of POLL_JS message parsing, in Python (texts / videos / videoModels / images)."""
     dl = (data.get("downlink_body") or {}).get("pull_singe_chain_downlink_body") or {}
     texts, videos, video_models, images = [], [], [], 0
+    stream = []   # ("t", text) / ("v", url, model) theo đúng thứ tự Dola trả (tin MỚI đứng trước)
     for msg in dl.get("messages") or []:
         content = msg.get("content")
         if isinstance(content, str):
@@ -1300,6 +1301,7 @@ def _parse_single(data: dict) -> dict:
             text = (((block.get("content") or {}).get("text_block")) or {}).get("text") or ""
             if text:
                 texts.append(text[:600])
+                stream.append(("t", text[:600]))
             if block.get("block_type") != 2074:
                 continue
             for cre in (((block.get("content") or {}).get("creation_block")) or {}).get("creations") or []:
@@ -1311,8 +1313,10 @@ def _parse_single(data: dict) -> dict:
                 url = (cre.get("video") or {}).get("download_url") or ""
                 if url.startswith("http"):
                     videos.append(url)
-                    video_models.append((cre.get("video") or {}).get("video_model") or "")
-    return {"texts": texts, "videos": videos, "videoModels": video_models, "images": images}
+                    model = (cre.get("video") or {}).get("video_model") or ""
+                    video_models.append(model)
+                    stream.append(("v", url, model))
+    return {"texts": texts, "videos": videos, "videoModels": video_models, "images": images, "stream": stream}
 
 
 # Lỗi mạng LIÊN TIẾP khi theo dõi → coi như IP proxy chết giữa lúc Dola dựng (đã trừ lượt) → đổi đường đọc hội thoại.
@@ -1421,6 +1425,30 @@ _SENT_PREFIX = "生成された動画："
 _RATIO_TAIL = re.compile(r"[、,]\s*\d{1,2}\s*[:：]\s*\d{1,2}\s*$")
 
 
+def conversation_videos(poll: dict) -> list[dict]:
+    """[{video_url, video_model, prompt}] cho MỌI video trong hội thoại, không chỉ cái mới nhất.
+
+    Dola trả tin MỚI trước, nên prompt sinh ra một video là tin "đã gửi" đầu tiên đứng SAU nó. Nhờ vậy hội
+    thoại có nhiều lượt (mỗi lượt một prompt khác) thì mỗi video mang đúng prompt của nó, thay vì tất cả
+    đội chung prompt mới nhất. Không có stream (server cũ) → rơi về cách cũ: 1 video + prompt đầu tiên.
+    """
+    stream = poll.get("stream")
+    if not stream:
+        vids, models = poll.get("videos") or [], poll.get("videoModels") or []
+        if not vids:
+            return []
+        return [{"video_url": extract_unwatermarked_url(models[0] if models else "", vids[0]),
+                 "video_model": models[0] if models else "", "prompt": prompt_from_texts(poll.get("texts"))}]
+    out = []
+    for i, item in enumerate(stream):
+        if item[0] != "v":
+            continue
+        after = [x[1] for x in stream[i + 1:] if x[0] == "t"]   # tin cũ hơn video này
+        out.append({"video_url": extract_unwatermarked_url(item[2], item[1]), "video_model": item[2],
+                    "prompt": prompt_from_texts(after) or prompt_from_texts(poll.get("texts"))})
+    return out
+
+
 def prompt_from_texts(texts) -> str:
     """Prompt đọc từ tin nhắn tool đã gửi: khan ("生成された動画：<prompt>、<tỉ lệ>") hoặc bản có chỉ thị
     ("【この仕様で…】\n<prompt>"). Không thấy → "" để người gọi rơi về nguồn khác."""
@@ -1452,16 +1480,15 @@ async def scan_account_videos(account: str, limit: int = 30) -> list[dict]:
             raise RuntimeError("Không đọc được danh sách hội thoại của nick (cookie chết hoặc mất mạng).")
         sem = asyncio.Semaphore(SCAN_CONCURRENCY)
 
-        async def one(conv):
+        async def one(conv) -> list[dict]:
             async with sem:
                 poll = await _fetch_single(session, cookie, ms_token, fp, conv["conversation_id"], proxy)
-            if not poll or not poll.get("videos"):
-                return None
-            vm = poll.get("videoModels") or []
-            return {**conv, "video_url": extract_unwatermarked_url(vm[0] if vm else "", poll["videos"][0]),
-                    "prompt_seen": prompt_from_texts(poll.get("texts"))}
+            if not poll:
+                return []
+            return [{**conv, "video_url": v["video_url"], "prompt_seen": v["prompt"]}
+                    for v in conversation_videos(poll)]
 
-        found = [v for v in await asyncio.gather(*(one(c) for c in convs)) if v]
+        found = [v for group in await asyncio.gather(*(one(c) for c in convs)) for v in group]
     return sorted(found, key=lambda v: v["created_at"], reverse=True)
 
 
