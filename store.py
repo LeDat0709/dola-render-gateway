@@ -76,8 +76,9 @@ class TaskStore:
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
-                except sqlite3.OperationalError:
-                    pass
+                except sqlite3.OperationalError as e:
+                    if "duplicate column" not in str(e).lower():
+                        raise
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS api_keys (
@@ -102,8 +103,9 @@ class TaskStore:
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE api_keys ADD COLUMN {column} {definition}")
-                except sqlite3.OperationalError:
-                    pass
+                except sqlite3.OperationalError as e:
+                    if "duplicate column" not in str(e).lower():
+                        raise
             self._conn.commit()
 
     @staticmethod
@@ -236,16 +238,47 @@ class TaskStore:
                 ).fetchone()
         return dict(row) if row else None
 
-    def purge_dead_tasks(self) -> int:
-        """Tắt server / thoát app = XOÁ sạch job không ra video (queued, processing, failed).
+    # Job đã có submitted_at = lệnh ĐÃ tới Dola = ĐÃ TRỪ LƯỢT. Xoá nó lúc tắt server là vứt luôn video Dola
+    # vẫn đang dựng. Giữ ngần này để lần bật sau còn quét hội thoại nhặt về; quá hạn thì video cũng đã trôi
+    # khỏi 50 hội thoại gần nhất của nick nên giữ nữa chỉ tồn rác.
+    GIU_JOB_DA_TRA_LUOT_SEC = 6 * 3600
+
+    def purge_dead_tasks(self, now: float | None = None) -> int:
+        """Tắt server / thoát app = XOÁ job không ra video (queued, processing, failed).
 
         Bật lên là bảng sạch, mỗi nick chỉ còn job mình vừa bấm — không thẻ ma, không khóa idempotency
         cũ níu prompt mới lại. Job 'completed' là KHO VIDEO (VideoLibrary đọc /api/admin/tasks) nên giữ.
+
+        NGOẠI LỆ duy nhất: job đã trừ lượt (submitted_at) và còn trong hạn cứu thì KHÔNG xoá — chỉ hạ khỏi
+        'đang chạy'. Bảng vẫn sạch (Studio chỉ hiện queued/processing) mà lượt đã trả vẫn còn đường nhặt lại.
         """
+        now = time.time() if now is None else now
+        het_han = now - self.GIU_JOB_DA_TRA_LUOT_SEC
         with _LOCK:
-            cur = self._conn.execute("DELETE FROM tasks WHERE status != 'completed'")
+            self._conn.execute(
+                "UPDATE tasks SET status='failed', finished_at=?, failure_code='cho_cuu_video', "
+                "error='Server tắt lúc job đang chạy — lệnh đã tới Dola nên lượt đã bị trừ. Bật server lại sẽ "
+                "tự quét hội thoại của nick để nhặt video về, KHÔNG tốn thêm lượt.' "
+                "WHERE status IN ('queued','processing') AND submitted_at IS NOT NULL AND submitted_at > ?",
+                (now, het_han),
+            )
+            cur = self._conn.execute(
+                "DELETE FROM tasks WHERE status != 'completed' AND (submitted_at IS NULL OR submitted_at <= ?)",
+                (het_han,),
+            )
             self._conn.commit()
             return cur.rowcount
+
+    def jobs_cho_cuu_video(self, now: float | None = None) -> list:
+        """Job đã trừ lượt mà chưa ra video, còn trong hạn cứu — bật server lên là xếp lại hàng tự quét."""
+        now = time.time() if now is None else now
+        with _LOCK:
+            rows = self._conn.execute(
+                "SELECT * FROM tasks WHERE status != 'completed' AND submitted_at IS NOT NULL "
+                "AND submitted_at > ? ORDER BY submitted_at DESC",
+                (now - self.GIU_JOB_DA_TRA_LUOT_SEC,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def task_by_conversation(self, conversation_id: str) -> dict | None:
         """Job nào đang giữ hội thoại này — để khi tự cứu video không gắn nhầm video của job khác."""

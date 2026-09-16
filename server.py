@@ -443,10 +443,13 @@ def _chon_video(ds: list, row: dict, sau_khi: float) -> dict | None:
     return min(ung, key=lambda v: abs((v.get("created_at") or 0) - sau_khi), default=None)
 
 
-async def _cuu_video_da_tra_luot(task_id: str, account: str, prompt: str, sau_khi: float):
+async def _cuu_video_da_tra_luot(task_id: str, account: str, prompt: str, sau_khi: float,
+                                 cac_moc: tuple | None = None):
     from video_worker_ui import scan_account_videos
     from video_worker import _download
-    for cho in CUU_VIDEO_SAU:
+    # Đọc CUU_VIDEO_SAU lúc GỌI, không đặt làm giá trị mặc định: mặc định bị chốt lúc định nghĩa hàm nên
+    # test (gán server.CUU_VIDEO_SAU = (0, 0) cho khỏi chờ thật) sẽ không còn tác dụng.
+    for cho in (CUU_VIDEO_SAU if cac_moc is None else cac_moc):
         await asyncio.sleep(cho)
         row = store.get(task_id)
         if not row or row["status"] == "completed":
@@ -484,6 +487,56 @@ async def _cuu_video_da_tra_luot(task_id: str, account: str, prompt: str, sau_kh
                          video_url=_public_video_url({"local_path": str(local), "video_url": v["video_url"]}))
             print(f"[{account}] CỨU được video job {task_id}: {ghi_chu}", flush=True)
             return
+
+
+def _cuu_neu_da_gui(task_id: str, account: str | None, prompt: str) -> bool:
+    """Job hỏng mà lệnh ĐÃ tới Dola (đã trừ lượt) → tự đi nhặt video về.
+
+    Dùng chung cho MỌI nhánh lỗi — treo quá giờ, hết nick, lỗi khác — vì Dola trừ lượt như nhau ở cả ba;
+    trước đây chỉ nhánh `except Exception` cứu, nên job treo quá giờ (ca đáng cứu nhất: Dola VẪN đang dựng)
+    lại là ca bị bỏ. Mốc đếm là submitted_at (LÚC GỬI) chứ không phải lúc lỗi: video sinh ra ngay sau lúc gửi,
+    lấy mốc lỗi thì cửa sổ ghép trong _chon_video lệch hẳn.
+    """
+    row = store.get(task_id)
+    acc = (row or {}).get("account") or account
+    if not (row and row.get("submitted_at") and acc):
+        return False
+    store.update(task_id, error=((row.get("error") or "")[:240]
+                                 + " — lệnh đã tới Dola (lượt đã bị trừ) nên tool đang tự quét lại hội thoại "
+                                   "của nick để nhặt video về, KHÔNG tốn thêm lượt."))
+    _spawn(_cuu_video_da_tra_luot(task_id, acc, prompt, float(row["submitted_at"])))
+    return True
+
+
+# Cứu lại sau khi BẬT SERVER: video của lần chạy trước gần như chắc chắn đã dựng xong rồi, nên quét ngay
+# (10s cho pool kịp nạp cookie) thay vì chờ 2 phút như lúc job vừa hỏng.
+CUU_VIDEO_SAU_KHI_BAT = (10, 90, 300, 900, 1800)
+CUU_LAI_TOI_DA = 40   # trần số job tự quét lúc bật — mỗi job là một lượt đọc hội thoại của nick
+
+
+def _cuu_lai_job_da_tra_luot() -> None:
+    """Bật server: job lần trước đã trừ lượt mà chưa ra video → xếp lại hàng tự quét.
+
+    Tắt server huỷ sạch task nền, nên không nối lại ở đây thì lượt đã trả mất luôn.
+    """
+    cho = store.jobs_cho_cuu_video()
+    if not cho:
+        return
+    if len(cho) > CUU_LAI_TOI_DA:
+        print(f"[gateway] {len(cho)} job đã trừ lượt chờ cứu — chỉ tự quét {CUU_LAI_TOI_DA} job mới nhất; "
+              f"{len(cho) - CUU_LAI_TOI_DA} job cũ hơn phải bấm nút quét video của nick.", flush=True)
+        cho = cho[:CUU_LAI_TOI_DA]
+    dat = 0
+    for row in cho:
+        if not row.get("account"):
+            continue                       # chưa kịp chọn nick thì không biết quét hội thoại của ai
+        _spawn(_cuu_video_da_tra_luot(row["id"], row["account"], row.get("prompt") or "",
+                                      float(row["submitted_at"]), CUU_VIDEO_SAU_KHI_BAT))
+        dat += 1
+    if dat:
+        print(f"[gateway] {dat} job đã trừ lượt của lần chạy trước — đang tự quét hội thoại nhặt video về "
+              "(không tốn thêm lượt)", flush=True)
+
 
 async def _run_task(task_id, model, prompt, ratio, duration, reference_images, client, account=None):
     api_key_hash = client.get("api_key_hash")
@@ -533,21 +586,20 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             store.update(task_id, status="completed", video_url=_public_video_url(result),
                          account=acc_that, last_poll_at=time.time(),
                          finished_at=time.time(), error=_short_video_note(result, duration))
+    # Ba nhánh lỗi, MỘT lối cứu (_cuu_neu_da_gui): lệnh đã tới Dola là đã trừ lượt, bất kể lỗi kiểu gì —
+    # video nhiều khi vẫn dựng xong. Tự đi nhặt về thay vì để thẻ đỏ và bắt người dùng bấm tay.
     except asyncio.TimeoutError:
         store.update(task_id, status="failed", finished_at=time.time(),
                      error=f"Job treo quá {_hard_timeout(duration) // 60} phút — đã bỏ để giải phóng nick.")
+        _cuu_neu_da_gui(task_id, account, prompt)
     except (AllAccountsLimitedError, AllAccountsQuotaBlockedError) as e:
         store.update(task_id, status="failed", error=str(e)[:500],
                      failure_code="429", finished_at=time.time())
+        _cuu_neu_da_gui(task_id, account, prompt)
     except Exception as e:
         store.update(task_id, status="failed", error=str(e)[:500],
                      finished_at=time.time())
-        # Lệnh ĐÃ tới Dola (đã trừ lượt) mà không xác nhận được → video nhiều khi vẫn dựng xong. Tự đi nhặt về
-        # thay vì để thẻ đỏ và bắt người dùng bấm tay.
-        row = store.get(task_id)
-        if row and row.get("submitted_at") and (row.get("account") or account):
-            _spawn(_cuu_video_da_tra_luot(task_id, row.get("account") or account, prompt,
-                                          float(row["submitted_at"])))
+        _cuu_neu_da_gui(task_id, account, prompt)
     finally:
         if reference_root:
             shutil.rmtree(reference_root, ignore_errors=True)
@@ -642,8 +694,10 @@ async def lifespan(app: FastAPI):
         print("[gateway] ⚠ Đã có một gateway khác đang chạy trên thư mục dữ liệu này — bản thừa này KHÔNG "
               "đụng tới job đang chạy. Tắt bớt một bản (cửa sổ ./run.sh hoặc nút Bật server trong app).",
               flush=True)
-    elif (dropped := store.purge_dead_tasks()):
-        print(f"[gateway] xoá {dropped} job cũ của lần chạy trước (bật lên là bảng sạch)", flush=True)
+    else:
+        if (dropped := store.purge_dead_tasks()):
+            print(f"[gateway] xoá {dropped} job cũ của lần chạy trước (bật lên là bảng sạch)", flush=True)
+        _cuu_lai_job_da_tra_luot()   # job purge CHỪA LẠI vì đã trừ lượt → nối lại việc quét, đừng để mất trắng
     from browser import mask_proxy as _mask, probe_proxy
     print(f"[gateway] proxy chung: {_mask(config.PROXY) or '(không — nối thẳng)'}", flush=True)
     if config.PROXY:

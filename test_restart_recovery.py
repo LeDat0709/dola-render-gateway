@@ -27,6 +27,63 @@ def test_purge_keeps_only_finished_videos():
         assert store.purge_dead_tasks() == 0                                      # bật lại lần nữa: sạch rồi
 
 
+def test_job_da_tra_luot_khong_bi_xoa_khi_tat_server():
+    """Tắt server KHÔNG được xoá job đã gửi tới Dola: lượt đã trừ, video vẫn đang dựng.
+
+    Bảng vẫn sạch vì job bị hạ khỏi 'đang chạy' (Studio chỉ hiện queued/processing), nhưng row còn đó để lần
+    bật sau quét hội thoại nhặt video về. Job quá hạn cứu thì xoá như cũ — video đã trôi khỏi lịch sử nick.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        store = TaskStore(str(Path(d) / "t.db"))
+        gio = time.time()
+        store.create("dang_gui", "seedance-2.5", "p", "9:16", 30, account="n1")
+        store.update("dang_gui", status="processing", submitted_at=gio - 60, conversation_id="77")
+        store.create("chua_gui", "seedance-2.5", "p", "9:16", 30)
+        store.update("chua_gui", status="processing", started_at=gio)          # chưa tới Dola → chưa mất gì
+        store.create("qua_han", "seedance-2.5", "p", "9:16", 30, account="n2")
+        store.update("qua_han", status="failed", submitted_at=gio - 7 * 3600)  # quá 6 giờ
+
+        assert store.purge_dead_tasks(now=gio) == 2                            # chua_gui + qua_han
+        assert store.get("chua_gui") is None and store.get("qua_han") is None
+        giu = store.get("dang_gui")
+        assert giu is not None, "job đã trừ lượt mà bị xoá = mất trắng video"
+        assert giu["status"] == "failed", "phải hạ khỏi 'đang chạy' để bảng sạch"
+        assert giu["failure_code"] == "cho_cuu_video"
+        assert [r["id"] for r in store.jobs_cho_cuu_video(now=gio)] == ["dang_gui"]
+        # Bật lại lần nữa (chưa quét kịp): vẫn phải giữ, không xoá dần mất
+        assert store.purge_dead_tasks(now=gio) == 0
+        assert store.get("dang_gui") is not None
+
+
+def test_moi_nhanh_loi_deu_cuu_video_da_tra_luot():
+    """Treo quá giờ / hết nick / lỗi khác: Dola trừ lượt như nhau nên nhánh nào cũng phải đi cứu.
+
+    Trước đây chỉ `except Exception` cứu — job treo quá giờ (ca Dola VẪN đang dựng, đáng cứu nhất) bị bỏ.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        store = TaskStore(str(Path(d) / "t.db"))
+        keep_store, keep_spawn = server.store, server._spawn
+        server.store = store
+        goi = []
+        server._spawn = lambda coro: (coro.close(), goi.append(True))[1]       # khỏi cần event loop trong test
+        try:
+            store.create("chua_gui", "seedance-2.5", "p", "9:16", 30, account="n1")
+            store.update("chua_gui", status="failed")
+            assert server._cuu_neu_da_gui("chua_gui", "n1", "p") is False, "chưa gửi thì không có gì để cứu"
+            assert not goi
+
+            luc_gui = time.time() - 300
+            store.create("da_gui", "seedance-2.5", "p", "9:16", 30, account="n1")
+            store.update("da_gui", status="failed", submitted_at=luc_gui,
+                         error="Job treo quá 25 phút — đã bỏ để giải phóng nick.")
+            assert server._cuu_neu_da_gui("da_gui", "n1", "p") is True
+            assert len(goi) == 1, "job đã trừ lượt phải được xếp hàng cứu"
+            assert "lượt đã bị trừ" in store.get("da_gui")["error"], "phải nói rõ lượt đã mất và đang tự quét"
+            assert "treo quá 25 phút" in store.get("da_gui")["error"], "không được nuốt mất lý do lỗi gốc"
+        finally:
+            server.store, server._spawn = keep_store, keep_spawn
+
+
 def test_second_instance_must_not_touch_jobs():
     """Bật trùng bản thứ hai (./run.sh + nút Bật server): uvicorn chạy lifespan TRƯỚC khi chiếm cổng, nên
     nếu không có khoá thì bản thừa quét sạch job của bản đang render rồi mới chết vì cổng bận."""
@@ -78,6 +135,7 @@ def test_client_id_dedupe():
 
 
 if __name__ == "__main__":
-    test_purge_keeps_only_finished_videos(); test_second_instance_must_not_touch_jobs()
+    test_purge_keeps_only_finished_videos(); test_job_da_tra_luot_khong_bi_xoa_khi_tat_server()
+    test_moi_nhanh_loi_deu_cuu_video_da_tra_luot(); test_second_instance_must_not_touch_jobs()
     test_hard_timeout_covers_render_plus_overhead()
     test_stage_shown_in_ui(); test_client_id_dedupe(); print("OK")
