@@ -721,7 +721,7 @@ class BrowserPool:
 
         Trả True/False; None khi không có bản sao cookie để kiểm tra.
         """
-        from browser import verify_cookie_http
+        from browser import account_proxy_url, verify_cookie_http
         import json as _json
         f = self.accounts_dir / name / "cookies.json"
         if not f.exists():
@@ -734,7 +734,10 @@ class BrowserPool:
             return None
         if "sessionid" not in cookie_str and "sid_guard" not in cookie_str:
             return None
-        ok, _ = await verify_cookie_http(cookie_str)
+        # Kiểm qua ĐÚNG proxy của nick (giải cả proxy xoay). Trước đây luôn dùng proxy chung → nick có proxy
+        # riêng bị trả None rồi phải mở Chrome để kiểm (3 luồng, tới 30s/nick) = bước "kiểm tra nick" ì ạch.
+        via = await asyncio.to_thread(account_proxy_url, name)
+        ok, _ = await verify_cookie_http(cookie_str, proxy=via or None)
         self.set_login_status(name, ok)
         return ok
 

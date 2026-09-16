@@ -774,7 +774,7 @@ def passport_dead(data) -> bool | None:
     return None
 
 
-async def verify_cookie_http(cookie_str: str, timeout: int = 20) -> tuple[bool | None, str]:
+async def verify_cookie_http(cookie_str: str, timeout: int = 20, proxy: str | None = None) -> tuple[bool | None, str]:
     """Check a Dola session with ONE plain HTTP call (no browser) — fast login verify (~1s).
 
     Hỏi passport /account/info/v2 (xem passport_dead). Trả (True, …) sống, (False, …) cookie chết (nick thành
@@ -782,16 +782,20 @@ async def verify_cookie_http(cookie_str: str, timeout: int = 20) -> tuple[bool |
     proxy từng nhập 9 nick thì 8 nick bị ghi "cookie chết" oan chỉ vì proxy mặc định 127.0.0.1:7890 không chạy.
     """
     import aiohttp
+    # proxy=None nghĩa "dùng proxy chung" (giữ hành vi cũ cho chỗ gọi không truyền). Nick có proxy RIÊNG phải
+    # được kiểm qua chính proxy đó: hỏi bằng proxy chung (hoặc proxy chung đang chết) thì trả None → gọi phải
+    # rơi xuống nhánh mở Chrome (3 luồng, tới 30s/nick), làm bước "kiểm tra nick" chậm hàng chục giây.
+    via = proxy if proxy is not None else (config.PROXY or None)
     headers = {"Accept": "application/json", "cookie": cookie_str}
     try:
         async with aiohttp.ClientSession() as sess:
             async with sess.get("https://www.dola.com" + PASSPORT_INFO_PATH, headers=headers,
-                                proxy=config.PROXY or None, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+                                proxy=via or None, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
                 if r.status != 200:
                     return None, f"Dola/WAF trả HTTP {r.status} (chưa kết luận được cookie)"
                 data = await r.json(content_type=None)
     except Exception as exc:
-        return None, f"không tới được dola.com qua {config.PROXY or 'nối thẳng'}: {str(exc)[:80]}"
+        return None, f"không tới được dola.com qua {mask_proxy(via) or 'nối thẳng'}: {str(exc)[:80]}"
     dead = passport_dead(data)
     if dead:
         return False, "Cookie hết hạn — Dola coi nick là khách (session expired), đăng nhập lại."
