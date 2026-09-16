@@ -8,7 +8,6 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
-from PIL import Image
 
 import config
 
@@ -133,6 +132,7 @@ async def _read_response_image(resp: aiohttp.ClientResponse) -> tuple[bytes, str
             raise ValueError("Reference image exceeds single file size limit")
         chunks.append(chunk)
     data = b"".join(chunks)
+    from PIL import Image   # thư viện biên dịch: nạp trong hàm để lỗi nạp không chặn khởi động gateway
     try:
         with Image.open(BytesIO(data)) as image:
             image.verify()

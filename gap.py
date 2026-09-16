@@ -3,12 +3,16 @@
 Extracts the alpha outline of the puzzle piece and matches it against the Canny
 edge map of the background to locate the notch's x-coordinate.
 """
-import cv2
-import numpy as np
+# cv2/numpy nạp TRONG hàm, không ở đầu file: file này nằm trên đường import của server (server → browser_pool
+# → video_worker_ui → gap). Trên Windows thiếu VC++ runtime thì "import cv2" ném ImportError và làm SẬP CẢ
+# GATEWAY ngay lúc khởi động — app chỉ hiện "Server chưa chạy? TypeError: fetch failed", không ai đoán ra vì sao.
+# Để lười thế này thì cv2 hỏng chỉ làm mất đúng tính năng giải captcha trượt, còn tạo video vẫn chạy.
 
 
 def find_gap_x(bg_bytes: bytes, piece_bytes: bytes) -> tuple:
     """Returns (gap_x, confidence). gap_x is the left edge of the notch in natural background pixels."""
+    import cv2
+    import numpy as np
     bg = cv2.imdecode(np.frombuffer(bg_bytes, np.uint8), cv2.IMREAD_COLOR)
     piece = cv2.imdecode(np.frombuffer(piece_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
     if piece is None or bg is None:
