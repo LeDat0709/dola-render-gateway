@@ -627,6 +627,19 @@ def test_duration_message_is_not_out_of_credit():
         assert False, "vẫn bị đọc thành hết điểm"
 
 
+def test_prompt_read_back_from_conversation():
+    """Quét video trên Dola: job không còn trong tool thì prompt phải đọc lại từ chính tin mình đã gửi —
+    tên hội thoại KHÔNG dùng được vì Dola đặt tên "動画生成リクエスト" cho mọi job (kiểm với dữ liệu thật 16/9)."""
+    khan = ['動画が生成されました。',
+            '動画は**Dreamina Seedance 2.5モデル**を使用して生成されます。4クレジットを使用し…',
+            '生成された動画：con mèo đi chơi ngoài đường、9:16']
+    assert vw.prompt_from_texts(khan) == "con mèo đi chơi ngoài đường"      # cắt đuôi tỉ lệ, giữ nguyên prompt
+    directive = ['【この仕様で直接生成してください（10秒・アスペクト比9:16（縦））。長さ・比率は変更せず、追加の確認は不要です】\ncon mèo lướt sóng']
+    assert vw.prompt_from_texts(directive) == "con mèo lướt sóng"
+    assert vw.prompt_from_texts(['生成された動画：a 9:16 shot of a cat、9:16']) == "a 9:16 shot of a cat"   # chỉ cắt ở CUỐI
+    assert vw.prompt_from_texts(['動画が生成されました。']) == ""            # không thấy → để người gọi rơi về nguồn khác
+
+
 def test_http_error_is_not_risk_control():
     """Dola/WAF/proxy trả HTTP lỗi ≠ captcha: không được gắn cooldown 30 phút cho nick.
 
@@ -677,7 +690,7 @@ if __name__ == "__main__":
     test_reply_uses_dola_cap_not_30s(); test_own_directive_is_ignored()
     test_answered_memory_survives_reopen(); test_streaming_message_is_answered_once()
     test_option_list_gets_a_letter_not_yes(); test_http_poll_skips_answered_question()
-    test_http_error_is_not_risk_control(); test_video_wins_over_complaints(); test_duration_message_is_not_out_of_credit(); test_generating_notice_is_not_a_refusal(); test_blocked_reason_says_one_thing()
+    test_http_error_is_not_risk_control(); test_video_wins_over_complaints(); test_prompt_read_back_from_conversation(); test_duration_message_is_not_out_of_credit(); test_generating_notice_is_not_a_refusal(); test_blocked_reason_says_one_thing()
     test_prompt_marks_are_scaled_to_duration(); test_parse_credit_need_from_dola_message()
     test_credits_used_is_read_from_start_message(); test_download_failure_keeps_job_with_cdn_link()
     test_submit_timeout_never_resubmits(); test_uncertain_submit_only_resends_when_probe_is_certain(); test_guest_session_is_detected_not_credit(); test_dead_proxy_mid_render_switches_route_not_lose_video(); test_scan_account_videos_reads_history_only(); print("OK")

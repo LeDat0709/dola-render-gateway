@@ -1415,6 +1415,24 @@ async def _recent_conversations(session, cookie: str, ms_token: str, fp: str, li
     return out
 
 
+# Prompt của một hội thoại khi tool KHÔNG còn job cho nó (job đã dọn, video tạo ở máy khác): đọc lại chính
+# tin nhắn mình đã gửi. Dola đặt tên hội thoại là "動画生成リクエスト" cho mọi job nên tên KHÔNG dùng để gộp được.
+_SENT_PREFIX = "生成された動画："
+_RATIO_TAIL = re.compile(r"[、,]\s*\d{1,2}\s*[:：]\s*\d{1,2}\s*$")
+
+
+def prompt_from_texts(texts) -> str:
+    """Prompt đọc từ tin nhắn tool đã gửi: khan ("生成された動画：<prompt>、<tỉ lệ>") hoặc bản có chỉ thị
+    ("【この仕様で…】\n<prompt>"). Không thấy → "" để người gọi rơi về nguồn khác."""
+    for t in texts or []:
+        tt = (t or "").strip()
+        if tt.startswith(_SENT_PREFIX):
+            return _RATIO_TAIL.sub("", tt[len(_SENT_PREFIX):]).strip()
+        if _is_own_message(tt) and "】" in tt:
+            return tt.split("】", 1)[1].strip()
+    return ""
+
+
 async def scan_account_videos(account: str, limit: int = 30) -> list[dict]:
     """CHECK VIDEO NICK (đối thủ v1.0.88 kho_nick): quét hội thoại gần đây của nick bằng cookie — CHỈ ĐỌC, không gửi tin,
     không tốn lượt — lấy các video đã dựng xong trên Dola, kể cả của job lỗi / quá giờ / IP chết lúc tải (đã trừ lượt).
@@ -1440,7 +1458,8 @@ async def scan_account_videos(account: str, limit: int = 30) -> list[dict]:
             if not poll or not poll.get("videos"):
                 return None
             vm = poll.get("videoModels") or []
-            return {**conv, "video_url": extract_unwatermarked_url(vm[0] if vm else "", poll["videos"][0])}
+            return {**conv, "video_url": extract_unwatermarked_url(vm[0] if vm else "", poll["videos"][0]),
+                    "prompt_seen": prompt_from_texts(poll.get("texts"))}
 
         found = [v for v in await asyncio.gather(*(one(c) for c in convs)) if v]
     return sorted(found, key=lambda v: v["created_at"], reverse=True)

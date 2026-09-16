@@ -1337,7 +1337,7 @@ async def admin_account_videos(name: str, limit: int = 30, x_admin_key: str | No
         local = "/videos/" in str(t.get("video_url") or "")
         # Prompt lấy từ job trong tool; job đã bị dọn (tắt server) hoặc video tạo ở máy khác thì rơi về TÊN
         # hội thoại — Dola đặt tên theo chính prompt, đủ để gộp nhóm trong Kho video.
-        v.update(task_id=t.get("id", ""), task_status=t.get("status", ""), prompt=t.get("prompt") or v.get("name") or "",
+        v.update(task_id=t.get("id", ""), task_status=t.get("status", ""), prompt=t.get("prompt") or v.get("prompt_seen") or v.get("name") or "",
                  local_url=t.get("video_url") if local else "",
                  state="local" if local else "failed_but_made" if t.get("status") == "failed" else "remote")
     return {"ok": True, "account": name, "videos": videos}
