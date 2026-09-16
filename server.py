@@ -1225,6 +1225,10 @@ async def admin_set_concurrency(body: ConcurrencyUpdate, x_admin_key: str | None
         limit = max(1, min(body.login_concurrency, MAX_LOGIN_SLOTS))
         resize_semaphore(login_slots, limit - login_concurrency)
         login_concurrency = limit
+        # verify_all (bước "kiểm tra nick" trước khi chạy) đọc config.LOGIN_CONCURRENCY chứ không đọc biến này.
+        # Thiếu dòng dưới thì đổi ô "Đăng nhập cùng lúc" chỉ ăn vào lúc đăng nhập, còn kiểm nick vẫn giữ số cũ
+        # cho tới khi khởi động lại server — người dùng chỉnh 10 mà vẫn thấy kiểm nick chậm như 3.
+        config.LOGIN_CONCURRENCY = limit
     print(f"[config] luồng gửi={pool.max_concurrency} · luồng đăng nhập={login_concurrency}", flush=True)
     return {"ok": True, "max_concurrency": pool.max_concurrency, "login_concurrency": login_concurrency}
 
