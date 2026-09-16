@@ -70,14 +70,28 @@ class ProxyXoayError(RuntimeError):
     pass
 
 
+def _read_public_ip() -> str:
+    """Hỏi IPv4 công cộng của máy một lần (đi thẳng); lỗi mạng → ""."""
+    try:
+        with urllib.request.urlopen(_PUBLIC_IP_URL, timeout=5) as r:
+            return r.read().decode("ascii", "replace").strip()
+    except (urllib.error.URLError, OSError):
+        return ""
+
+
+def machine_ip_unstable() -> bool:
+    """Hỏi IP máy 2 lần liên tiếp; KHÁC nhau = IP ra đổi theo từng kết nối (VPN xoay IP). Khi đó proxy xác thực theo
+    whitelist IP máy không bao giờ dùng được (phiên 16/09: ipify thấy .171, nhà bán thấy .158, cổng proxy thấy IP khác nữa)."""
+    a, b = _read_public_ip(), _read_public_ip()
+    return bool(a and b and a != b)
+
+
 def _public_ipv4(now: float) -> str:
     """IPv4 công cộng của MÁY (đi thẳng, không qua proxy); lỗi mạng → IP lần trước (hoặc "")."""
     if _pub_ip["ip"] and now - _pub_ip["at"] < _PUBLIC_IP_TTL:
         return _pub_ip["ip"]
-    try:
-        with urllib.request.urlopen(_PUBLIC_IP_URL, timeout=5) as r:
-            ip = r.read().decode("ascii", "replace").strip()
-    except (urllib.error.URLError, OSError):
+    ip = _read_public_ip()
+    if not ip:
         return _pub_ip["ip"]
     if re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", ip):
         _pub_ip.update(ip=ip, at=now)
@@ -206,6 +220,17 @@ def _fetch_url(link: str, url: str, now: float, wl_ip: str = "") -> dict:
         _wl_sent[link] = wl_ip   # khai OK (có proxy trả về) → IP máy chưa đổi thì lần sau khỏi gắn lại
         print(f"[proxyxoay] {mask(link)}: đã tự khai whitelist IP máy {wl_ip}", flush=True)
     return ent
+
+
+def refresh_whitelist(link: str) -> dict:
+    """Khai lại whitelist IP máy NGAY (bỏ bộ nhớ đệm IP máy 5 phút) rồi lấy proxy hiện hành. Gọi khi cổng proxy từ chối
+    kết nối: IP máy vừa đổi (VPN/mạng động — phiên 16/09: 171.241.56.41 → 193.176.211.154 → .164 trong một giờ) mà nhà bán
+    chỉ cho IP đã khai → mọi cổng cắt kết nối."""
+    link = (link or "").strip()
+    with _get_lock(link):
+        _pub_ip["at"] = 0.0
+        _wl_sent.pop(link, None)
+        return _fetch(link, time.time(), fresh=False)
 
 
 def current(link: str) -> dict:

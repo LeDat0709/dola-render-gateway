@@ -651,6 +651,62 @@ def mask_proxy(raw: str) -> str:
     return f"{p[0]}:{p[1]}:{p[2]}:•••" if len(p) >= 4 else s
 
 
+async def probe_proxy_tunnel(proxy_url: str | None, host: str = "www.dola.com", port: int = 443,
+                             timeout: float = 8.0) -> str:
+    """Mở thử ĐƯỜNG HẦM qua proxy tới Dola (CONNECT) — "" = mở được, khác = lý do. KHÔNG gửi gì cho Dola (không TLS, không
+    request), nên chạy trước lệnh gửi để phân biệt "proxy từ chối" với "đứt SAU khi đã gửi". Không proxy / socks → "" (bỏ qua).
+    Phiên 16/09 18:15: IP máy đổi, proxyxoay cắt kết nối (curl 56) → tool coi là "có thể đã trừ lượt" dù lệnh chưa tới Dola."""
+    if not proxy_url:
+        return ""
+    import asyncio
+    import base64
+    from urllib.parse import unquote, urlsplit
+    u = urlsplit(proxy_url)
+    if (u.scheme or "http").lower() != "http":
+        return ""
+    if not u.hostname or not u.port:
+        return "sai địa chỉ proxy"
+    req = f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n"
+    if u.username:
+        cred = f"{unquote(u.username)}:{unquote(u.password or '')}"
+        req += "Proxy-Authorization: Basic " + base64.b64encode(cred.encode()).decode() + "\r\n"
+    req += "\r\n"
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(u.hostname, u.port), timeout)
+        try:
+            writer.write(req.encode())
+            await writer.drain()
+            line = await asyncio.wait_for(reader.readline(), timeout)
+        finally:
+            writer.close()
+    except Exception as exc:  # noqa: BLE001
+        return (str(exc) or type(exc).__name__)[:90]
+    if not line:
+        return "proxy cắt kết nối"
+    parts = line.decode(errors="replace").split()
+    code = parts[1] if len(parts) > 1 else "?"
+    return "" if code == "200" else f"proxy trả {code} khi mở đường tới Dola"
+
+
+def refresh_proxy_whitelist(account: str) -> bool:
+    """Proxy xoay xác thực theo IP máy (proxyxoay.shop / proxy.vn / topproxy) bị từ chối → khai lại whitelist IP máy NGAY.
+    True = đã gọi nhà bán (kể cả khi nhà bán trả "Con Ns moi co the doi" — lệnh khai whitelist vẫn có thể đã được ghi, nơi
+    gọi nên thử lại đường hầm); nick không dùng loại proxy này → False."""
+    key = _effective_rotating(account)
+    if not key:
+        return False
+    import proxyxoay
+    if not proxyxoay.is_key_link(key):
+        return False
+    try:
+        proxyxoay.refresh_whitelist(key)
+        print(f"[proxy] {account}: proxy từ chối kết nối → đã khai lại whitelist IP máy hiện tại", flush=True)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] {account}: khai lại whitelist — nhà bán trả: {str(exc)[:100]} (vẫn thử lại đường hầm)", flush=True)
+        return True
+
+
 async def probe_proxy(raw: str, timeout: float = 3.0) -> str:
     """Mở thử TCP tới host:port của proxy. Trả "" nếu nối được, ngược lại là lý do ngắn.
 

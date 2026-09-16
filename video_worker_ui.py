@@ -1214,6 +1214,23 @@ async def _generate_via_http(account: str, prompt: str, ratio: str | None, durat
     if on_browser_free:
         on_browser_free()   # không giữ slot Chrome nào cả → trả ngay cho nick khác
     await _global_submit_gate(account)   # giãn nhịp chung cho mọi proxy, ngay trước lúc gửi thật (đã nhả slot Chrome)
+    import browser as _browser
+    why = await _browser.probe_proxy_tunnel(proxy)   # proxy có mở được đường tới Dola không — CHƯA gửi gì
+    if why:
+        # Hay gặp nhất: IP máy vừa đổi (VPN/mạng động) nên nhà bán cắt kết nối → khai lại whitelist rồi thử một lần nữa.
+        if await asyncio.to_thread(_browser.refresh_proxy_whitelist, account):
+            proxy = account_proxy_url(account) or None
+            why = await _browser.probe_proxy_tunnel(proxy)
+        if why:
+            import proxyxoay
+            if _browser._effective_rotating(account) and await asyncio.to_thread(proxyxoay.machine_ip_unstable):
+                raise RuntimeError(
+                    f"Proxy của nick {account} từ chối kết nối ({why}) — CHƯA gửi lệnh, không mất lượt. IP máy đang ĐỔI THEO "
+                    "TỪNG KẾT NỐI (thường do VPN) nên proxy xác thực theo whitelist IP máy (proxyxoay/proxy.vn/topproxy) không "
+                    "dùng được. Tắt VPN, hoặc dùng proxy có user:pass / tmproxy.")
+            raise RuntimeError(
+                f"Proxy của nick {account} không mở được đường tới Dola ({why}) — CHƯA gửi lệnh, không mất lượt. Hay gặp "
+                "khi IP máy vừa đổi (bật/tắt VPN, đổi mạng) mà nhà bán proxy chưa whitelist IP mới, hoặc proxy đã chết.")
     before = await _recent_conv_ids_http(account, proxy)   # để phân biệt 710022002 "chưa nhận" với "đã nhận"
     try:
         conv_id = await submit_via_http(account, prompt, ratio, duration, model_key, proxy, on_submitted=on_submitted)
