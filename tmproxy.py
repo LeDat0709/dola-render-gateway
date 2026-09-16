@@ -146,6 +146,19 @@ def status(key: str) -> dict:
             "rotate_in": max(0, int(ent["next_ok"] - now)), "changes": ent.get("changes", 1)}
 
 
+def cached_proxy(key: str) -> dict | None:
+    """{server, username?, password?} từ cache CÒN HẠN (đúng điều kiện current() dùng lại) — KHÔNG gọi mạng. Hết hạn → None."""
+    ent = _cache.get(key)
+    if not ent or time.time() >= ent["exp"]:
+        return None
+    out = {"server": "http://" + ent["https"]}
+    if ent.get("username"):
+        out["username"] = ent["username"]
+    if ent.get("password"):
+        out["password"] = ent["password"]
+    return out
+
+
 def cached_ip(key: str) -> dict:
     """IP đang cache của key (KHÔNG gọi mạng) cho thẻ/cột trạng thái. TMProxy không trả ISP → để trống."""
     ent = _cache.get(key)

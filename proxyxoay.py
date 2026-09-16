@@ -230,6 +230,15 @@ def rotate(link: str) -> dict:
         return _fetch(link, now)
 
 
+def cached_proxy(link: str) -> dict | None:
+    """{server, username?, password?} từ cache CÒN HẠN — đúng điều kiện current() dùng lại cache, nên trả cái này không
+    khác gì current() nhưng KHÔNG BAO GIỜ gọi mạng (không thể cấp IP mới giết cổng của job đang dựng). Hết hạn/chưa có → None."""
+    ent = _cache.get((link or "").strip())
+    if not ent or time.time() - ent["fetched_at"] >= ent["ttl"]:
+        return None
+    return {k: ent[k] for k in ("server", "username", "password") if ent.get(k)}
+
+
 def cached_ip(link: str) -> dict:
     """IP + nhà mạng + vị trí đang cache của link (KHÔNG gọi mạng) cho cột/thẻ trạng thái."""
     ent = _cache.get((link or "").strip())

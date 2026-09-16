@@ -1057,23 +1057,25 @@ async def admin_account_proxy_current(name: str, x_admin_key: str | None = Heade
     trình này). Không có endpoint này thì cửa sổ nối THẲNG khi nick dùng proxy xoay → nick đăng nhập bằng
     IP máy thật rồi render bằng IP proxy, đúng dấu hiệu chống gian lận soi kỹ nhất.
 
-    Vì sao TỪ CHỐI khi proxy đang bận: account_proxy() đi qua current(), mà current() hết hạn cache là gọi
-    lại nhà bán — lấy IP mới thì cổng cũ bị giết, cắt ngang video ĐÃ TRỪ LƯỢT đang dựng. Chờ vài phút rẻ
-    hơn mất một video.
-    ponytail: bận thì từ chối luôn. Muốn đăng nhập được giữa lúc render thì phải có bản đọc-cache-thuần
-    trong proxyxoay.py/tmproxy.py (cached_ip hiện không trả user/pass) — chưa cần.
+    Proxy đang có job dựng: account_proxy() đi qua current(), mà current() hết hạn cache là gọi lại nhà bán — lấy IP
+    mới thì cổng cũ bị giết, cắt ngang video ĐÃ TRỪ LƯỢT. Nên lúc bận CHỈ trả IP trong cache CÒN HẠN (không gọi mạng,
+    chính là IP job đang dùng); cache hết hạn mới từ chối. Trước đây bận là từ chối luôn → mỗi key gánh 6–7 nick thì
+    một job bất kỳ khoá đăng nhập của cả 7 nick suốt lúc dựng (ảnh 16/09).
     """
     _admin_auth(x_admin_key)
     # KHÔNG kiểm pool.accounts như endpoint trên: nick MỚI chưa có thư mục vẫn phải đăng nhập được.
     # NAME_RE vẫn chặn "../" nên không đọc ra ngoài thư mục accounts.
     if not NAME_RE.match(name):
         raise HTTPException(422, "tên nick không hợp lệ")
-    from browser import _effective_rotating, account_proxy, proxy_busy
+    from browser import _effective_rotating, account_proxy, proxy_busy, rotating_cached_proxy
     raw = _effective_rotating(name)
     dang_chay = proxy_busy(raw) if raw else 0
     if dang_chay:
-        raise HTTPException(409, f"Proxy của nick này đang có {dang_chay} job chạy — lấy IP lúc này có thể "
-                                 "đổi IP và làm hỏng video đã trừ lượt. Chờ job xong rồi đăng nhập.")
+        cached = rotating_cached_proxy(raw)
+        if cached:
+            return {"proxy": cached}   # IP job đang dùng, còn hạn — không gọi nhà bán, không đổi IP
+        raise HTTPException(409, f"Proxy của nick này đang có {dang_chay} job chạy và IP đang dùng đã hết hạn — lấy IP "
+                                 "mới lúc này có thể đổi IP và làm hỏng video đã trừ lượt. Chờ job xong rồi đăng nhập.")
     try:
         # urllib trong proxyxoay/tmproxy chặn luồng → to_thread, khỏi treo cả event loop của gateway.
         p = await asyncio.to_thread(account_proxy, name)

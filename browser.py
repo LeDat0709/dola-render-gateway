@@ -305,6 +305,17 @@ def rotating_status(raw: str) -> dict:
             "error": rotating_last_error(s), "dirty": bool(st) and ip_dirty(st)}
 
 
+def rotating_cached_proxy(raw: str) -> dict | None:
+    """Proxy dict của proxy XOAY lấy từ cache CÒN HẠN, KHÔNG gọi nhà bán. Dùng khi proxy đang có job dựng: gọi nhà bán lúc
+    đó có thể cấp IP mới và giết cổng của job. Cache hết hạn / không phải proxy xoay → None."""
+    s = normalize_proxy_input(raw)
+    if s.lower().startswith("tmproxy://"):
+        import tmproxy
+        return tmproxy.cached_proxy(tmproxy.key_of(s))
+    import proxyxoay
+    return proxyxoay.cached_proxy(s) if proxyxoay.is_key_link(s) else None
+
+
 def rotating_lane(raw: str) -> dict | None:
     return _rotating_ent(raw, False)
 
