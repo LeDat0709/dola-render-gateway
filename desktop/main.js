@@ -48,6 +48,17 @@ const hasChromeMac = () => CHROME_MAC_PATHS.some((p) => p && fs.existsSync(p));
 // true = máy này KHÔNG có Chrome thật → phải dùng Chromium đóng gói kèm.
 const thieuChromeThat = () => (_IS_WIN ? !hasChromeWin() : process.platform === "darwin" ? !hasChromeMac() : false);
 
+// "Server chưa chạy?" là câu đoán vô dụng khi người dùng cần biết VÌ SAO. Lấy dòng lỗi thật cuối cùng của
+// tiến trình gateway (ImportError thiếu DLL, cổng bị chiếm, thiếu file…) để họ còn biết đường sửa/gửi lại cho mình.
+function lyDoGatewayChet(e) {
+  const loi = _gwTail.filter((l) => /Error|Traceback|error:|Errno|Address already in use|ModuleNotFound|DLL/i.test(l));
+  const cuoi = (loi.length ? loi : _gwTail).slice(-3).join(" | ").slice(0, 300);
+  if (!gateway.running()) {
+    return cuoi ? `Gateway không chạy. Lỗi cuối: ${cuoi}` : 'Gateway không chạy — bấm "Bật server" ở thanh trên.';
+  }
+  return "Không gọi được gateway: " + String(e).slice(0, 80) + (cuoi ? ` | ${cuoi}` : "");
+}
+
 function pyEnv() {
   const env = { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" };
   env.DOLA_DOWNLOAD_DIR = resolveDownloadsDir();   // Python lưu video ĐÚNG thư mục dễ thấy (tuyệt đối)
@@ -106,6 +117,11 @@ const logTs = () => new Date().toTimeString().slice(0, 8);
 function openLog() {
   try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch (_) {}   // Python (server.py) ghi nội dung
 }
+// Vài dòng cuối gateway in ra, giữ trong bộ nhớ để CÒN NÓI ĐƯỢC LÝ DO khi tiến trình chết ngay lúc khởi động.
+// Lúc đó server.py chưa kịp bật ghi log nên logs/gateway.log TRỐNG, còn process.stdout của Electron thì vô
+// hình trong bản đóng gói → người dùng chỉ thấy "Server chưa chạy? fetch failed" và không ai chẩn đoán nổi.
+const _gwTail = [];
+const GW_TAIL_MAX = 60;
 function pipeLog(stream, tag) {
   let buf = "";
   stream.on("data", (d) => {
@@ -114,7 +130,10 @@ function pipeLog(stream, tag) {
     while ((i = buf.indexOf("\n")) >= 0) {
       const line = `[${logTs()}]${tag} ${buf.slice(0, i)}\n`;
       buf = buf.slice(i + 1);
-      process.stdout.write(line);   // file logs/gateway.log do server.py (Python) tự ghi
+      _gwTail.push(line.trimEnd());
+      if (_gwTail.length > GW_TAIL_MAX) _gwTail.shift();
+      try { fs.appendFileSync(LOG_FILE, line); } catch (_) { /* đĩa đầy/không ghi được: đừng làm sập app */ }
+      process.stdout.write(line);
     }
   });
 }
@@ -955,7 +974,7 @@ ipcMain.handle("config:setAutoRetry", async (_e, { on }) => {
     if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
     if (!c.remote) upsertEnvLocal("DOLA_AUTO_RETRY", on ? "1" : "0");
     return { ok: true, on: !!on, remote: c.remote };
-  } catch (e) { return { ok: false, error: "Server chưa chạy? " + String(e).slice(0, 80) }; }
+  } catch (e) { return { ok: false, error: lyDoGatewayChet(e) }; }
 });
 // MỖI LẦN MỘT NICK: đọc từ /health, đổi qua /api/admin/one-nick (áp dụng ngay), nhớ vào .env.local.
 ipcMain.handle("config:getOneNick", async () => {
@@ -984,7 +1003,7 @@ ipcMain.handle("config:setOneNick", async (_e, { on, nicksPerIp, parallelPerIp }
       if (body.parallel_per_ip) upsertEnvLocal("DOLA_PARALLEL_PER_IP", String(body.parallel_per_ip));
     }
     return { ok: true, on: !!on, nicksPerIp: j.nicks_per_ip, parallelPerIp: j.parallel_per_ip, remote: c.remote };
-  } catch (e) { return { ok: false, error: "Server chưa chạy? " + String(e).slice(0, 80) }; }
+  } catch (e) { return { ok: false, error: lyDoGatewayChet(e) }; }
 });
 ipcMain.handle("proxy:setGlobal", async (_e, { proxy }) => {
   const v = normalizeProxyInput((proxy || "").trim());   // KEY TMProxy trần → tmproxy://KEY
@@ -1165,7 +1184,7 @@ ipcMain.handle("config:setSubmitMode", async (_e, { mode }) => {
     if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
     if (!c.remote) upsertEnvLocal("DOLA_SUBMIT_MODE", mode);
     return { ok: true, mode: j.submit_mode, remote: c.remote };
-  } catch (e) { return { ok: false, error: "Server chưa chạy? " + String(e).slice(0, 80) }; }
+  } catch (e) { return { ok: false, error: lyDoGatewayChet(e) }; }
 });
 ipcMain.handle("config:setSubmitGap", async (_e, { minSec, maxSec }) => {
   const lo = Math.max(0, Math.min(60, Number(minSec)));
