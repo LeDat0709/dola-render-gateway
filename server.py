@@ -414,16 +414,27 @@ def _hard_timeout(duration) -> int:
 CUU_VIDEO_SAU = (120, 300, 600)
 
 
-def _khop_video(v: dict, prompt: str, sau_khi: float) -> bool:
-    """Ghép đúng video với đúng job: phải tạo SAU lúc gửi và tên hội thoại mang chính prompt này.
+CUU_VIDEO_CUA_SO_SEC = 20 * 60   # video phải được tạo trong khoảng này quanh lúc gửi mới coi là của job
 
-    Chỉ so thời gian là dễ vớ nhầm video của job khác trên cùng nick (mỗi nick chạy nhiều job/ngày).
-    Dola đặt tên hội thoại theo prompt (thấy trong log: "生成された動画： 1Clara: White female rescue-clinic…").
+
+def _chon_video(ds: list, row: dict, sau_khi: float) -> dict | None:
+    """Chọn ĐÚNG video của job trong danh sách hội thoại của nick.
+
+    KHÔNG ghép theo tên hội thoại: Dola tự đặt tên tóm tắt (thấy thực tế: "犬舍繁育者视频"), không phải prompt —
+    ghép kiểu đó trượt gần hết. Hai cách chắc chắn hơn:
+      1. Job đã có conversation_id → khớp thẳng, tuyệt đối đúng.
+      2. Chưa có → lấy hội thoại tạo GẦN LÚC GỬI NHẤT trong cửa sổ, và chưa job nào nhận. An toàn vì mỗi nick
+         có khoá riêng nên chạy tuần tự từng job (browser_pool self._locks) — không có hai job cùng nick chạy
+         chồng nhau để mà lẫn.
     """
-    if not v.get("video_url") or (v.get("created_at") or 0) < sau_khi - 120:
-        return False
-    moc = "".join((prompt or "").split())[:12]
-    return bool(moc) and moc in "".join(str(v.get("name") or "").split())
+    if row.get("conversation_id"):
+        return next((v for v in ds if v.get("video_url")
+                     and str(v.get("conversation_id")) == str(row["conversation_id"])), None)
+    ung = [v for v in ds
+           if v.get("video_url")
+           and sau_khi - 120 <= (v.get("created_at") or 0) <= sau_khi + CUU_VIDEO_CUA_SO_SEC
+           and not store.task_by_conversation(str(v.get("conversation_id")))]
+    return min(ung, key=lambda v: abs((v.get("created_at") or 0) - sau_khi), default=None)
 
 
 async def _cuu_video_da_tra_luot(task_id: str, account: str, prompt: str, sau_khi: float):
@@ -438,11 +449,8 @@ async def _cuu_video_da_tra_luot(task_id: str, account: str, prompt: str, sau_kh
             ds = await scan_account_videos(account, 20)
         except Exception:
             continue                                 # nick lỗi mạng/cookie → thử lại lần sau
-        for v in ds:
-            if not _khop_video(v, prompt, sau_khi):
-                continue
-            if store.task_by_conversation(v["conversation_id"]):
-                continue                             # video này đã thuộc về job khác
+        v = _chon_video(ds, row, sau_khi)
+        if v:
             try:
                 local = await _download(v["video_url"], account, prompt)
             except Exception:
