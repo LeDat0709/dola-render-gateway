@@ -15,6 +15,7 @@ import re
 import secrets
 import shutil
 import threading
+import os
 import signal
 import time
 import uuid
@@ -101,7 +102,7 @@ def _canh_tien_trinh_cha():
                 continue
             print(f"[gateway] app cha (pid {ppid}) đã tắt — gateway tự dừng để không giữ cổng", flush=True)
             try:
-                signal.raise_signal(signal.SIGTERM)   # uvicorn tắt êm: lifespan đóng Chrome, nhả nick
+                os.kill(os.getpid(), signal.SIGTERM)   # uvicorn tắt êm: lifespan đóng Chrome, nhả nick
             except Exception:
                 pass
             time.sleep(15)
@@ -264,6 +265,7 @@ ADMIN_LOCKOUT_SEC = 300.0
 # ponytail: dict không bao giờ dọn — mỗi IP sai để lại 1 ô nhỏ, kẻ dò từ hàng vạn IP sẽ làm nó phình.
 # Đủ cho máy cá nhân/VPS nội bộ. Cần chặt hơn thì dọn ô hết hạn trong _admin_throttle, hoặc đẩy ra fail2ban.
 _admin_fails: dict[str, list] = {}   # ip -> [số lần sai, thời điểm khoá tới]
+_admin_fails_cleanup_at = 0.0
 
 
 def _admin_key_ok(key: str | None) -> bool:
@@ -272,6 +274,11 @@ def _admin_key_ok(key: str | None) -> bool:
 
 def _admin_throttle(ip: str, ok: bool):
     """Gọi SAU khi so khóa. Sai → cộng dồn; đúng → xoá. Đang khoá thì ném 429 trước cả khi so."""
+    global _admin_fails_cleanup_at
+    now = time.time()
+    if now - _admin_fails_cleanup_at > 3600:
+        _admin_fails_cleanup_at = now
+        _admin_fails.clear()
     st = _admin_fails.setdefault(ip, [0, 0.0])
     if ok:
         _admin_fails.pop(ip, None)
@@ -445,11 +452,17 @@ async def _cuu_video_da_tra_luot(task_id: str, account: str, prompt: str, sau_kh
         if not row or row["status"] == "completed":
             return                                   # người dùng đã tự nhặt, hoặc job đã xong
         try:
-            ds = await scan_account_videos(account, 20)
+            # 50 (trần của endpoint) chứ không phải 20: tới mốc cứu 40 phút, nick chạy dày đã đẩy hội thoại
+            # của job này ra khỏi 20 hội thoại gần nhất → quét mãi không thấy video đã trừ lượt.
+            ds = await scan_account_videos(account, 50)
         except Exception:
             continue                                 # nick lỗi mạng/cookie → thử lại lần sau
         v = _chon_video(ds, row, sau_khi)
         if v:
+            # NHẬN CHỖ NGAY, trước khi tải: tải mất hàng chục giây, mà _chon_video của job khác cùng nick lọc
+            # "chưa ai nhận" bằng store.task_by_conversation → ghi sau khi tải xong thì trong lúc tải hội thoại
+            # này vẫn trống chỗ, hai job cùng nhặt một video.
+            store.update(task_id, conversation_id=v["conversation_id"])
             try:
                 local = await _download(v["video_url"], account, prompt)
             except Exception as exc:
@@ -1117,9 +1130,9 @@ async def admin_account_add_facebook(body: AccountFacebookAdd, x_admin_key: str 
     name = body.name.strip()
     if not NAME_RE.match(name):
         raise HTTPException(400, "invalid account name (1-32 chars: letters, numbers, -, _)")
-    if body.name in pool.accounts:
+    if name in pool.accounts:
         raise HTTPException(409, "account exists")
-    if JOBS.get(body.name, {}).get("status") == "running":
+    if JOBS.get(name, {}).get("status") == "running":
         raise HTTPException(409, "job already running for this account")
     _spawn(_run_facebook_add_job(name, body.cookie_line, body.note, body.visible))
     return {"ok": True, "job": "running"}

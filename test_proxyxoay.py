@@ -75,7 +75,10 @@ def main():
     assert ent["next_ok"] == ent["fetched_at"] and ent["ttl"] == 1470, ent
     proxyxoay._get = lambda link: '{"status":100,"message":"Con 59s moi co the doi proxy","proxyhttp":"3.3.3.3:80::"}'
     ent = proxyxoay.rotate(LINK)
-    assert ent["next_ok"] - ent["fetched_at"] == 59 and ent["ttl"] == 600, ent
+    # nhà bán không báo tuổi thọ → ttl rơi về SÀN, và sàn phải phủ trọn một job (job 30s chờ tới VIDEO_TIMEOUT_30S),
+    # không thì current() hết hạn giữa lúc poll/tải rồi gọi lại get.php = xin IP mới dưới chân chính job đó.
+    assert ent["next_ok"] - ent["fetched_at"] == 59 and ent["ttl"] == proxyxoay._CACHE_TTL_FLOOR, ent
+    assert proxyxoay._CACHE_TTL_FLOOR >= config.VIDEO_TIMEOUT_30S, proxyxoay._CACHE_TTL_FLOOR
     test_auto_whitelist_and_status()
     test_shoplike()
     print("OK")

@@ -553,8 +553,10 @@ def test_auto_rotate_skipped_while_other_job_on_same_proxy():
         _pool(tmp)
         with _proxy_env(tmp, life=1500) as env:
             with browser.proxy_lease("n2"):
-                assert browser.rotate_tmproxy_now("n1") is None and env.rotations == [], env.rotations
-            browser.rotate_tmproxy_now("n1")
+                # False = "đã thử, KHÔNG đổi". Phải trả bool thật: nhánh chặn vùng ở browser_pool hỏi
+                # `if rotate_tmproxy_now(...)` — trả None thì nó luôn im, không ai biết IP có đổi hay chưa.
+                assert browser.rotate_tmproxy_now("n1") is False and env.rotations == [], env.rotations
+            assert browser.rotate_tmproxy_now("n1") is True, "không còn job nào trên proxy → phải đổi và báo True"
             assert env.rotations == [_LINK], "không còn job nào trên proxy → được đổi"
 
 

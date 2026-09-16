@@ -90,9 +90,33 @@ def test_khong_gan_video_cua_job_khac():
     assert server._chon_video([ds[0]], row, time.time()) is None
 
 
+def test_hai_job_cung_nick_khong_nhat_trung_mot_video():
+    """Job A đang TẢI video của hội thoại X thì job B quét cùng nick: X phải đã có chủ, B không được nhặt lại.
+
+    Trước đây conversation_id chỉ ghi vào store SAU khi tải xong, nên suốt lúc tải hội thoại X vẫn trống chỗ
+    với store.task_by_conversation → hai job cùng nhận một video, một job báo xong bằng video của job kia.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        s = _store_tam(d)
+        for t in ("tA", "tB"):
+            s.create(t, "seedance-2.5", "p", "9:16", 10, account="n1")
+            s.update(t, status="failed", failure_code="submit_unconfirmed", submitted_at=time.time())
+        luc_gui = time.time()
+        ds = [{"conversation_id": "555", "created_at": int(luc_gui), "video_url": "u", "name": "x"}]
+
+        # A chọn được X và nhận chỗ ngay (chưa tải xong → chưa completed)
+        v = server._chon_video(ds, s.get("tA"), luc_gui)
+        assert v and v["conversation_id"] == "555"
+        s.update("tA", conversation_id=v["conversation_id"])
+
+        # B quét giữa lúc A còn đang tải: không được thấy X là hàng vô chủ nữa
+        assert server._chon_video(ds, s.get("tB"), luc_gui) is None, "hai job cùng nhặt một video"
+
+
 if __name__ == "__main__":
     test_tai_hong_thi_khong_goi_la_hoan_tat()
     test_cuu_video_khong_bo_cuoc_sau_mot_lan_tai_hong()
+    test_hai_job_cung_nick_khong_nhat_trung_mot_video()
     test_da_hoan_tat_thi_thoi_cuu()
     test_khong_gan_video_cua_job_khac()
     print("OK")

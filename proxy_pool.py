@@ -114,8 +114,8 @@ class PoolStore:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.path.write_text(json.dumps(self.items, ensure_ascii=False, indent=1), encoding="utf-8")
-        except OSError:
-            pass
+        except OSError as e:
+            print(f"[proxy_pool] lưu kho proxy thất bại: {e}", flush=True)
 
     def add_many(self, raws: list[str]) -> int:
         from browser import check_proxy_input
@@ -189,6 +189,16 @@ class PoolStore:
         if not it:
             return
         raw = it["raw"]
+        # Proxy XOAY đang có job chạy: ĐỪNG kiểm. Kiểm phải lấy IP hiện hành (parse_proxy → current()), mà
+        # current() hết hạn cache là gọi lại nhà bán = có thể XIN IP MỚI → cắt cổng của job đang dựng (đã trừ
+        # lượt). Giữ nguyên kết quả kiểm lần trước, chỉ ghi lý do bỏ qua.
+        from browser import is_rotating_proxy, proxy_busy
+        busy = proxy_busy(raw) if is_rotating_proxy(raw) else 0
+        if busy:
+            it.update(last_check=time.time(),
+                      error=f"bỏ qua lần kiểm — {busy} job đang chạy trên IP này (kiểm sẽ xin IP mới, cắt job)")
+            self._save()
+            return
         info = {"alive": False, "last_check": time.time(), "error": "", "exit_ip": "", "isp": "", "city": "",
                 "latency_ms": None}
         url = await asyncio.to_thread(_aiohttp_url, raw)   # tmproxy://KEY / get.php → gọi API nhà bán (đồng bộ) ngoài vòng lặp
@@ -196,6 +206,7 @@ class PoolStore:
         # cho nó → luôn ném lỗi → mọi proxy SOCKS bị gắn "chết" oan, dễ tưởng hết proxy sống rồi đi mua thêm.
         if url and url.split("://", 1)[0].lower().startswith("socks"):
             info["error"] = "chưa kiểm được (SOCKS — công cụ kiểm chỉ đỡ http/https)"
+            info["alive"] = None   # None = chưa kiểm, prune_dead() bỏ qua
             it.update(info)
             self._save()
             return
@@ -391,6 +402,31 @@ def demo() -> None:
     assert store.items[ids[0]]["alive"] is True and store.items[ids[0]]["exit_ip"] == "1.1.1.1", store.items[ids[0]]
     assert store.items[ids[1]]["alive"] is False and "chập chờn" in store.items[ids[1]]["error"], store.items[ids[1]]
     assert calls[ids[0]] == 2 and calls[ids[1]] == 2, calls
+
+    # A1: sàn cache IP phải PHỦ trọn một job, không thì current() gọi lại nhà bán = xin IP mới giữa chừng
+    import proxyxoay, config
+    assert proxyxoay._CACHE_TTL_FLOOR >= config.VIDEO_TIMEOUT_30S, \
+        f"sàn cache {proxyxoay._CACHE_TTL_FLOOR}s < trần job 30s {config.VIDEO_TIMEOUT_30S}s — IP đổi giữa job"
+
+    # A3: một khoá cho một key, dù gọi nhiều lần (setdefault nguyên tử)
+    import tmproxy as _tm
+    assert _tm._get_lock("k") is _tm._get_lock("k") and _tm._get_lock("k") is not _tm._get_lock("k2")
+    assert proxyxoay._get_lock("l") is proxyxoay._get_lock("l")
+
+    # A2: proxy xoay ĐANG có job chạy thì kiểm kho phải BỎ QUA (kiểm = lấy IP hiện hành = có thể xin IP mới)
+    import browser
+    link = "https://proxyxoay.shop/api/get.php?key=ABC&nhamang=random&tinhthanh=0"
+    st2 = PoolStore(Path(tempfile.mkdtemp()) / "p2.json")
+    assert st2.add_many([link]) == 1
+    pid2 = next(iter(st2.items))
+    st2.items[pid2]["alive"] = True                      # kết quả kiểm lần trước
+    browser._proxy_leases[link] = 1                      # giả lập 1 job đang chạy trên proxy này
+    try:
+        asyncio.run(st2._check_one(pid2, asyncio.Semaphore(1)))
+    finally:
+        browser._proxy_leases.pop(link, None)
+    assert st2.items[pid2]["alive"] is True, "kiểm đã đụng vào proxy đang có job (có thể vừa xoay IP dưới chân nó)"
+    assert "bỏ qua lần kiểm" in st2.items[pid2]["error"], st2.items[pid2]
 
     print("proxy_pool demo: OK")
 

@@ -1283,12 +1283,33 @@ _SINGLE_PARAMS = {
 }
 
 
+def _msg_index(msg: dict):
+    """Số thứ tự tin nhắn Dola gắn (index), hoặc None nếu tin này không có."""
+    v = msg.get("index")
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    return float(v) if isinstance(v, str) and v.strip().lstrip("-").isdigit() else None
+
+
+def _newest_first(messages: list) -> list:
+    """Tin MỚI đứng trước. Cả việc lấy video (videos[0]) lẫn ghép prompt↔video (conversation_videos) đều dựa
+    vào thứ tự này; hiện Dola trả sẵn đúng vậy nhưng đó là giả định NGẦM — Dola đổi thứ tự là mọi video đội
+    nhầm prompt mà không ai thấy. Mọi tin có `index` thì tự sắp cho chắc; thiếu dù một tin thì giữ nguyên thứ
+    tự Dola trả (không đoán = không làm xấu đi)."""
+    idx = [_msg_index(m) for m in messages if isinstance(m, dict)]
+    if len(idx) != len(messages) or any(i is None for i in idx):
+        return messages
+    return [m for _, m in sorted(zip(idx, messages), key=lambda p: p[0], reverse=True)]
+
+
 def _parse_single(data: dict) -> dict:
     """Mirror of POLL_JS message parsing, in Python (texts / videos / videoModels / images)."""
     dl = (data.get("downlink_body") or {}).get("pull_singe_chain_downlink_body") or {}
     texts, videos, video_models, images = [], [], [], 0
     stream = []   # ("t", text) / ("v", url, model) theo đúng thứ tự Dola trả (tin MỚI đứng trước)
-    for msg in dl.get("messages") or []:
+    for msg in _newest_first(dl.get("messages") or []):
         content = msg.get("content")
         if isinstance(content, str):
             try:
@@ -1323,7 +1344,10 @@ def _parse_single(data: dict) -> dict:
 POLL_NET_FAILS = 3
 
 
-def _single_request(cookie: str, ms_token: str, fp: str, conversation_id: str) -> tuple[dict, dict, dict]:
+SCAN_MSG_LIMIT = 50   # quét lịch sử: hội thoại nhiều lượt thì 20 tin không đủ, video cũ rơi ra ngoài
+
+
+def _single_request(cookie: str, ms_token: str, fp: str, conversation_id: str, limit: int = 20) -> tuple[dict, dict, dict]:
     """(headers, params, body) cho /im/chain/single — đọc hội thoại bằng cookie, không cần ký."""
     headers = {"Content-Type": "application/json; encoding=utf-8", "agw-js-conv": "str",
                "Accept": "*/*", "cookie": cookie, "Referer": f"https://www.dola.com/chat/{conversation_id}"}
@@ -1335,15 +1359,16 @@ def _single_request(cookie: str, ms_token: str, fp: str, conversation_id: str) -
     params["web_tab_id"] = str(uuid.uuid4())
     body = {"cmd": 3100, "uplink_body": {"pull_singe_chain_uplink_body": {
         "conversation_id": conversation_id, "anchor_index": 9007199254740991,
-        "conversation_type": 3, "direction": 1, "limit": 20, "ext": {},
+        "conversation_type": 3, "direction": 1, "limit": limit, "ext": {},
         "filter": {"index_list": []}, "evaluate_ab_params": "", "evaluate_common_params": ""}},
         "sequence_id": str(uuid.uuid4()), "channel": 2, "version": "1"}
     return headers, params, body
 
 
-async def _fetch_single(session, cookie: str, ms_token: str, fp: str, conversation_id: str, proxy) -> dict | None:
+async def _fetch_single(session, cookie: str, ms_token: str, fp: str, conversation_id: str, proxy,
+                        limit: int = 20) -> dict | None:
     """Đọc hội thoại 1 lần qua HTTP (đi `proxy`) → dict như POLL_JS (texts/videos/images/videoModels); lỗi mạng/HTTP → None."""
-    headers, params, body = _single_request(cookie, ms_token, fp, conversation_id)
+    headers, params, body = _single_request(cookie, ms_token, fp, conversation_id, limit)
     try:
         async with session.post(_SINGLE_URL, params=params, data=json.dumps(body), headers=headers,
                                 proxy=proxy, timeout=aiohttp.ClientTimeout(total=30)) as r:
@@ -1482,7 +1507,8 @@ async def scan_account_videos(account: str, limit: int = 30) -> list[dict]:
 
         async def one(conv) -> list[dict]:
             async with sem:
-                poll = await _fetch_single(session, cookie, ms_token, fp, conv["conversation_id"], proxy)
+                poll = await _fetch_single(session, cookie, ms_token, fp, conv["conversation_id"], proxy,
+                                           limit=SCAN_MSG_LIMIT)
             if not poll:
                 return []
             return [{**conv, "video_url": v["video_url"], "prompt_seen": v["prompt"]}

@@ -24,7 +24,14 @@ import config
 PREFIX = "tmproxy://"
 _API = "https://tmproxy.com/api/proxy/"
 _MARGIN_SEC = 30          # coi proxy hết hạn sớm 30s để không đổi IP giữa lúc đang gửi/poll
-_lock = threading.Lock()  # ponytail: một khoá cho mọi key — vài chục key, đủ dùng
+_locks: dict[str, threading.Lock] = {}
+
+
+def _get_lock(key: str) -> threading.Lock:
+    # setdefault: MỘT thao tác nguyên tử. Kiểu "if not in: _locks[k]=Lock()" cho 2 luồng lọt qua cùng lúc,
+    # mỗi luồng cầm MỘT lock khác nhau cho cùng key → cùng gọi get-new-proxy → IP vừa xin bị đè.
+    return _locks.setdefault(key, threading.Lock())
+
 _cache: dict[str, dict] = {}   # key -> {"https","username","password","public_ip","exp","next_ok"}
 _last_err: dict[str, str] = {}  # key (cùng khoá _cache) -> lý do lấy IP hỏng gần nhất, để báo lỗi nick rõ ràng
 
@@ -107,7 +114,7 @@ def _new_body(key: str) -> dict:
 def current(key: str) -> dict:
     """Proxy hiện hành của key, cache tới khi gần hết hạn. Chưa có/hết hạn → get-current; rỗng → get-new."""
     now = time.time()
-    with _lock:
+    with _get_lock(key):
         ent = _cache.get(key)
         if ent and now < ent["exp"]:
             return ent
@@ -120,7 +127,7 @@ def current(key: str) -> dict:
 def rotate(key: str) -> dict:
     """Xin IP mới (get-new-proxy). Chưa tới next_request → giữ IP cũ, không lỗi."""
     now = time.time()
-    with _lock:
+    with _get_lock(key):
         ent = _cache.get(key)
         if ent and now < ent["next_ok"]:
             return ent

@@ -400,6 +400,12 @@ def _effective_rotating(account: str) -> str:
     return raw if is_rotating_proxy(raw) else ""
 
 
+def proxy_busy(raw: str) -> int:
+    """Số job ĐANG chạy trên chuỗi proxy này (0 = rảnh). Để nơi khác (kiểm kho proxy) biết mà đừng gọi nhà bán
+    lấy IP — mỗi lần gọi có thể là xin IP MỚI, cắt cổng của job đang dựng."""
+    return _proxy_leases.get(normalize_proxy_input(raw), 0)
+
+
 @contextlib.contextmanager
 def proxy_lease(account: str):
     """Giữ chỗ proxy xoay của nick suốt MỘT job."""
@@ -438,6 +444,9 @@ def mark_ip_dirty(account: str, reason: str = "") -> None:
 
 def ip_dirty(st: dict) -> bool:
     now = time.time()
+    expired = [k for k, v in _dirty_ips.items() if v <= now]
+    for k in expired:
+        del _dirty_ips[k]
     return any(_dirty_ips.get(k, 0) > now for k in _ip_keys(st))
 
 
@@ -452,10 +461,18 @@ def rotate_if_expiring(account: str) -> bool:
     if not dirty and st.get("expires_in", PROXY_MIN_LIFE_SEC) >= PROXY_MIN_LIFE_SEC:
         return False
     why = "IP bẩn (vừa bị Dola chặn)" if dirty else f"IP còn {st['expires_in']}s"
-    done = _rotate_raw(key, f"{account} ({why}, đổi trước khi mở nick)")
-    if done and ip_dirty(rotating_status(key)):
-        print(f"[proxy] {account}: nhà bán vẫn cấp IP bẩn (chưa tới nhịp đổi) — chạy tạm IP này", flush=True)
-    return done
+    label = f"{account} ({why}, đổi trước khi mở nick)"
+    for attempt in range(3):
+        done = _rotate_raw(key, label)
+        if not done:
+            return False
+        if not ip_dirty(rotating_status(key)):
+            return True
+        if attempt < 2:
+            print(f"[proxy] {account}: nhà bán cấp IP bẩn lần {attempt + 1}/3 — chờ 5s rồi xoay lại", flush=True)
+            time.sleep(5)
+    print(f"[proxy] {account}: nhà bán vẫn cấp IP bẩn sau 3 lần — chạy tạm IP này", flush=True)
+    return True
 
 
 def _rotate_raw(raw: str, label: str) -> bool:
@@ -473,7 +490,7 @@ def _rotate_raw(raw: str, label: str) -> bool:
         else:
             import proxyxoay
             if not proxyxoay.is_key_link(raw):
-                return
+                return False
             ip = proxyxoay.rotate(raw)["ip"]
         print(f"[proxy] {label}: IP hiện hành {ip}", flush=True)
         return True
@@ -482,10 +499,13 @@ def _rotate_raw(raw: str, label: str) -> bool:
         return False
 
 
-def rotate_tmproxy_now(account: str) -> None:
-    """Nick dùng proxy XOAY RIÊNG (proxy.txt) → xin IP mới. KHÔNG đụng proxy chung vì nhiều nick song song
-    có thể đang dùng. Gọi lúc tới lượt xoay (rotate_proxy_session) và khi Dola báo 710022002 (chặn theo IP)."""
-    _rotate_raw(account_proxy_raw(account), account)
+def rotate_tmproxy_now(account: str) -> bool:
+    """Nick dùng proxy XOAY RIÊNG (proxy.txt) → xin IP mới; True = đã đổi. KHÔNG đụng proxy chung vì nhiều nick
+    song song có thể đang dùng. Gọi lúc tới lượt xoay (rotate_proxy_session) và khi Dola báo 710022002.
+
+    PHẢI trả kết quả: nơi gọi (chặn vùng ở browser_pool) hỏi `if rotate_tmproxy_now(...)` — trả None là
+    nhánh đó chết câm, không ai biết IP có đổi hay không."""
+    return _rotate_raw(account_proxy_raw(account), account)
 
 
 def rotate_effective_proxy(account: str) -> None:
@@ -585,6 +605,29 @@ async def probe_proxy(raw: str, timeout: float = 3.0) -> str:
         return ""
     except Exception as exc:
         return str(exc)[:60] or type(exc).__name__
+
+
+# Cache kết quả kiểm tra proxy: proxy_raw → last_ok_timestamp. Không kiểm lại trong 5 phút.
+_proxy_probe_cache: dict[str, float] = {}
+_PROXY_PROBE_TTL = 300   # 5 phút
+
+
+async def ensure_proxy_alive(account: str) -> None:
+    """Kiểm tra nhanh proxy của nick cò sống (TCP connect) TRƯỚC khi mở Chrome — phát hiện proxy chết sớm,
+    tránh tốn Chrome slot. Cache 5 phút để không spam kiểm."""
+    raw = normalize_proxy_input(account_proxy_raw(account) or config.PROXY)
+    if not raw or is_rotating_proxy(raw):   # proxy xoay kiểm bằng API riêng (tmproxy/proxyxoay)
+        return
+    last = _proxy_probe_cache.get(raw, 0)
+    if time.time() - last < _PROXY_PROBE_TTL:
+        return
+    err = await probe_proxy(raw, timeout=3)
+    if err:
+        print(f"[proxy] {account}: proxy {mask_proxy(raw)} không kết nối được: {err}", flush=True)
+        raise RuntimeError(
+            f"Proxy của nick {account} không kết nối được ({mask_proxy(raw)}): {err} — "
+            "kiểm tra proxy đang chạy và cổng mở.")
+    _proxy_probe_cache[raw] = time.time()
 
 
 def set_account_proxy(account: str, raw: str) -> None:

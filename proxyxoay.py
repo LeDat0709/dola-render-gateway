@@ -22,7 +22,16 @@ import time
 import urllib.error
 import urllib.request
 
-_lock = threading.Lock()
+import config
+
+_locks: dict[str, threading.Lock] = {}
+
+def _get_lock(link: str) -> threading.Lock:
+    # setdefault: MỘT thao tác nguyên tử. Kiểu "if not in: _locks[k]=Lock()" cho 2 luồng lọt qua cùng lúc,
+    # mỗi luồng cầm MỘT lock khác nhau cho cùng link → cùng vào current()/rotate() → 2 lần xin IP mới, IP vừa
+    # lấy bị đè (job đang chạy mất cổng).
+    return _locks.setdefault(link, threading.Lock())
+
 _cache: dict[str, dict] = {}   # link -> {server, username, password, ip, network, location, expiration, next_ok, message}
 _last_err: dict[str, str] = {}  # link -> lý do lấy IP hỏng gần nhất (whitelist/hết hạn/không tới được) để đưa lên UI
 _PROXY_FIELDS = ("proxyhttp", "proxyHttp", "proxy_http", "http", "proxy", "https")
@@ -31,14 +40,20 @@ _LOC_FIELDS = ("Vi Tri", "vi_tri", "location", "tinhthanh", "region", "city")
 _EXP_FIELDS = ("Token expiration date", "expired_at", "expiration", "expire", "expiredAt")
 _WAIT_FIELDS = ("nextRequest", "next_request", "nextrequest", "nextChange", "timeout", "ttl")
 _LIFE_FIELDS = ("proxyTimeout", "proxy_timeout")   # shoplike: IP còn sống bao nhiêu giây
-# Sàn hạn cache current(): phải LỚN hơn thời lượng render 1 video để IP không đổi giữa chừng (submit/poll/tải
-# cùng IP), nhưng đủ ngắn để bản cache chết được làm mới thay vì phục vụ mãi. 10 phút > video 30s (~2–3 phút).
-_CACHE_TTL_FLOOR = 600
+# Sàn hạn cache current(): phải LỚN hơn thời lượng MỘT JOB để IP không đổi giữa chừng (submit/poll/tải cùng IP).
+# Trước đây đặt cứng 600s (10 phút) trong khi job 30s được chờ tới VIDEO_TIMEOUT_30S (2400s) → tới phút thứ 10
+# current() thấy cache hết hạn, gọi lại get.php = XIN IP MỚI ngay giữa lúc đang poll/tải (đúng cái nó định tránh).
+# Bám trần job thật + biên, nhưng vẫn có hạn để bản cache chết được làm mới thay vì phục vụ mãi.
+_CACHE_TTL_FLOOR = max(config.VIDEO_TIMEOUT, config.VIDEO_TIMEOUT_30S) + 300
 # "proxy nay se die sau 1777s" (tài liệu proxy.vn) = TUỔI THỌ IP. Trước đây regex chờ bắt nhầm số này → next_ok = +1777s →
 # rotate() sau 710022002 không gọi link suốt ~30 phút. Có tuổi thọ thì cache bám tuổi thọ (gọi get.php lúc IP còn sống =
 # xoay IP dưới chân job khác), chết sớm _LIFE_MARGIN_SEC để kịp lấy IP mới.
 _LIFE_RE = re.compile(r"die\s*sau\s*(\d+)", re.I)
 _LIFE_MARGIN_SEC = 30
+# Sàn ttl khi nhà bán CÓ báo tuổi thọ: chỉ để tuổi thọ bé tí (hoặc 0 sau khi trừ biên) không làm cache thành
+# vô dụng, gọi lại link mỗi nhịp. KHÔNG được bám _CACHE_TTL_FLOOR (dài bằng một job) — làm thế là cache giữ
+# tiếp IP mà nhà bán đã nói là chết.
+_MIN_TTL_SEC = 60
 
 
 # proxyxoay.shop (proxy.vn / topproxy) cho KHAI THÊM IPv4 được dùng ngay trong link: &whitelist=IP (tài liệu nhà bán).
@@ -185,7 +200,7 @@ def _fetch_url(link: str, url: str, now: float, wl_ip: str = "") -> dict:
     ent = {**proxy, "ip": ip, "network": _find(src, _NET_FIELDS), "location": _find(src, _LOC_FIELDS),
            "expiration": _find(src, _EXP_FIELDS), "message": message,
            "next_ok": now + wait, "fetched_at": now, "day": day, "changes": changes, "life": life,
-           "ttl": max(life - _LIFE_MARGIN_SEC, 0) if life else max(wait, _CACHE_TTL_FLOOR)}
+           "ttl": max(life - _LIFE_MARGIN_SEC, _MIN_TTL_SEC) if life else max(wait, _CACHE_TTL_FLOOR)}
     _cache[link] = ent
     if wl_ip:
         _wl_sent[link] = wl_ip   # khai OK (có proxy trả về) → IP máy chưa đổi thì lần sau khỏi gắn lại
@@ -198,7 +213,7 @@ def current(link: str) -> dict:
     cache đã quá hạn (ttl = max(khoảng chờ nhà bán, sàn) tính từ lúc lấy) để không phục vụ IP đã chết mãi.
     Sàn ttl đặt > thời lượng 1 video nên không đổi IP giữa chừng; chưa có cache → gọi link."""
     now = time.time()
-    with _lock:
+    with _get_lock(link):
         ent = _cache.get(link)
         if ent and now - ent["fetched_at"] < ent["ttl"]:
             return ent
@@ -208,7 +223,7 @@ def current(link: str) -> dict:
 def rotate(link: str) -> dict:
     """Xin IP mới: gọi lại link nếu đã qua khoảng chờ nhà bán ép; chưa tới giờ thì giữ IP cũ."""
     now = time.time()
-    with _lock:
+    with _get_lock(link):
         ent = _cache.get(link)
         if ent and now < ent["next_ok"]:
             return ent

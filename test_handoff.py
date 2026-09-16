@@ -701,6 +701,46 @@ def test_blocked_reason_says_one_thing():
     assert "không rõ" in r(None, base)
 
 
+def test_thu_tu_tin_nhan_khong_lam_video_doi_nham_prompt():
+    """Ghép prompt↔video dựa vào thứ tự tin nhắn — nếu Dola trả ngược (cũ trước) thì phải tự sắp lại.
+
+    Không có guard này, hội thoại 2 lượt sẽ cho video A đội prompt của video B mà không báo lỗi gì.
+    """
+    import video_worker_ui as vw
+
+    def tin(idx, blocks):
+        return {"index": idx, "content": blocks}
+
+    def text(t):
+        return {"content": {"text_block": {"text": t}}}
+
+    def video(u):
+        return {"block_type": 2074,
+                "content": {"creation_block": {"creations": [{"type": 2, "video": {"download_url": u}}]}}}
+
+    # lượt 1: prompt "con mèo" → video v1 ; lượt 2: prompt "con chó" → video v2
+    moi_truoc = [tin(4, [video("http://v2")]), tin(3, [text("生成された動画：con chó")]),
+                 tin(2, [video("http://v1")]), tin(1, [text("生成された動画：con mèo")])]
+    cu_truoc = list(reversed(moi_truoc))           # Dola trả ngược lại
+
+    mong_doi = [("http://v2", "con chó"), ("http://v1", "con mèo")]
+    for ten, msgs in (("mới trước", moi_truoc), ("cũ trước", cu_truoc)):
+        poll = vw._parse_single({"downlink_body": {"pull_singe_chain_downlink_body": {"messages": msgs}}})
+        got = [(v["video_url"], v["prompt"]) for v in vw.conversation_videos(poll)]
+        assert got == mong_doi, f"{ten}: {got}"
+        assert poll["videos"][0] == "http://v2", f"{ten}: phải lấy video MỚI nhất, được {poll['videos'][0]}"
+
+
+def test_quet_lich_su_doc_sau_hon_poll():
+    """Quét cứu video phải đọc sâu hơn 20 tin, không thì hội thoại nhiều lượt rụng mất video cũ."""
+    import video_worker_ui as vw
+    assert vw.SCAN_MSG_LIMIT > 20, vw.SCAN_MSG_LIMIT
+    _, _, mac_dinh = vw._single_request("c", "m", "f", "1")
+    _, _, khi_quet = vw._single_request("c", "m", "f", "1", vw.SCAN_MSG_LIMIT)
+    lay = lambda b: b["uplink_body"]["pull_singe_chain_uplink_body"]["limit"]
+    assert lay(mac_dinh) == 20 and lay(khi_quet) == vw.SCAN_MSG_LIMIT, (lay(mac_dinh), lay(khi_quet))
+
+
 if __name__ == "__main__":
     setup_module(); test_no_question_hands_off(); test_pending_question_is_answered_first()
     test_late_questions_reopen_browser(); test_duration_cap_is_not_content_policy()
@@ -710,4 +750,4 @@ if __name__ == "__main__":
     test_http_error_is_not_risk_control(); test_video_wins_over_complaints(); test_prompt_read_back_from_conversation(); test_each_video_gets_its_own_prompt(); test_duration_message_is_not_out_of_credit(); test_generating_notice_is_not_a_refusal(); test_blocked_reason_says_one_thing()
     test_prompt_marks_are_scaled_to_duration(); test_parse_credit_need_from_dola_message()
     test_credits_used_is_read_from_start_message(); test_download_failure_keeps_job_with_cdn_link()
-    test_submit_timeout_never_resubmits(); test_uncertain_submit_only_resends_when_probe_is_certain(); test_guest_session_is_detected_not_credit(); test_dead_proxy_mid_render_switches_route_not_lose_video(); test_scan_account_videos_reads_history_only(); print("OK")
+    test_submit_timeout_never_resubmits(); test_uncertain_submit_only_resends_when_probe_is_certain(); test_guest_session_is_detected_not_credit(); test_dead_proxy_mid_render_switches_route_not_lose_video(); test_scan_account_videos_reads_history_only(); test_thu_tu_tin_nhan_khong_lam_video_doi_nham_prompt(); test_quet_lich_su_doc_sau_hon_poll(); print("OK")
