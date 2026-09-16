@@ -506,10 +506,8 @@ def _task_reference_images(raw) -> list[str]:
     return values if isinstance(values, list) else []
 
 
-# Tắt server = tắt job. Job dở dang của lần chạy trước KHÔNG được hồi sinh (không resume, không tự xếp
-# hàng chạy lại): tool chỉ chạy đúng những job bạn bấm ở lần bật này, DB không còn job "treo" từ hôm qua.
-RESTART_ERROR = ("Server đã tắt/khởi động lại nên job này dừng theo. Nếu prompt đã gửi thì kiểm tra nick "
-                 "trên dola.com (có thể đã trừ lượt), còn thiếu video thì bấm chạy lại.")
+# Tắt server / thoát app = XOÁ job cũ. Không hồi sinh, cũng không để lại thẻ lỗi "Server đã tắt…":
+# bật lên là bảng sạch, tool chỉ chạy đúng những job bạn bấm ở lần này. Video đã xong thì giữ nguyên.
 STOP_GRACE_SEC = 10   # chờ job đang chạy đóng Chrome + nhả nick rồi mới để tiến trình thoát
 
 
@@ -548,8 +546,8 @@ async def lifespan(app: FastAPI):
         print("[gateway] ⚠ Đã có một gateway khác đang chạy trên thư mục dữ liệu này — bản thừa này KHÔNG "
               "đụng tới job đang chạy. Tắt bớt một bản (cửa sổ ./run.sh hoặc nút Bật server trong app).",
               flush=True)
-    elif (dropped := store.fail_unfinished(RESTART_ERROR)):
-        print(f"[gateway] bỏ {dropped} job dở dang của lần chạy trước (tắt server = tắt job)", flush=True)
+    elif (dropped := store.purge_dead_tasks()):
+        print(f"[gateway] xoá {dropped} job cũ của lần chạy trước (bật lên là bảng sạch)", flush=True)
     from browser import mask_proxy as _mask, probe_proxy
     print(f"[gateway] proxy chung: {_mask(config.PROXY) or '(không — nối thẳng)'}", flush=True)
     if config.PROXY:
@@ -564,7 +562,7 @@ async def lifespan(app: FastAPI):
         t.cancel()
     if _BG_TASKS:
         await asyncio.wait(list(_BG_TASKS), timeout=STOP_GRACE_SEC)   # để finally đóng Chrome, nhả nick
-    store.fail_unfinished(RESTART_ERROR)
+    store.purge_dead_tasks()
 
 
 app.router.lifespan_context = lifespan

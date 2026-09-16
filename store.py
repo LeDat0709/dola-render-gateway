@@ -236,13 +236,14 @@ class TaskStore:
                 ).fetchone()
         return dict(row) if row else None
 
-    def fail_unfinished(self, reason: str) -> int:
-        """Tắt server = tắt job: mọi job chưa kết thúc bị đánh hỏng, KHÔNG sống lại ở lần bật sau."""
-        now = time.time()
+    def purge_dead_tasks(self) -> int:
+        """Tắt server / thoát app = XOÁ sạch job không ra video (queued, processing, failed).
+
+        Bật lên là bảng sạch, mỗi nick chỉ còn job mình vừa bấm — không thẻ ma, không khóa idempotency
+        cũ níu prompt mới lại. Job 'completed' là KHO VIDEO (VideoLibrary đọc /api/admin/tasks) nên giữ.
+        """
         with _LOCK:
-            cur = self._conn.execute(
-                "UPDATE tasks SET status='failed', finished_at=?, updated_at=?, error=? "
-                "WHERE status IN ('queued','processing')", (now, now, reason))
+            cur = self._conn.execute("DELETE FROM tasks WHERE status != 'completed'")
             self._conn.commit()
             return cur.rowcount
 

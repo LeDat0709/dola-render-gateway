@@ -1,28 +1,30 @@
-"""Tắt server = tắt job: job dở dang không sống lại, không có job nào kẹt 'đang chạy'."""
+"""Tắt server/thoát app = xoá job cũ: bật lên bảng sạch, không thẻ ma, không job kẹt 'đang chạy'."""
 import tempfile, time
 from pathlib import Path
 
 import server
-from server import RESTART_ERROR, _hard_timeout, _task_stage
+from server import _hard_timeout, _task_stage
 from store import TaskStore
 import config
 
 
-def test_boot_sweep_kills_unfinished_only():
+def test_purge_keeps_only_finished_videos():
     with tempfile.TemporaryDirectory() as d:
         store = TaskStore(str(Path(d) / "t.db"))
-        store.create("q", "seedance-2.5", "p", "9:16", 30)                       # queued
+        store.create("q", "seedance-2.5", "p", "9:16", 30)                        # queued
         store.create("r", "seedance-2.5", "p", "9:16", 30)
         store.update("r", status="processing", started_at=time.time(), conversation_id="77")
+        store.create("err", "seedance-2.5", "p", "9:16", 30, client_id="key-n1")
+        store.update("err", status="failed", finished_at=time.time(), error="Dola chặn nội dung")
         store.create("done", "seedance-2.5", "p", "9:16", 30)
         store.update("done", status="completed", video_url="u", finished_at=time.time())
 
-        assert store.fail_unfinished(RESTART_ERROR) == 2
-        assert store.get("q")["status"] == "failed" and store.get("r")["status"] == "failed"
-        assert store.get("r")["error"] == RESTART_ERROR
-        assert store.get("done")["status"] == "completed"                        # job đã xong giữ nguyên
+        assert store.purge_dead_tasks() == 3                                      # queued + processing + failed
+        assert store.get("q") is None and store.get("r") is None and store.get("err") is None
+        assert store.get("done")["status"] == "completed"                         # kho video giữ nguyên
         assert store.pending_task_count() == 0
-        assert store.fail_unfinished(RESTART_ERROR) == 0                         # bật lại lần nữa: sạch rồi
+        assert store.live_by_client_id("key-n1", None) is None                    # khóa cũ hết níu → Chạy = job mới
+        assert store.purge_dead_tasks() == 0                                      # bật lại lần nữa: sạch rồi
 
 
 def test_second_instance_must_not_touch_jobs():
@@ -76,6 +78,6 @@ def test_client_id_dedupe():
 
 
 if __name__ == "__main__":
-    test_boot_sweep_kills_unfinished_only(); test_second_instance_must_not_touch_jobs()
+    test_purge_keeps_only_finished_videos(); test_second_instance_must_not_touch_jobs()
     test_hard_timeout_covers_render_plus_overhead()
     test_stage_shown_in_ui(); test_client_id_dedupe(); print("OK")
