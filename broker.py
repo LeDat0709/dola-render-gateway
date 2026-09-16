@@ -91,6 +91,8 @@ def verify_grant(token: str, now: float | None = None) -> dict[str, Any]:
         payload = json.loads(_unb64(body))
     except (ValueError, json.JSONDecodeError):
         raise HTTPException(401, "grant hỏng")
+    if not isinstance(payload, dict):
+        raise HTTPException(401, "grant hỏng")
     if float(payload.get("exp", 0)) < now:
         raise HTTPException(401, "grant hết hạn — xin /v1/job-grant mới")
     return payload
@@ -149,7 +151,8 @@ def make_router(ctx: dict[str, Callable]) -> APIRouter:
     async def job(body: JobRequest, x_grant: str | None = Header(default=None)):
         g = verify_grant(x_grant or "")
         client = g["client"]
-        if g.get("credits") is not None and _spent.get(client, 0) >= g["credits"]:
+        grant_id = f"{client}:{g.get('exp', '')}"
+        if g.get("credits") is not None and _spent.get(grant_id, 0) >= g["credits"]:
             raise HTTPException(402, "hết credit của grant — xin grant mới")
         # Khóa phải kèm tên client: hai client khác nhau dùng trùng chuỗi "job-1" không được thấy job của nhau.
         cid = f"{client}:{body.client_id}" if body.client_id else None
@@ -158,11 +161,11 @@ def make_router(ctx: dict[str, Callable]) -> APIRouter:
         resp = await create_video(req, _bearer())      # dùng lại đường tạo video sẵn có (pool nick)
         # Trừ credit NGAY khi tạo job, không đợi /downloaded: Dola trừ lượt lúc nhận lệnh, nên client không gọi
         # /downloaded vẫn phải tiêu credit — nếu không, một grant "10 credit" gửi được vô số job.
-        seen = _counted.setdefault(client, set())
+        seen = _counted.setdefault(grant_id, set())
         if resp.id not in seen:                        # job cũ trả về do trùng khóa → không trừ lần nữa
             seen.add(resp.id)
-            _spent[client] = _spent.get(client, 0) + 1
-        remaining = None if g.get("credits") is None else max(0, g["credits"] - _spent.get(client, 0))
+            _spent[grant_id] = _spent.get(grant_id, 0) + 1
+        remaining = None if g.get("credits") is None else max(0, g["credits"] - _spent.get(grant_id, 0))
         return {"ok": True, "job": resp.id, "status": resp.status, "client": client, "remaining": remaining}
 
     @r.get("/v1/job/{job_id}")
@@ -178,7 +181,8 @@ def make_router(ctx: dict[str, Callable]) -> APIRouter:
         client = g["client"]
         # Credit đã trừ lúc TẠO job (Dola tính tiền ở đó). Endpoint này giữ lại cho client cũ, chỉ báo số dư —
         # cộng thêm ở đây sẽ trừ 2 lần cho 1 video.
-        remaining = None if g.get("credits") is None else max(0, g["credits"] - _spent.get(client, 0))
+        grant_id = f"{client}:{g.get('exp', '')}"
+        remaining = None if g.get("credits") is None else max(0, g["credits"] - _spent.get(grant_id, 0))
         return {"ok": True, "remaining": remaining}
 
     return r

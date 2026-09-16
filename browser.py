@@ -462,16 +462,16 @@ def rotate_if_expiring(account: str) -> bool:
         return False
     why = "IP bẩn (vừa bị Dola chặn)" if dirty else f"IP còn {st['expires_in']}s"
     label = f"{account} ({why}, đổi trước khi mở nick)"
-    for attempt in range(3):
+    for attempt in range(2):   # tối đa 2 lần xoay lại (3 lần thử tổng cộng)
         done = _rotate_raw(key, label)
         if not done:
             return False
         if not ip_dirty(rotating_status(key)):
             return True
-        if attempt < 2:
-            print(f"[proxy] {account}: nhà bán cấp IP bẩn lần {attempt + 1}/3 — chờ 5s rồi xoay lại", flush=True)
-            time.sleep(5)
-    print(f"[proxy] {account}: nhà bán vẫn cấp IP bẩn sau 3 lần — chạy tạm IP này", flush=True)
+        if attempt < 1:
+            print(f"[proxy] {account}: nhà bán cấp IP bẩn lần {attempt + 1}/2 — chờ rồi xoay lại", flush=True)
+            time.sleep(0.5)   # chờ ngắn cho nhà bán đổi pool
+    print(f"[proxy] {account}: nhà bán vẫn cấp IP bẩn sau 2 lần xoay — chạy tạm IP này", flush=True)
     return True
 
 
@@ -508,10 +508,14 @@ def rotate_tmproxy_now(account: str) -> bool:
     return _rotate_raw(account_proxy_raw(account), account)
 
 
-def rotate_effective_proxy(account: str) -> None:
+def rotate_effective_proxy(account: str) -> bool:
     """Đổi IP proxy nick ĐANG dùng: riêng (proxy.txt) nếu có, không thì PROXY CHUNG xoay. An toàn ở chế độ
-    MỖI LẦN MỘT NICK vì chỉ 1 nick chạy tại một thời điểm nên đổi proxy chung không cắt IP của nick khác."""
-    _rotate_raw(account_proxy_raw(account) or config.PROXY, account)
+    MỖI LẦN MỘT NICK vì chỉ 1 nick chạy tại một thời điểm nên đổi proxy chung không cắt IP của nick khác.
+
+    PHẢI trả kết quả (như rotate_tmproxy_now): _rotate_raw TỪ CHỐI đổi khi còn job khác đang chạy trên cùng
+    chuỗi proxy — nơi đếm "N lượt/IP" phải BIẾT là chưa đổi được để giữ nguyên nợ, chứ không reset số đếm
+    rồi tưởng đã sang IP mới."""
+    return _rotate_raw(account_proxy_raw(account) or config.PROXY, account)
 
 
 def _sub_session(raw: str, account: str) -> str:
@@ -1029,3 +1033,54 @@ async def check_login_state(account: str) -> bool:
         finally:
             await context.close()
 
+
+# ── Pre-flight cookie check (HTTP, KHÔNG cần Chrome) ─────────────────────────
+# Kiểm nhanh session Dola qua HTTP TRƯỚC khi acquire Chrome slot. Cookie chết → đánh dấu ngay,
+# xoay nick, KHÔNG tốn Chrome slot + RAM. Cache 5 phút để không spam passport API.
+_cookie_check_cache: dict[str, float] = {}   # account → last_ok_timestamp
+_COOKIE_CHECK_TTL = 300                       # 5 phút
+
+
+async def quick_cookie_check(account: str) -> bool | None:
+    """Kiểm tra nhanh cookie nick qua HTTP (không Chrome). True = sống, False = chết, None = không rõ.
+
+    Chỉ kiểm nếu cách lần kiểm cuối >= 5 phút. Cookie chết → trả False; không kết luận được → None
+    (để Chrome kiểm thêm — an toàn). Proxy riêng nick → kiểm qua proxy đó (cùng IP thoát).
+    """
+    now = time.time()
+    last = _cookie_check_cache.get(account, 0)
+    if now - last < _COOKIE_CHECK_TTL:
+        return True   # vừa kiểm gần đây, coi như OK
+
+    profile = config.ACCOUNTS_DIR / account
+    cookie_file = profile / "cookies.json"
+    if not cookie_file.exists():
+        return None   # chưa login lần nào
+
+    try:
+        import json
+        raw_cookies = json.loads(cookie_file.read_text(encoding="utf-8"))
+        # Ghép cookie thành header string
+        if isinstance(raw_cookies, list):
+            cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in raw_cookies
+                                   if isinstance(c, dict) and c.get("name") and c.get("value"))
+        else:
+            return None
+    except Exception:
+        return None
+
+    if not cookie_str:
+        return None
+
+    # Dùng proxy của nick (để kiểm từ ĐÚNG IP thoát)
+    proxy_url = account_proxy_url(account) or None
+    alive, reason = await verify_cookie_http(cookie_str, timeout=10, proxy=proxy_url)
+
+    if alive:
+        _cookie_check_cache[account] = now
+        return True
+    if alive is False:
+        print(f"[pre-flight] {account}: cookie chết ({reason}) — bỏ qua nick, tiết kiệm Chrome", flush=True)
+        return False
+    # alive is None → không kết luận được, để Chrome xử
+    return None

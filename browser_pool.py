@@ -280,6 +280,13 @@ class BrowserPool:
         self._one_nick_size = 1
         self._ip_lock = asyncio.Lock()           # quyết định "lô IP" (đếm/đổi IP) từng job một
         self._ip_used = 0                        # số nick đã dùng IP proxy xoay hiện tại (đổi IP sau mỗi N nick)
+        # Đếm lượt THEO TỪNG KHOÁ proxy xoay — cho trường hợp mỗi nick một proxy riêng (thực tế: ~5 khoá chia
+        # cho 37 nick). Một số đếm CHUNG như self._ip_used chỉ đúng khi cả kho dùng MỘT proxy chung; với proxy
+        # riêng nó cộng lẫn các khoá vào nhau nên xoay sai khoá, sai lúc. Khoá dict = browser._effective_rotating.
+        self._ip_used_by_key: dict[str, int] = {}
+        # Khoá THEO KHOÁ proxy (khuôn _PACE_LOCKS): job trên khoá A không chặn quyết định của khoá B. Một lock
+        # chung giữ qua lời gọi nhà bán (proxyxoay tới ~17s) là cả kho đứng im.
+        self._ip_locks: dict[str, asyncio.Lock] = {}
         self._fail_ips: dict[str, dict[str, float]] = {}   # nick -> {đường ra (IP proxy/host/"direct"): lúc lỗi gần nhất}
         self._quarantine: dict[str, str] = {}            # nick -> lý do cách ly (hiện ở blocked_reason)
         self._proxy_stamp: dict[str, dict] = {}  # dấu proxy đang gắn cho job mỗi nick → cột "Proxy" hiện IP/lượt/NCC
@@ -944,7 +951,8 @@ class BrowserPool:
         # MỖI LẦN MỘT NICK: giữ cổng SUỐT job (submit + render) → 1 nick/lần. Acquire TRƯỚC browser-sema để
         # thứ tự khoá luôn one_nick→browser (nếu acquire trong vòng lặp, nhánh retry gọi lại browser-sema khi
         # đang giữ one_nick sẽ khoá chéo với job kia đang giữ browser-sema chờ one_nick). Chỉ khi proxy chung xoay.
-        from browser import is_rotating_proxy, rotate_effective_proxy
+        from browser import (is_rotating_proxy, rotate_effective_proxy,
+                             _effective_rotating as _eff_rot, rotating_status as _rot_status)
         if account is not None:
             await self._wait_pinned_nick(account, model, duration)   # TRƯỚC khi giữ cổng/slot Chrome
         one_nick_on = config.ONE_NICK and is_rotating_proxy(config.PROXY)
@@ -1107,10 +1115,17 @@ class BrowserPool:
                         n = max(1, config.NICKS_PER_IP)
                         async with self._ip_lock:
                             if self._ip_used >= n:
+                                # IP hiện tại đã đủ N job → lô mới. Còn job chạy trên IP này thì CHỜ chúng xong rồi
+                                # mới đổi; nhả slot Chrome trong lúc chờ để job đang chạy xin lại được.
                                 _release_browser()
                                 await self._wait_ip_drained(account)
                                 await _hold_browser()
                                 self._ip_used = 0
+                            # Nhánh RIÊNG, không gộp vào nhánh drain ở trên: sổ = 0 cũng gồm LẦN ĐẦU sau khi bật
+                            # server. Gộp vào thì job đầu tiên không xin IP mới, lô đầu chạy trên IP có sẵn (có thể
+                            # là IP nick trước vừa dùng / vừa bị Dola chặn). Cùng luật với nhánh proxy riêng bên
+                            # dưới: "sổ rỗng = coi như đủ lô = xoay thật".
+                            if self._ip_used == 0:
                                 try:
                                     await asyncio.to_thread(rotate_effective_proxy, account)   # xin IP mới cho lô N nick
                                 except Exception as _e:  # noqa: BLE001 — đổi IP lỗi thì chạy tiếp IP cũ
@@ -1120,8 +1135,47 @@ class BrowserPool:
                         print(f"[pool] {account}: dùng IP proxy xoay — lượt {used}/{n} của IP này "
                               f"(tối đa {self._one_nick_size} job song song)", flush=True)
                         self._stamp_proxy(account, used=used, per=n, fresh=(used == 1))
+                    elif config.XOAY_THEO_LUOT and (ip_key := _eff_rot(account)):
+                        # N LƯỢT/IP CHO PROXY RIÊNG TỪNG NICK (bật bằng DOLA_XOAY_THEO_LUOT=1). Khác
+                        # hẳn one_nick_on ở trên (one_nick_on = proxy CHUNG xoay, khoá 1 job/lần). Trước đây
+                        # cả khối N-nick/IP nằm trong `if one_nick_on`, mà one_nick_on = ONE_NICK and
+                        # is_rotating_proxy(config.PROXY) → PROXY rỗng là DOLA_NICKS_PER_IP vô tác dụng hoàn
+                        # toàn. Khoá = chuỗi proxy xoay nick đang đi; proxy tĩnh/nối thẳng trả "" → rơi xuống else.
+                        n = max(1, config.NICKS_PER_IP)
+                        rotated = False
+                        async with self._ip_locks.setdefault(ip_key, asyncio.Lock()):
+                            # Chưa có trong sổ = VỪA BẬT LẠI SERVER: coi như ĐỦ LÔ, xin IP mới. Mặc định 0 thì
+                            # job đầu của mỗi khoá chạy tiếp IP mà phiên trước đã dùng cạn (có thể đã bị Dola
+                            # chặn) mà giao diện vẫn khoe "IP mới". Giá: mỗi khoá đúng 1 lời gọi nhà bán/lần bật.
+                            used = self._ip_used_by_key.get(ip_key, n)
+                            if used >= n:
+                                # KHÔNG chờ drain: mỗi khoá đang gánh nhiều nick, chờ rỗng = treo luồng (người
+                                # dùng vừa yêu cầu mở max luồng). An toàn vì _rotate_raw TỪ CHỐI đổi khi sổ giữ
+                                # chỗ của khoá này > 0 → không cắt IP dưới chân job đã gửi (đã trừ lượt).
+                                truoc = _rot_status(ip_key).get("endpoint", "")
+                                try:
+                                    ok = await asyncio.to_thread(rotate_effective_proxy, account)
+                                except Exception as _e:  # noqa: BLE001 — đổi IP lỗi thì chạy tiếp IP cũ
+                                    print(f"[pool] {account}: xin IP mới lỗi (chạy tiếp IP cũ): {_e}", flush=True)
+                                    ok = False
+                                # So IP TRƯỚC/SAU chứ không tin mỗi giá trị trả về: còn cooldown nhà bán thì
+                                # rotate() trả NGUYÊN IP CŨ mà _rotate_raw vẫn True → reset số đếm trong khi IP
+                                # không hề đổi, tưởng đã sang lô mới.
+                                rotated = bool(ok) and _rot_status(ip_key).get("endpoint", "") != truoc
+                                if rotated:
+                                    used = 0
+                            # Xoay hỏng/bị từ chối → KHÔNG reset: để số đếm leo quá n ("lượt 9/2") làm dấu hiệu
+                            # nợ xoay đang treo, nhìn một dòng log là biết.
+                            self._ip_used_by_key[ip_key] = used + 1
+                            used = self._ip_used_by_key[ip_key]
+                        print(f"[pool] {account}: proxy riêng — lượt {used}/{n} của IP này"
+                              + ("" if used <= n else " — NỢ XOAY treo: chưa đổi được IP (còn job chạy trên "
+                                                      "proxy này, hoặc nhà bán còn hạn chờ đổi)"), flush=True)
+                        # fresh = ĐÃ ĐỔI IP THẬT, không phải "lượt 1": cờ này hiện ra giao diện là "IP mới
+                        # (vừa xoay)", gắn bừa là nói dối người dùng.
+                        self._stamp_proxy(account, used=used, per=n, fresh=rotated)
                     else:
-                        self._stamp_proxy(account)   # không bật N nick/IP: vẫn hiện IP + nhà cung cấp (không có lượt)
+                        self._stamp_proxy(account)   # proxy tĩnh/nối thẳng: chỉ hiện IP + nhà cung cấp (không có lượt)
                     try:
                         seen = {"balance": False}
 

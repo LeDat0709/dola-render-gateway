@@ -30,7 +30,11 @@ def atomic_write_text(path, text: str, encoding: str = "utf-8") -> None:
     path = Path(path)
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
     tmp.write_text(text, encoding=encoding)
-    os.replace(tmp, path)
+    try:
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def upsert_env_local(key: str, value: str) -> None:
@@ -124,9 +128,15 @@ NO_COOLDOWN = os.getenv("DOLA_NO_COOLDOWN", "0").strip().lower() in ("1", "true"
 # IP" (710022002). Mặc định TẮT. Chỉ ăn thua khi proxy chung là key/link xoay; proxy tĩnh/nối thẳng bỏ qua.
 ONE_NICK = os.getenv("DOLA_ONE_NICK", "0").strip().lower() in ("1", "true", "yes", "on")
 
-# Khi bật MỖI LẦN MỘT NICK: mỗi IP proxy xoay dùng cho ĐÚNG N nick rồi mới đổi IP (điểm giữa: N=1 = 1 nick/IP
-# an toàn nhất nhưng chậm; N lớn = ít xoay hơn, nhanh hơn nhưng nhiều nick chung 1 IP). Mặc định 2 nick/IP.
+# Mỗi KHOÁ proxy xoay (proxy riêng của nick, hoặc proxy chung) dùng N LƯỢT rồi mới xin IP mới. Đếm theo LƯỢT
+# THỬ MỞ NICK, không theo nick khác nhau và cũng không theo lệnh đã gửi: nick hỏng trước lúc gửi vẫn đốt một
+# lượt của khoá. N=1 an toàn nhất nhưng gọi nhà bán nhiều nhất. Chạy CẢ KHI DOLA_PROXY rỗng (proxy riêng từng
+# nick) — trước đây cờ này nằm trong nhánh ONE_NICK nên PROXY rỗng là vô tác dụng hoàn toàn.
 NICKS_PER_IP = max(1, int(os.getenv("DOLA_NICKS_PER_IP", "2")))
+# Bật NICKS_PER_IP cho PROXY RIÊNG TỪNG NICK (DOLA_PROXY rỗng). Mặc định TẮT vì nó đổi giao kèo cũ: khi
+# không bật, tool CHỈ xoay IP khi cần (IP sắp hết tuổi, IP bẩn, Dola chặn 710022002) — xoay chủ động tốn
+# nhịp của nhà bán. Bật khi nhiều nick dùng chung ít proxy và hay dính 710022002.
+XOAY_THEO_LUOT = os.getenv("DOLA_XOAY_THEO_LUOT", "0").strip().lower() in ("1", "true", "yes", "on")
 # Trong lô đó, tối đa K job CHẠY SONG SONG trên cùng 1 IP (đối thủ v1.0.88 "IP chung mẻ": ≤6 job/IP). 1 = tuần tự như cũ.
 # IP đủ N job thì job kế CHỜ các job còn chạy trên IP xong mới đổi IP (đổi lúc đang chạy = cắt IP của chúng).
 PARALLEL_PER_IP = max(1, int(os.getenv("DOLA_PARALLEL_PER_IP", "1")))

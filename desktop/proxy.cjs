@@ -6,6 +6,8 @@
 // trong `catch (_) {}`, người dùng không biết vì sao.
 const fs = require("fs");
 const path = require("path");
+// remote.cjs thuần fetch (không require electron) nên proxy.cjs vẫn test được bằng node thường.
+const { gatewayBase, adminFetch } = require("./remote.cjs");
 // require("electron") nằm trong hàm: parseProxy/accountProxy test được bằng node thường.
 
 // Đọc .env.local (bản rút gọn, khớp config.py): KEY=VALUE, dòng đầu thắng.
@@ -108,19 +110,10 @@ function hookProxyAuth() {
   });
 }
 
-// Gắn một chuỗi proxy vào session Electron. Trả về mô tả proxy đang dùng (null = nối thẳng).
-async function applyProxyRaw(ses, raw, send) {
-  if (isRotating(raw)) {   // proxy xoay: chỉ server Python gọi ra IP thật; cửa sổ Electron nối thẳng.
-    if (send) send("Proxy xoay theo key/link — cửa sổ này nối thẳng (proxy chỉ áp khi render).");
-    try { await ses.setProxy({ mode: "direct" }); } catch (_) {}
-    return null;
-  }
-  const p = parseProxy(raw);
-  if (!p) {
-    if (send && raw) send(`⚠ Proxy "${raw}" sai định dạng — đang nối thẳng.`);
-    try { await ses.setProxy({ mode: "direct" }); } catch (_) {}
-    return null;
-  }
+// Gắn một proxy ĐÃ phân tích vào session (null = nối thẳng). Tách ra để đường proxy tĩnh và đường
+// proxy xoay dùng chung đúng MỘT cách gắn credential.
+async function applyParsed(ses, p, send) {
+  if (!p) { try { await ses.setProxy({ mode: "direct" }); } catch (_) {} return null; }
   hookProxyAuth();
   if (p.user) PROXY_CRED.set(`${p.host}:${p.port}`, { user: p.user, pass: p.pass });
   await ses.setProxy({ proxyRules: p.rules, proxyBypassRules: "<local>" });
@@ -128,8 +121,48 @@ async function applyProxyRaw(ses, raw, send) {
   return p;
 }
 
-// Gắn proxy của nick (hoặc proxy chung) vào session.
-const applyProxy = (ses, repoRoot, name, send) => applyProxyRaw(ses, accountProxy(repoRoot, name), send);
+// Gắn một chuỗi proxy TĨNH vào session Electron. Proxy xoay không mang IP trong chuỗi (nó là key/link)
+// nên phải đi qua resolveProxy để hỏi gateway — NÉM chứ không lặng lẽ nối thẳng như trước.
+async function applyProxyRaw(ses, raw, send) {
+  if (isRotating(raw)) throw new Error("Proxy xoay phải giải qua gateway — dùng resolveProxy/applyProxy.");
+  const p = parseProxy(raw);
+  if (!p && send && raw) send(`⚠ Proxy "${raw}" sai định dạng — đang nối thẳng.`);
+  return applyParsed(ses, p, send);
+}
+
+// {server,username,password} (dạng patchright của Python) → dạng parseProxy. Nhận DICT chứ không nhận
+// chuỗi "user:pass@host:port": account_proxy_url() percent-encode mật khẩu, mà Chromium cần mật khẩu THÔ
+// ở callback sự kiện "login" — đi qua chuỗi là sai mật khẩu với proxy có ký tự lạ.
+function fromServerDict(d) {
+  const m = String((d && d.server) || "").match(/^(\w+):\/\/([^:/]+):(\d+)$/);
+  if (!m) return null;
+  return { scheme: m[1], host: m[2], port: m[3], user: (d && d.username) || "", pass: (d && d.password) || "",
+           rules: `${m[1]}://${m[2]}:${m[3]}` };
+}
+
+// Proxy cửa sổ Electron của nick, ĐÃ giải sẵn. Proxy xoay → hỏi gateway (nơi DUY NHẤT giữ cache IP và giữ
+// IP whitelist với nhà bán). Lấy không được thì NÉM: nối thẳng ở đây nghĩa là mọi nick đăng nhập bằng IP
+// nhà rồi render bằng IP proxy — đúng dấu hiệu chống gian lận (facebook_login.py đã cảnh báo).
+// BẮT BUỘC gọi TRƯỚC freeProfileForLogin(): ở chế độ gửi "fetch" hàm đó GIẾT gateway.
+async function resolveProxy(repoRoot, name) {
+  const raw = accountProxy(repoRoot, name);
+  if (!isRotating(raw)) return parseProxy(raw);   // tĩnh hoặc rỗng → null = nối thẳng, y như trước
+  const env = readEnvLocal(repoRoot);
+  // 20s chứ không phải 10s mặc định: một lần lấy IP lạnh của proxyxoay tốn tới 5s (hỏi IP máy để tự khai
+  // whitelist) + 12s (gọi get.php) → 10s là abort oan rồi báo "gateway không trả lời".
+  const r = await adminFetch(gatewayBase(env).base, env.DOLA_ADMIN_KEY || "",
+    `/api/admin/accounts/${encodeURIComponent(name)}/proxy/current`, { timeoutMs: 20000 });
+  if (!r.ok) {
+    // Có status = server SỐNG và đã trả lý do thật (409 đang bận / 502 nhà bán lỗi) — đừng bảo đi bật server.
+    throw new Error(r.status ? `Chưa lấy được IP proxy của nick: ${r.error}`
+      : `Chưa lấy được IP proxy của nick (${r.error || "gateway không trả lời"}). `
+        + "Bật server ở thanh trên rồi đăng nhập lại.");
+  }
+  return fromServerDict(r.proxy);   // null = nick không gán proxy nào → nối thẳng
+}
+
+// Gắn proxy của nick vào session. NÉM khi proxy xoay không lấy được IP — nơi gọi PHẢI huỷ mở cửa sổ.
+const applyProxy = async (ses, repoRoot, name, send) => applyParsed(ses, await resolveProxy(repoRoot, name), send);
 
 const PROXY_FORMATS = "host:port · user:pass@host:port · host:port:user:pass · socks5://host:port";
 
@@ -216,12 +249,17 @@ function probeUrl(ses, url, timeoutMs = 12000) {
 }
 
 // Kiểm tra trước khi mở cửa sổ: vào được dola.com không? Trả về câu lỗi đã giải thích sẵn.
-async function preflightDola(ses, repoRoot, name, url = "https://www.dola.com/") {
+async function preflightDola(ses, repoRoot, name, url = "https://www.dola.com/", proxyInfo = null) {
   const r = await probeUrl(ses, url);
   if (r.ok) return { ok: true };
-  const p = parseProxy(accountProxy(repoRoot, name));
+  const raw = accountProxy(repoRoot, name);
+  // proxyInfo = proxy VỪA GẮN thật. Với proxy xoay, parseProxy(raw) luôn null (raw là link get.php) nên
+  // không nhận proxyInfo thì câu lỗi nói sai là "đang nối thẳng" → người dùng đi sửa nhầm chỗ.
+  const p = proxyInfo || parseProxy(raw);
   const where = p
-    ? `Proxy đang dùng: ${p.scheme}://${p.host}:${p.port} — proxy tắt, sai cổng hoặc sai mật khẩu. Sửa hoặc xoá trống ở Cài đặt → Proxy chung (hoặc nút ⚙ của nick), rồi Tắt/Bật server.`
+    ? `Proxy đang dùng: ${p.scheme}://${p.host}:${p.port} — ` + (isRotating(raw)
+        ? 'IP proxy xoay vừa lấy không vào được: IP MÁY NÀY có thể chưa whitelist trên trang nhà bán, hoặc IP vừa chết. Bấm "Đổi IP" ở Kho proxy rồi thử lại.'
+        : "proxy tắt, sai cổng hoặc sai mật khẩu. Sửa hoặc xoá trống ở Cài đặt → Proxy chung (hoặc nút ⚙ của nick), rồi Tắt/Bật server.")
     : `Đang nối thẳng — mạng của bạn đang chặn dola.com. Vào Cài đặt → Proxy chung (exit node Nhật/Hàn) rồi thử lại.`;
   return { ok: false, error: `Không vào được dola.com (${r.error}). ${where}` };
 }
@@ -229,5 +267,6 @@ async function preflightDola(ses, repoRoot, name, url = "https://www.dola.com/")
 module.exports = {
   readEnvLocal, parseProxy, isKeyLink, isRotating, normalizeProxyInput, globalProxy, accountProxy, applyProxyRaw, applyProxy, hookProxyAuth,
   describeNetError, showLoadError, attachLoadErrorHandler, probeUrl, preflightDola, testProxy,
+  applyParsed, resolveProxy, fromServerDict,   // main.js gọi 2 hàm đầu; test-proxy.cjs kiểm đường proxy xoay
   DEFAULT_PROXY, PROXY_FORMATS,
 };

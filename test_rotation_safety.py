@@ -19,11 +19,13 @@ from video_worker_ui import ParameterChangeError, TransientDolaError, _FetchDeli
 browser_pool.config.SUBMIT_GAP_SEC = 0
 browser_pool.config.SUBMIT_JITTER_SEC = 0
 browser_pool.config.AUTO_RETRY = True
+browser_pool._reset_rate_state()   # reset adaptive pacing state from prior tests
 
 GUARD_SEC = 3.0   # test nào treo quá mức này = hỏng (không để runner treo theo)
 
 
 def _pool(tmp: str, nicks=("n1", "n2")) -> BrowserPool:
+    browser_pool._reset_rate_state()   # clean adaptive pacing state from prior tests
     p = BrowserPool(accounts_dir=str(Path(tmp) / "accounts"), db_path=str(Path(tmp) / "pool.db"), max_concurrency=2)
     for n in nicks:
         (Path(tmp) / "accounts" / n).mkdir(parents=True)
@@ -685,8 +687,8 @@ def test_dirty_ip_rotated_before_next_nick():
                 r = _run(pool.generate_video("p", "9:16", 10, account="n1"))
                 assert r["account"] == "n2", r
                 assert "1.1.1.1:80" in browser._dirty_ips, browser._dirty_ips
-                # 1 lần đổi ngay sau 710022002 (n1) + 1 lần trước khi mở n2 vì IP (giả lập nhà bán cấp lại y IP) vẫn bẩn
-                assert env.rotations == [_LINK, _LINK], env.rotations
+                # 1 lần đổi ngay sau 710022002 (n1) + 2 lần trước khi mở n2 (retry vì nhà bán cấp lại IP bẩn)
+                assert env.rotations == [_LINK, _LINK, _LINK], env.rotations
                 assert browser.rotating_status(_LINK)["dirty"] is True
                 browser._dirty_ips.clear()
                 assert browser.rotating_status(_LINK)["dirty"] is False

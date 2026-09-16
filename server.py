@@ -447,6 +447,7 @@ async def _cuu_video_da_tra_luot(task_id: str, account: str, prompt: str, sau_kh
                                  cac_moc: tuple | None = None):
     from video_worker_ui import scan_account_videos
     from video_worker import _download
+    from browser import proxy_lease
     # Đọc CUU_VIDEO_SAU lúc GỌI, không đặt làm giá trị mặc định: mặc định bị chốt lúc định nghĩa hàm nên
     # test (gán server.CUU_VIDEO_SAU = (0, 0) cho khỏi chờ thật) sẽ không còn tác dụng.
     for cho in (CUU_VIDEO_SAU if cac_moc is None else cac_moc):
@@ -454,12 +455,17 @@ async def _cuu_video_da_tra_luot(task_id: str, account: str, prompt: str, sau_kh
         row = store.get(task_id)
         if not row or row["status"] == "completed":
             return                                   # người dùng đã tự nhặt, hoặc job đã xong
-        try:
-            # 50 (trần của endpoint) chứ không phải 20: tới mốc cứu 40 phút, nick chạy dày đã đẩy hội thoại
-            # của job này ra khỏi 20 hội thoại gần nhất → quét mãi không thấy video đã trừ lượt.
-            ds = await scan_account_videos(account, 50)
-        except Exception:
-            continue                                 # nick lỗi mạng/cookie → thử lại lần sau
+        # GIỮ CHỖ proxy suốt lúc quét: video này ĐÃ TRỪ LƯỢT, mà đường cứu là chỗ DUY NHẤT đi qua proxy của
+        # nick mà KHÔNG nằm trong sổ _proxy_leases (chỗ giữ duy nhất là browser_pool khi chạy job) → job của
+        # nick khác cùng khoá proxy xin được IP mới, nhà bán giết cổng cũ, quét đứt giữa chừng.
+        # Giữ SAU asyncio.sleep để không khoá IP suốt 40 phút chờ.
+        with proxy_lease(account):
+            try:
+                # 50 (trần của endpoint) chứ không phải 20: tới mốc cứu 40 phút, nick chạy dày đã đẩy hội
+                # thoại của job này ra khỏi 20 hội thoại gần nhất → quét mãi không thấy video đã trừ lượt.
+                ds = await scan_account_videos(account, 50)
+            except Exception:
+                continue                             # nick lỗi mạng/cookie → thử lại lần sau
         v = _chon_video(ds, row, sau_khi)
         if v:
             # NHẬN CHỖ NGAY, trước khi tải: tải mất hàng chục giây, mà _chon_video của job khác cùng nick lọc
@@ -467,7 +473,8 @@ async def _cuu_video_da_tra_luot(task_id: str, account: str, prompt: str, sau_kh
             # này vẫn trống chỗ, hai job cùng nhặt một video.
             store.update(task_id, conversation_id=v["conversation_id"])
             try:
-                local = await _download(v["video_url"], account, prompt)
+                with proxy_lease(account):   # tải cũng đi qua proxy nick — xem chú thích ở khối quét
+                    local = await _download(v["video_url"], account, prompt)
             except Exception as exc:
                 # ĐỪNG bỏ cuộc: link CDN Dola có chữ ký hết hạn, mốc sau quét lại sẽ ra URL MỚI. Trước đây
                 # tải hỏng một lần là dừng hẳn, mất luôn video đã trả lượt.
@@ -1040,6 +1047,39 @@ async def admin_account_proxy_get(name: str, x_admin_key: str | None = Header(de
         raise HTTPException(404, "account not found")
     from browser import account_proxy_raw
     return {"proxy": account_proxy_raw(name)}
+
+
+@app.get("/api/admin/accounts/{name}/proxy/current")
+async def admin_account_proxy_current(name: str, x_admin_key: str | None = Header(default=None)):
+    """IP HIỆN HÀNH của proxy nick, đã giải sẵn {server, username?, password?} — cho cửa sổ Electron.
+
+    Vì sao cần: cửa sổ đăng nhập Electron không tự gọi nhà bán được (cache IP và IP whitelist nằm ở tiến
+    trình này). Không có endpoint này thì cửa sổ nối THẲNG khi nick dùng proxy xoay → nick đăng nhập bằng
+    IP máy thật rồi render bằng IP proxy, đúng dấu hiệu chống gian lận soi kỹ nhất.
+
+    Vì sao TỪ CHỐI khi proxy đang bận: account_proxy() đi qua current(), mà current() hết hạn cache là gọi
+    lại nhà bán — lấy IP mới thì cổng cũ bị giết, cắt ngang video ĐÃ TRỪ LƯỢT đang dựng. Chờ vài phút rẻ
+    hơn mất một video.
+    ponytail: bận thì từ chối luôn. Muốn đăng nhập được giữa lúc render thì phải có bản đọc-cache-thuần
+    trong proxyxoay.py/tmproxy.py (cached_ip hiện không trả user/pass) — chưa cần.
+    """
+    _admin_auth(x_admin_key)
+    # KHÔNG kiểm pool.accounts như endpoint trên: nick MỚI chưa có thư mục vẫn phải đăng nhập được.
+    # NAME_RE vẫn chặn "../" nên không đọc ra ngoài thư mục accounts.
+    if not NAME_RE.match(name):
+        raise HTTPException(422, "tên nick không hợp lệ")
+    from browser import _effective_rotating, account_proxy, proxy_busy
+    raw = _effective_rotating(name)
+    dang_chay = proxy_busy(raw) if raw else 0
+    if dang_chay:
+        raise HTTPException(409, f"Proxy của nick này đang có {dang_chay} job chạy — lấy IP lúc này có thể "
+                                 "đổi IP và làm hỏng video đã trừ lượt. Chờ job xong rồi đăng nhập.")
+    try:
+        # urllib trong proxyxoay/tmproxy chặn luồng → to_thread, khỏi treo cả event loop của gateway.
+        p = await asyncio.to_thread(account_proxy, name)
+    except RuntimeError as e:   # account_proxy ném khi proxy xoay riêng không lấy được IP
+        raise HTTPException(502, str(e)[:200])
+    return {"proxy": p}
 
 
 @app.get("/api/admin/accounts/{name}/check-proxy")

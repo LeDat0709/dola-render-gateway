@@ -303,8 +303,12 @@ async function fetchGenerate(opts) {
   // Bản đóng gói: .env.local và accounts/ nằm ở userData (main.js truyền dataDir), KHÔNG phải cạnh mã.
   const repoRoot = opts.dataDir || path.dirname(__dirname);
   let proxyInfo = null;
-  try { proxyInfo = await applyProxy(ses, repoRoot, name, step); } catch (_) {}
-  const pre = await preflightDola(ses, repoRoot, name);
+  // KHÔNG nuốt lỗi: nuốt thì ses giữ nguyên proxy của lần gắn TRƯỚC (persist:dola-<nick> nhớ qua các phiên)
+  // rồi GỬI lệnh tạo video qua cổng đã chết — Dola trừ lượt ngay lúc nhận lệnh. Hàm này vốn đã ném ở dòng
+  // dưới khi preflight hỏng, nên ném là đúng kiểu sẵn có.
+  try { proxyInfo = await applyProxy(ses, repoRoot, name, step); }
+  catch (err) { throw new Error(String((err && err.message) || err).slice(0, 200)); }
+  const pre = await preflightDola(ses, repoRoot, name, undefined, proxyInfo);
   if (!pre.ok) throw new Error(pre.error);
   const win = new BrowserWindow({
     width: 480, height: 640, show: !!opts.showBrowser, title: `Tạo video (nhanh) — ${name}`,

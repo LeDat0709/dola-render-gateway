@@ -67,7 +67,8 @@ def test_same_client_id_reuses_job_and_charges_once():
     again = asyncio.run(job(broker.JobRequest(prompt="p", client_id="req-1"), grant))
     assert first["job"] == again["job"], "gửi lại cùng khóa phải trả job cũ"
     assert len(created) == 1, f"không được tạo job thứ hai, đã tạo {len(created)}"
-    assert broker._spent["acme"] == 1, f"chỉ trừ 1 credit, got {broker._spent}"
+    # _spent giờ khoá theo grant_id = "client:exp" (BUG-02 fix)
+    assert sum(broker._spent.values()) == 1, f"chỉ trừ 1 credit, got {broker._spent}"
 
 
 def test_credits_gate_at_creation_not_at_download():
@@ -84,7 +85,7 @@ def test_credits_gate_at_creation_not_at_download():
         assert exc.status_code == 402
     # /downloaded chỉ báo số dư, không được cộng trùng
     assert asyncio.run(downloaded(broker.DownloadedRequest(job="job1"), grant))["remaining"] == 0
-    assert broker._spent["acme"] == 2
+    assert sum(broker._spent.values()) == 2
 
 
 def test_client_id_is_namespaced_per_client():

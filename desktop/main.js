@@ -19,7 +19,7 @@ const DATA_DIR = PACKAGED
                                               fs, log: (m) => process.stdout.write(m + "\n") })
   : REPO_ROOT;
 const { fetchGenerate } = require("./fetch-generate.cjs");
-const { applyProxy, attachLoadErrorHandler, preflightDola, readEnvLocal: _readEnvLocal,
+const { applyProxy, applyParsed, resolveProxy, attachLoadErrorHandler, preflightDola, readEnvLocal: _readEnvLocal,
         parseProxy, isKeyLink, isRotating, normalizeProxyInput, globalProxy, testProxy, PROXY_FORMATS } = require("./proxy.cjs");
 const { gatewayBase, normalizeRemoteBase, testRemote, getAccountProxy, setAccountProxy, getRemoteConfig } = require("./remote.cjs");
 const { createGateway } = require("./gateway.cjs");
@@ -703,6 +703,16 @@ pausedHandle("account:importFacebookElectron", async (_e, { name, line, lang }) 
   if (!names.has("c_user") || !names.has("xs")) {
     return { ok: false, error: "Cookie Facebook thiếu c_user / xs — dán đầy đủ cookie hoặc dòng uid|pass|2fa|cookie|ua" };
   }
+  // Giải IP proxy TRƯỚC freeProfileForLogin(): ở chế độ gửi "fetch" hàm đó GIẾT gateway, mà gateway là nơi
+  // DUY NHẤT biết IP hiện hành của proxy xoay. Đảo thứ tự thì lần nào cũng không nối được → không nick nào
+  // đăng nhập được, bấm lại bao nhiêu lần cũng thế.
+  // Lấy không được thì DỪNG, KHÔNG mở cửa sổ: mở ra là nick đăng nhập bằng IP máy thật rồi render bằng IP
+  // proxy — dấu hiệu chống gian lận soi kỹ nhất. Bỏ cửa sổ không mất lượt nào (Dola chỉ trừ lượt lúc GỬI),
+  // còn nick chết thì mất cả nick.
+  let proxyInfo = null;
+  try { proxyInfo = await resolveProxy(DATA_DIR, name); }
+  catch (err) { return { ok: false, error: String((err && err.message) || err).slice(0, 200) }; }
+
   await freeProfileForLogin();   // http: render không giữ Chrome → khỏi giết gateway; fetch: pause như cũ
 
   const partition = `persist:dola-${name}`;
@@ -713,9 +723,8 @@ pausedHandle("account:importFacebookElectron", async (_e, { name, line, lang }) 
   // Cửa sổ Electron phải đi qua ĐÚNG proxy như phía Python, nếu không mạng chặn dola.com
   // là cửa sổ trắng trơn. Kiểm tra với tới dola.com TRƯỚC khi mở cửa sổ, để không bật ra
   // một loạt cửa sổ trắng khi nạp nhiều nick cùng lúc.
-  let proxyInfo = null;
-  try { proxyInfo = await applyProxy(ses, DATA_DIR, name, send); } catch (err) { send(`⚠ đặt proxy lỗi: ${String(err).slice(0, 80)}`); }
-  const pre = await preflightDola(ses, DATA_DIR, name);
+  await applyParsed(ses, proxyInfo, send);
+  const pre = await preflightDola(ses, DATA_DIR, name, undefined, proxyInfo);
   if (!pre.ok) { send(`✗ ${pre.error}`); return { ok: false, error: pre.error }; }
 
   send("Đang nạp cookie Facebook vào cửa sổ app…");
@@ -845,14 +854,18 @@ const CHECKPOINT_GRACE_MS = 45 * 1000;
 
 pausedHandle("account:loginElectron", async (_e, { name, lang }) => {
   if (!NAME_RE.test(name || "")) return { ok: false, error: "Tên nick chỉ gồm chữ, số, _ hoặc - (1-32 ký tự)" };
+  // Giải IP proxy TRƯỚC khi nhả profile — xem chú thích ở handler nhập cookie (chế độ "fetch" giết gateway).
+  let proxyInfo = null;
+  try { proxyInfo = await resolveProxy(DATA_DIR, name); }
+  catch (err) { return { ok: false, error: String((err && err.message) || err).slice(0, 200) }; }
+
   await freeProfileForLogin();   // http: render không giữ Chrome → khỏi giết gateway; fetch: pause như cũ
 
   const partition = `persist:dola-${name}`;
   const ses = session.fromPartition(partition);
   cleanUserAgent(ses);
-  let proxyInfo = null;
-  try { proxyInfo = await applyProxy(ses, DATA_DIR, name, null); } catch (_) {}
-  const pre = await preflightDola(ses, DATA_DIR, name);
+  await applyParsed(ses, proxyInfo, null);   // handler này không có kênh log riêng
+  const pre = await preflightDola(ses, DATA_DIR, name, undefined, proxyInfo);
   if (!pre.ok) return { ok: false, error: pre.error };
   const win = new BrowserWindow({
     width: 480, height: 760, title: `Đăng nhập dola.com — ${name}`,
