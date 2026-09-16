@@ -1021,6 +1021,57 @@ async ({msToken, fp}) => {
 """
 
 
+# Giãn nhịp CHUNG cho mọi proxy (config.SUBMIT_GAP_GLOBAL_SEC): mỗi lần gửi thật lấy một "khe" cách khe trước. Không có
+# await giữa đọc và ghi khe nên nguyên tử trong asyncio, khỏi cần Lock (Lock dùng lại qua nhiều event loop hay vỡ).
+_GLOBAL_SUBMIT = {"slot": 0.0}
+
+
+async def _global_submit_gate(account: str) -> None:
+    """Gọi NGAY TRƯỚC khi lệnh rời máy (mọi đường: HTTP, fetch, giao diện, kể cả gửi lại bên trong). Chờ tới khe của mình."""
+    gap = config.SUBMIT_GAP_GLOBAL_SEC
+    if gap <= 0:
+        return
+    now = time.monotonic()
+    base = max(now, _GLOBAL_SUBMIT["slot"])
+    _GLOBAL_SUBMIT["slot"] = base + gap + random.uniform(0, config.SUBMIT_JITTER_GLOBAL_SEC)
+    wait = base - now
+    if wait > 0.5:
+        print(f"[{account}] giãn nhịp chung: chờ {wait:.1f}s rồi mới gửi (tránh nhiều nick gửi cùng lúc)", flush=True)
+    if wait > 0:
+        # ponytail: thời gian chờ ở đây tính vào đồng hồ chống treo trước khi gửi (PRESUBMIT_TIMEOUT_SEC=300s) — ổn với
+        # ≤ vài chục job cùng lúc; hàng trăm job/lượt thì cần tạm dừng đồng hồ như _presubmit_guard._hold.
+        await asyncio.sleep(wait)
+
+
+async def _recent_conv_ids_http(account: str, proxy) -> set | None:
+    """Tập conversation_id gần đây của nick, đọc bằng HTTP qua đúng proxy. None = không đọc được (KHÔNG phải tập rỗng)."""
+    try:
+        cookie, ms_token, fp = _account_cookies(account)
+    except Exception:  # noqa: BLE001
+        return None
+    async with aiohttp.ClientSession() as session:
+        convs = await _recent_conversations(session, cookie, ms_token, fp, 20, proxy)
+    return None if convs is None else {c["conversation_id"] for c in convs}
+
+
+async def _new_conv_after_http(account: str, proxy, before: set | None, tries: int) -> tuple[str, bool]:
+    """Như _new_conv_after nhưng đọc bằng HTTP (engine không-Chrome). verified=True chỉ khi chụp được TRƯỚC khi gửi và
+    MỌI lần dò đều đọc được — lúc đó "không thấy" mới chứng minh Dola chưa nhận lệnh."""
+    if before is None:
+        return "", False
+    verified = True
+    for _ in range(tries):
+        await asyncio.sleep(2)
+        cur = await _recent_conv_ids_http(account, proxy)
+        if cur is None:
+            verified = False
+            continue
+        new = cur - before
+        if new:
+            return max(new, key=int), True
+    return "", verified
+
+
 async def _recent_conv_ids(page, ms_token: str, fp: str) -> set | None:
     """Hội thoại gần đây của nick. None = KHÔNG dò được (HTTP/mạng lỗi) — khác set() rỗng của nick mới:
     trừ với set() rỗng giả sẽ ra cả 20 hội thoại CŨ → job nhận video cũ như thành công."""
@@ -1075,6 +1126,7 @@ async def _submit_via_fetch(page, context, account: str, prompt: str, ratio: str
     query = _submit_query(captured, fp)
     if "device_id" not in query:
         raise _FetchSubmitFailed("page never exposed its API query (device_id missing)")
+    await _global_submit_gate(account)   # giãn nhịp chung, ngay trước lúc gửi thật (cả lần gửi lại "lần 2")
     before = await _recent_conv_ids(page, ms_token, fp)
     args = {"prompt": prompt, "ratio": ratio or "", "duration": duration, "model": model_key,
             "query": query, "ackIdleMs": FETCH_ACK_IDLE_MS}
@@ -1152,7 +1204,7 @@ async def _generate_via_http(account: str, prompt: str, ratio: str | None, durat
     Nhẹ RAM, mở nick nhanh (không launch Chrome mỗi nick) — như đối thủ. Chỉ dùng khi cookies.json còn sống;
     Dola từ chối chắc chắn (SubmitHttpRejected) → nổi lên để generate_video rơi về đường fetch (Chrome). Dola hỏi
     lại (30s/thông số) mà HTTP không trả lời được → mở Chrome bằng resume_video, giữ conversation_id (không gửi lại)."""
-    from submit_http import submit_via_http
+    from submit_http import SubmitHttpRateLimited, submit_via_http
     from browser import account_proxy_url
     # Lấy IP proxy lỗi (chưa whitelist, key đang chờ, nhà bán lỗi…) → ĐỂ LỖI NỔI LÊN, KHÔNG gửi thẳng. Trước đây gửi
     # với proxy=None: giao diện vẫn hiện IP proxy (bộ nhớ đệm) mà lệnh thật đi từ IP MÁY → nhiều nick dồn chung một IP
@@ -1161,7 +1213,23 @@ async def _generate_via_http(account: str, prompt: str, ratio: str | None, durat
     proxy = account_proxy_url(account) or None   # đã gồm proxy chung; "" chỉ khi nick không khai proxy nào
     if on_browser_free:
         on_browser_free()   # không giữ slot Chrome nào cả → trả ngay cho nick khác
-    conv_id = await submit_via_http(account, prompt, ratio, duration, model_key, proxy, on_submitted=on_submitted)
+    await _global_submit_gate(account)   # giãn nhịp chung cho mọi proxy, ngay trước lúc gửi thật (đã nhả slot Chrome)
+    before = await _recent_conv_ids_http(account, proxy)   # để phân biệt 710022002 "chưa nhận" với "đã nhận"
+    try:
+        conv_id = await submit_via_http(account, prompt, ratio, duration, model_key, proxy, on_submitted=on_submitted)
+    except SubmitHttpRateLimited as rl:
+        if not rl.maybe_delivered:
+            raise RateLimitedError(str(rl)) from rl   # 4xx: chắc chưa nhận, cờ đã hạ → pool chờ rồi thử lại
+        conv_id, verified = await _new_conv_after_http(account, proxy, before, _PROBE_TRIES)
+        if not conv_id:
+            if not verified:
+                raise RuntimeError(
+                    "Dola báo 710022002 nhưng không dò được danh sách hội thoại — không chắc Dola đã nhận hay chưa, "
+                    "KHÔNG gửi lại để tránh trừ lượt 2 lần. Xem dola.com của nick; chưa có video thì chạy lại.") from rl
+            if on_submitted:
+                on_submitted(account, False)   # dò đủ, không có hội thoại mới → CHẮC chưa nhận
+            raise RateLimitedError(str(rl)) from rl
+        print(f"[{account}] Dola báo 710022002 nhưng ĐÃ tạo hội thoại {conv_id} → theo dõi tiếp, không gửi lại", flush=True)
     print(f"[{account}] http submitted ({model_key} {duration}s {ratio or 'default'}) conversation_id={conv_id}", flush=True)
     deadline = time.time() + timeout
     if on_conversation_id:
@@ -2134,6 +2202,7 @@ async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duratio
                     await box.focus()
                 await page.keyboard.insert_text(prompt)   # dán nguyên khối (prompt dài không còn mất ~1 phút gõ)
                 await page.wait_for_timeout(600)
+                await _global_submit_gate(account)   # giãn nhịp chung, ngay trước Enter
                 if on_submitted:
                     # TRƯỚC Enter (như đường fetch): Enter lỗi/bị hủy vẫn có thể đã phát đi → không xoay/gửi lại
                     on_submitted(account, True)

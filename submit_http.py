@@ -25,6 +25,19 @@ UA = signer.DEFAULT_UA
 _ORIENT = {"9:16": "縦", "3:4": "縦", "16:9": "横", "4:3": "横", "1:1": "正方形"}
 
 
+class SubmitHttpRateLimited(Exception):
+    """Dola trả 710022002 ("gửi quá dày") cho lệnh gửi HTTP.
+
+    maybe_delivered=False: HTTP 4xx — CHẮC CHẮN chưa nhận (cờ đã gửi đã hạ về False).
+    maybe_delivered=True: HTTP 200 mà không có conversation_id — CÓ THỂ đã nhận; nơi gọi PHẢI dò hội thoại mới trước
+    khi coi là chưa nhận. Trước đây trường hợp này rơi vào "trả về không đọc được" → job lỗi như đã trừ lượt, không
+    nghỉ/không thử lại, dù thực chất Dola chỉ từ chối vì gửi quá dày."""
+
+    def __init__(self, message: str, maybe_delivered: bool):
+        super().__init__(message)
+        self.maybe_delivered = maybe_delivered
+
+
 def load_account_cookies(account: str) -> dict[str, str]:
     """Cookie nick từ accounts/<nick>/cookies.json (list [{name,value}] hoặc dict) — KHÔNG mở Chrome."""
     f = config.ACCOUNTS_DIR / account / "cookies.json"
@@ -227,15 +240,22 @@ async def submit_via_http(account: str, prompt: str, ratio: str | None, duration
         raise RuntimeError(
             f"Mất kết nối SAU khi đã gửi lệnh tới Dola — KHÔNG gửi lại để tránh trừ lượt 2 lần. "
             f"Xem dola.com của nick, chưa có video thì chạy lại: {str(e)[:140]}") from e
+    rate_limited = "710022002" in text
     if 400 <= status < 500 and status != 408:
         if on_submitted:
             on_submitted(account, False)   # WAF/cookie/proxy chặn ở cửa → chưa trừ lượt
+        if rate_limited:
+            # KHÔNG rơi về đường Chrome (SubmitHttpRejected): gửi lại ngay sau 710022002 = dội tiếp. Để pool chờ rồi thử lại.
+            raise SubmitHttpRateLimited(f"Dola tạm chặn vì gửi quá dày (710022002, HTTP {status}): {text[:160]}",
+                                        maybe_delivered=False)
         raise SubmitHttpRejected(f"Dola từ chối submit (HTTP {status}): {text[:200]}")
     if status != 200:
         raise RuntimeError(f"Dola từ chối submit (HTTP {status}): {text[:200]}")
     # Lấy conversation_id TRƯỚC: có id nghĩa là Dola ĐÃ nhận việc (đã trừ lượt) — dù trong phần trả lời có lẫn chữ
     # "verify"/"captcha" ở trường khác thì cũng không được coi là bị chặn, vì rơi về đường Chrome sẽ gửi lần 2.
     conv_id = _extract_conversation_id(text)
+    if not conv_id and rate_limited:
+        raise SubmitHttpRateLimited(f"Dola tạm chặn vì gửi quá dày (710022002): {text[:160]}", maybe_delivered=True)
     if not conv_id:
         low = text.lower()
         if any(w in low for w in ("verify", "slide", "captcha")) or '"a_bogus' in low:

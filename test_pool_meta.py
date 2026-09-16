@@ -15,6 +15,11 @@ from video_worker_ui import AccountLimitedError, ParameterChangeError, Transient
 
 # Test không cần giãn nhịp thật (mặc định 3–6s mỗi lần gửi); test riêng bên dưới bật lại.
 browser_pool.config.SUBMIT_GAP_SEC = 0
+
+# Các test ở đây kiểm nhánh xử lý 710022002 SAU khi hết lượt thử lại (IP bẩn, tạm dừng proxy, xoay nick) → tắt thử lại
+# cùng nick và giãn nhịp chung; hai hành vi đó có test riêng ở test_rate_limit_retry.py.
+browser_pool.config.RATE_LIMIT_RETRY_WAITS = ()
+browser_pool.config.SUBMIT_GAP_GLOBAL_SEC = 0
 browser_pool.config.SUBMIT_JITTER_SEC = 0
 browser_pool.config.AUTO_RETRY = True   # mặc định code (bật) — không kế thừa DOLA_AUTO_RETRY=0 của .env.local máy
 

@@ -1059,6 +1059,23 @@ class BrowserPool:
                 print(f"[pool] {acc}: video xong nhưng ghi lượt/credit lỗi (bỏ qua): {e!r}", flush=True)
             return result
 
+        async def _run_worker_rl(acc, on_balance, seen):
+            """_run_worker + 710022002 → chờ config.RATE_LIMIT_RETRY_WAITS (15s, 30s) rồi thử lại CÙNG nick (ManixAITools).
+            CHỈ khi cờ "đã gửi" đã hạ về False (worker dò chắc Dola chưa nhận); còn nghi là ném ngay — gửi lại = trừ lượt
+            2 lần. Hết mốc mới để nhánh except RateLimitedError bên dưới xử lý như cũ (IP bẩn, nghỉ, xoay nick).
+            Lúc chờ: nhả slot Chrome (chỗ trên IP đã tự nhả khi _run_worker thoát), GIỮ khoá nick."""
+            waits = config.RATE_LIMIT_RETRY_WAITS
+            for i in range(len(waits) + 1):
+                try:
+                    return await _run_worker(acc, on_balance, seen)
+                except RateLimitedError as e:
+                    if i >= len(waits) or delivery["maybe"]:
+                        raise
+                    print(f"[pool] {acc}: 710022002 — Dola chưa nhận lệnh (chưa trừ lượt), chờ {waits[i]:.0f}s rồi thử lại "
+                          f"CÙNG nick (lần {i + 1}/{len(waits)}): {str(e)[:90]}", flush=True)
+                    _release_browser()
+                    await asyncio.sleep(waits[i])
+
         try:
             # MỖI LẦN MỘT NICK: giữ cổng SUỐT job (submit + render) → 1 nick/lần. Acquire TRƯỚC
             # browser-sema để thứ tự khoá luôn one_nick→browser. NẰM TRONG try...finally để
@@ -1225,7 +1242,7 @@ class BrowserPool:
 
                         from browser import rotate_proxy_session
                         rotate_proxy_session(account, config.PROXY_ROTATE_EVERY)   # sticky: đổi IP sau mỗi N video
-                        return await _run_worker(account, on_balance, seen)
+                        return await _run_worker_rl(account, on_balance, seen)   # 710022002: chờ rồi thử lại cùng nick
                     except (ContentPolicyViolationError, PortraitProtectionError, PromptUnclearError) as e:
                         # Prompt/image problem, not an account problem: no rotation helps.
                         print(f"[pool] {account} rejected due to content policy: {e}", flush=True)

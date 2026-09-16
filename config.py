@@ -149,6 +149,28 @@ MAX_JOBS_PER_IP = max(0, int(os.getenv("DOLA_MAX_JOBS_PER_IP", "0")))
 # hay cắt file lớn). Bật = 1 nếu video hay "tải hỏng" qua proxy; đổi lại CDN thấy IP máy.
 DIRECT_DOWNLOAD_FALLBACK = os.getenv("DOLA_DIRECT_DOWNLOAD_FALLBACK", "0").strip().lower() in ("1", "true", "yes", "on")
 
+
+def _float_list(raw: str) -> tuple[float, ...]:
+    out = []
+    for part in (raw or "").replace(" ", "").split(","):
+        try:
+            v = float(part)
+        except ValueError:
+            continue
+        if v > 0:
+            out.append(v)
+    return tuple(out)
+
+
+# Dola trả 710022002 mà CHẮC CHẮN chưa nhận lệnh → chờ lần lượt các mốc này (giây) rồi thử lại CÙNG nick, hết mốc mới
+# xoay nick như cũ (ManixAITools: 15s, 30s). Trống/0 = tắt, xoay nick ngay.
+RATE_LIMIT_RETRY_WAITS = _float_list(os.getenv("DOLA_RATE_LIMIT_RETRY_WAITS", "15,30"))
+# Giãn nhịp CHUNG cho MỌI proxy, ngay trước lúc gửi thật: hai lần gửi bất kỳ (khác nick, khác proxy) cách nhau ít nhất
+# GAP + ngẫu nhiên(0..JITTER) giây. SUBMIT_GAP_SEC chỉ giãn trong CÙNG proxy và lúc BẮT ĐẦU job → 8 nick trên 8 proxy
+# vẫn gửi trong cùng một giây (16/09). 0 = tắt.
+SUBMIT_GAP_GLOBAL_SEC = max(0.0, float(os.getenv("DOLA_SUBMIT_GAP_GLOBAL", "4") or 0))
+SUBMIT_JITTER_GLOBAL_SEC = max(0.0, float(os.getenv("DOLA_SUBMIT_JITTER_GLOBAL", "3") or 0))
+
 # Tự xóa watermark "Dola AI" ngay khi tải video xong (BẬT mặc định; DOLA_AUTO_REMOVE_WM=0 để tắt)
 AUTO_REMOVE_WM = os.getenv("DOLA_AUTO_REMOVE_WM", "1").strip().lower() not in ("0", "false", "no", "off", "")
 
