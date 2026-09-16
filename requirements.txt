@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 aiohttp
+curl_cffi        # engine gửi KHÔNG mở Chrome (submit_http.py) — thiếu là mọi lần gửi hỏng
 pydantic
 patchright
 pillow

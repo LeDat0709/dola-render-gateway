@@ -185,7 +185,12 @@ async def submit_via_http(account: str, prompt: str, ratio: str | None, duration
     chắc chắn CHƯA nhận (4xx/captcha/thiếu cookie → gọi on_submitted(False)); RuntimeError khác = không rõ (đừng gửi lại).
     """
     import asyncio
-    from curl_cffi import requests as creq
+    try:
+        from curl_cffi import requests as creq
+    except ImportError as e:   # bản cài cũ/thiếu thư viện → rơi về đường Chrome thay vì hỏng cả job
+        raise SubmitHttpRejected(
+            "Thiếu thư viện curl_cffi cho engine gửi không-Chrome — đang dùng Chrome. "
+            "Cài lại app bản mới để có engine nhanh.") from e
 
     model = model or config.MODEL_KEY_SEEDANCE25
     try:
