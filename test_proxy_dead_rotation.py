@@ -163,6 +163,51 @@ def test_static_proxy_is_never_rotated():
             config.ACCOUNTS_DIR, config.PROXY = saved
 
 
+# Log 17/9 10:56: "IP bẩn (vừa bị Dola chặn) … KHÔNG đổi IP — 1 job khác đang chạy" rồi VẪN gửi trên IP bẩn → cả loạt
+# nick chung key dính 710022002 liên tiếp. Giờ: IP bẩn + còn job trên key → chờ; hết job → đi tiếp; chờ quá hạn → lỗi "chưa gửi".
+def test_wait_clean_ip_before_sending():
+    import browser_pool as bp
+    saved = (browser._effective_rotating, browser.ip_dirty, browser.proxy_busy, browser.rotating_status, config.DIRTY_IP_WAIT_SEC)
+    state = {"dirty": True, "busy": 1, "t": 0.0, "sleeps": 0}
+
+    async def fake_sleep(sec):
+        state["t"] += sec
+        state["sleeps"] += 1
+        if state.get("free_after") and state["sleeps"] >= state["free_after"]:
+            state["busy"] = 0
+
+    try:
+        browser._effective_rotating = lambda acc: "tmproxy://K" if acc != "static" else ""
+        browser.rotating_status = lambda key: {"ip": "1.1.1.1"}
+        browser.ip_dirty = lambda st: state["dirty"]
+        browser.proxy_busy = lambda key: state["busy"]
+        config.DIRTY_IP_WAIT_SEC = 600
+        run = lambda acc: asyncio.run(bp._wait_clean_ip(acc, sleep=fake_sleep, clock=lambda: state["t"]))
+
+        run("static")                                   # proxy tĩnh / đi thẳng → không chờ
+        assert state["sleeps"] == 0
+        state.update(dirty=False, busy=3)
+        run("n1")                                       # IP sạch → gửi luôn dù key đang bận
+        assert state["sleeps"] == 0
+        state.update(dirty=True, busy=0)
+        run("n1")                                       # IP bẩn nhưng key rảnh → đi tiếp (rotate_if_expiring sẽ đổi IP)
+        assert state["sleeps"] == 0
+        state.update(dirty=True, busy=1, free_after=3)
+        run("n1")                                       # IP bẩn + job khác đang dựng → chờ tới khi job xong
+        assert state["sleeps"] == 3 and state["busy"] == 0
+        state.update(dirty=True, busy=2, t=0.0, sleeps=0, free_after=None)
+        try:
+            run("n1")
+            raise AssertionError("chờ quá hạn mà IP vẫn bẩn → phải báo lỗi chưa gửi")
+        except bp.DirtyIpWaitTimeout as e:
+            assert "CHƯA gửi" in str(e) and state["t"] >= 600
+        config.DIRTY_IP_WAIT_SEC = 0
+        run("n1")                                       # tắt tính năng (DOLA_DIRTY_IP_WAIT=0) → như cũ
+    finally:
+        (browser._effective_rotating, browser.ip_dirty, browser.proxy_busy, browser.rotating_status,
+         config.DIRTY_IP_WAIT_SEC) = saved
+
+
 if __name__ == "__main__":
     for name in [n for n in dir() if n.startswith("test_")]:
         globals()[name]()

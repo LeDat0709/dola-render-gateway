@@ -697,6 +697,8 @@ def _claim_single_instance() -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Bật: dọn job cũ. Tắt: huỷ job đang chạy rồi đánh dấu hỏng — không job nào ở lại trạng thái dở dang."""
+    import egress_guard   # nick có proxy → chặn mọi kết nối THẲNG tới Dola bằng IP máy + in nơi gọi (đo rò 17/9)
+    egress_guard.install()
     solo = _claim_single_instance()
     if not solo:
         print("[gateway] ⚠ Đã có một gateway khác đang chạy trên thư mục dữ liệu này — bản thừa này KHÔNG "

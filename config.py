@@ -165,6 +165,9 @@ def _float_list(raw: str) -> tuple[float, ...]:
 # Dola trả 710022002 mà CHẮC CHẮN chưa nhận lệnh → chờ lần lượt các mốc này (giây) rồi thử lại CÙNG nick, hết mốc mới
 # xoay nick như cũ (ManixAITools: 15s, 30s). Trống/0 = tắt, xoay nick ngay.
 RATE_LIMIT_RETRY_WAITS = _float_list(os.getenv("DOLA_RATE_LIMIT_RETRY_WAITS", "15,30"))
+# IP proxy xoay vừa bị 710022002 ("bẩn") mà chưa đổi được (job khác đang dựng trên key) → CHỜ tối đa chừng này giây rồi mới
+# báo lỗi "chưa gửi". Trước đây gửi luôn trên IP bẩn → cả loạt nick chung key dính 710022002 liên tiếp (log 17/9 10:56).
+DIRTY_IP_WAIT_SEC = max(0, int(os.getenv("DOLA_DIRTY_IP_WAIT", "600")))
 # Giãn nhịp CHUNG cho MỌI proxy, ngay trước lúc gửi thật: hai lần gửi bất kỳ (khác nick, khác proxy) cách nhau ít nhất
 # GAP + ngẫu nhiên(0..JITTER) giây. SUBMIT_GAP_SEC chỉ giãn trong CÙNG proxy và lúc BẮT ĐẦU job → 8 nick trên 8 proxy
 # vẫn gửi trong cùng một giây (16/09). 0 = tắt.

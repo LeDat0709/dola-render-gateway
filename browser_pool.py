@@ -233,6 +233,36 @@ def _egress_key(account: str) -> str:
     return normalize_proxy_input(account_proxy_raw(account) or config.PROXY)
 
 
+DIRTY_IP_POLL_SEC = 15
+
+
+class DirtyIpWaitTimeout(RuntimeError):
+    """Chờ hết DIRTY_IP_WAIT_SEC mà IP proxy vẫn bẩn + chưa đổi được. Lệnh CHƯA gửi → không mất lượt."""
+
+
+async def _wait_clean_ip(account: str, sleep=asyncio.sleep, clock=time.time) -> None:
+    """TRƯỚC khi mở nick: IP proxy xoay của nick vừa bị Dola chặn (bẩn) mà còn job khác đang dựng trên key (không đổi IP
+    được, đổi sẽ cắt job đó) → CHỜ, không gửi trên IP bẩn. Hết job trên key → rotate_if_expiring ngay sau đổi IP mới.
+    Chờ quá DIRTY_IP_WAIT_SEC → DirtyIpWaitTimeout (chưa gửi). Proxy tĩnh / đi thẳng / IP sạch → trả về ngay."""
+    from browser import _effective_rotating, ip_dirty, mask_proxy, proxy_busy, rotating_status
+    key = _effective_rotating(account)
+    if not key or config.DIRTY_IP_WAIT_SEC <= 0:
+        return
+    deadline = clock() + config.DIRTY_IP_WAIT_SEC
+    logged = False
+    while ip_dirty(rotating_status(key)) and proxy_busy(key) > 0:
+        if clock() >= deadline:
+            raise DirtyIpWaitTimeout(
+                f"IP proxy của nick {account} ({mask_proxy(key)}) vừa bị Dola chặn vì gửi quá dày (710022002) và chưa đổi "
+                f"được — còn {proxy_busy(key)} job đang dựng trên proxy này. Đã chờ {config.DIRTY_IP_WAIT_SEC // 60} phút, "
+                "CHƯA gửi lệnh, không mất lượt. Thêm key proxy hoặc giảm 'Nick gửi cùng lúc'.")
+        if not logged:
+            logged = True
+            print(f"[pool] {account}: IP proxy vừa bị Dola chặn, {proxy_busy(key)} job khác đang dựng trên proxy này → "
+                  f"CHỜ đổi IP (tối đa {config.DIRTY_IP_WAIT_SEC // 60} phút), không gửi trên IP bẩn", flush=True)
+        await sleep(DIRTY_IP_POLL_SEC)
+
+
 @contextlib.asynccontextmanager
 async def _egress_slot(account: str, on_wait=None):
     """Giữ 1 chỗ trên IP ra của nick. on_wait() gọi MỘT lần khi phải chờ (nhả slot Chrome: job trên IP rảnh vẫn chạy)."""
@@ -1032,6 +1062,7 @@ class BrowserPool:
             from browser import min_life_for, proxy_lease, rotate_if_expiring
             # Chờ chỗ trên IP TRƯỚC mọi thứ; lúc chờ nhả slot Chrome (_hold_browser ngay dưới xin lại).
             async with _egress_slot(acc, on_wait=_release_browser):
+                await _wait_clean_ip(acc)   # IP bẩn + đang có job khác trên key → chờ đổi IP, không gửi trên IP bẩn
                 await _pace(account_proxy_raw(acc) or "")
                 await _hold_browser()
                 # IP proxy xoay sắp hết tuổi mà không job nào khác đang dùng → đổi TRƯỚC khi mở nick (không chết giữa lúc gửi).
