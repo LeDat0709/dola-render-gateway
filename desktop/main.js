@@ -177,6 +177,22 @@ function gwLog(m) {
   process.stdout.write(line + "\n");
 }
 
+// Lỗi mạng của MỘT nick (proxy tunnel hỏng: net::ERR_TUNNEL_CONNECTION_FAILED / ERR_PROXY / ERR_CONNECTION…) từng nổi ra
+// tầng main process → Electron hiện dialog "A JavaScript error occurred" (ảnh 17/9, nick fb…4862) làm kẹt cả app. Đó là
+// lỗi PROXY của nick, không phải lỗi app. Nuốt + ghi log; lỗi khác vẫn log nhưng KHÔNG để dialog mặc định giết app.
+const _NET_ERR = /net::ERR_|ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY|ERR_CONNECTION_|ERR_NAME_NOT_RESOLVED|ETIMEDOUT|ECONNREFUSED|ECONNRESET/i;
+
+function _handleMainError(kind, err) {
+  const msg = String((err && (err.stack || err.message)) || err);
+  if (_NET_ERR.test(msg)) {
+    gwLog(`[net] bỏ qua lỗi mạng/proxy ở main (${kind}) — lỗi của proxy nick, không phải app: ${msg.split("\n")[0].slice(0, 160)}`);
+    return;   // proxy 1 nick hỏng: không hiện dialog, không thoát app
+  }
+  gwLog(`[main] ${kind} chưa bắt: ${msg.slice(0, 400)}`);   // lỗi khác: ghi lại để soi, vẫn không để app tự thoát
+}
+process.on("uncaughtException", (e) => _handleMainError("uncaughtException", e));
+process.on("unhandledRejection", (e) => _handleMainError("unhandledRejection", e));
+
 function pipeLog(stream, tag) {
   let buf = "";
   stream.on("data", (d) => {
