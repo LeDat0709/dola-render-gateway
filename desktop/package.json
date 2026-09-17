@@ -36,6 +36,7 @@
       "preload.js",
       "*.cjs",
       "index.html",
+      "license.html",
       "renderer/dist/**"
     ],
     "extraResources": [

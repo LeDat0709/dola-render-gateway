@@ -4,7 +4,15 @@
 const assert = require("assert");
 
 (async () => {
-  const { planPromptFill, splitLines, splitBlocks } = await import("./renderer/src/lib/promptFill.js");
+  const { planPromptFill, splitLines, splitBlocks, nickRank } = await import("./renderer/src/lib/promptFill.js");
+
+  // Ảnh 17/9: dòng Lỗi nằm xen với Sẵn sàng. Thứ tự đúng: đang chạy → sẵn sàng → xong → lỗi → nghỉ → hết điểm → tắt.
+  const order = [
+    ["running", "ready", false], ["idle", "ready", false], ["done", "ready", false], ["error", "ready", false],
+    ["idle", "cooling", false], ["error", "quota", false], ["idle", "ready", true], ["idle", "off", false],
+  ].map(([ph, st, low]) => nickRank(ph, st, low));
+  assert.deepStrictEqual(order, [0, 1, 2, 3, 4, 5, 5, 6], "thứ tự nick sai: " + order);
+  assert.ok(nickRank("error", "ready", false) > nickRank("idle", "ready", false), "nick lỗi phải nằm DƯỚI nick sẵn sàng");
 
   // bảng: a1 sẵn sàng, p1 tạm ngưng, a2 sẵn sàng, low thiếu điểm, busy đang chạy, a3 sẵn sàng, oldErr lỗi lần trước
   const nicks = ["a1", "p1", "a2", "low", "busy", "a3", "oldErr"];

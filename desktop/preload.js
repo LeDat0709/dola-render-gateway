@@ -48,5 +48,9 @@ contextBridge.exposeInMainWorld("api", {
   setSubmitMode: (mode) => ipcRenderer.invoke("config:setSubmitMode", { mode }),
   chooseVideoDir: () => ipcRenderer.invoke("video:chooseDir"),
   tailLogs: (n) => ipcRenderer.invoke("logs:tail", n),
+  licenseStatus: () => ipcRenderer.invoke("license:status"),
+  activateLicense: (key) => ipcRenderer.invoke("license:activate", { key }),
+  quitApp: () => ipcRenderer.invoke("app:quit"),
+  openConversation: (name, conversationId) => ipcRenderer.invoke("dola:openConversation", { name, conversationId }),
 });
 

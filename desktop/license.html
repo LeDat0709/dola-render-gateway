@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>Kích hoạt Dola Studio</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", sans-serif; background: #0f0f1a; color: #e6e6f0; }
+  .wrap { max-width: 460px; margin: 0 auto; padding: 44px 24px 24px; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  p { color: #a0a0c0; margin: 0 0 18px; }
+  label { display: block; font-size: 12px; color: #a0a0c0; margin: 14px 0 6px; }
+  .code { display: flex; gap: 8px; }
+  .code input { flex: 1; font: 600 16px ui-monospace, Menlo, monospace; letter-spacing: 1px; }
+  input, textarea { width: 100%; box-sizing: border-box; background: #171728; color: #e6e6f0; border: 1px solid #2c2c48; border-radius: 8px; padding: 10px; }
+  textarea { height: 96px; font: 12px ui-monospace, Menlo, monospace; resize: vertical; }
+  button { background: #7c6cf6; color: #fff; border: 0; border-radius: 8px; padding: 10px 14px; font-weight: 600; cursor: pointer; }
+  button.ghost { background: #232340; }
+  button:disabled { opacity: .6; cursor: default; }
+  .row { display: flex; gap: 8px; margin-top: 14px; }
+  .row button.main { flex: 1; }
+  #msg { min-height: 20px; margin-top: 12px; font-size: 13px; }
+  .err { color: #ff8a8a; } .ok { color: #7ee2a8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Kích hoạt Dola Studio</h1>
+  <p>Gửi <b>mã máy</b> bên dưới cho người bán để nhận key. Mỗi key chỉ chạy trên đúng máy này.</p>
+  <label>Mã máy</label>
+  <div class="code"><input id="code" readonly value="…"><button class="ghost" id="copy">Sao chép</button></div>
+  <label>Key kích hoạt</label>
+  <textarea id="key" placeholder="DOLA1.…" spellcheck="false"></textarea>
+  <div class="row"><button class="main" id="go">Kích hoạt</button><button class="ghost" id="quit">Thoát</button></div>
+  <div id="msg"></div>
+</div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const show = (text, ok) => { $("msg").textContent = text || ""; $("msg").className = ok ? "ok" : "err"; };
+  window.api.licenseStatus().then((s) => { $("code").value = s.machineCode; if (s.reason) show(s.reason); });
+  $("copy").onclick = async () => { await navigator.clipboard.writeText($("code").value); show("Đã sao chép mã máy.", true); };
+  $("quit").onclick = () => window.api.quitApp();
+  $("go").onclick = async () => {
+    $("go").disabled = true;
+    try {
+      const r = await window.api.activateLicense($("key").value);
+      if (r.ok) show("Kích hoạt thành công — hết hạn " + new Date(r.expiresAt).toLocaleString("vi-VN"), true);
+      else show(r.reason || "Key không hợp lệ.");
+    } finally { $("go").disabled = false; }
+  };
+</script>
+</body>
+</html>

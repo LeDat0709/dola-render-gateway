@@ -114,6 +114,7 @@ export function fmtError(raw) {
   if (/chân dung|portrait|顔/i.test(r)) return A("🧑", "Chặn bảo vệ chân dung", "Dùng ảnh mặt của chính bạn.");
   if (/chặn vùng|không khả dụng ở quốc gia|地域ではDolaは利用できません/i.test(r)) return A("🌏", "Dola chặn vùng (proxy)", "Nick đang ra mạng từ nước bị chặn — gán/đổi proxy cho nick ở tab Proxy.");
   if (/đăng xuất|logged out|cookie.{0,10}chết|mất phiên|đăng nhập lại|log ?in/i.test(r)) return A("🔑", "Cookie hết hạn", "Bấm đăng nhập lại nick.");
+  if (/Dola chưa dựng/i.test(r)) return T("💬", "Dola không nhận dựng", "Chỉ trả lời chữ, thường chưa trừ lượt — prompt ≤15s, 1 phiên bản rồi chạy lại.");
   if (/lỗi tạm thời|エラーが発生|try again|システムエラー|問題が発生/i.test(r)) return T("⏳", "Dola lỗi tạm thời", "Tool không tự gửi lại (lượt có thể đã trừ) — bấm Chạy lại nếu muốn.");
   if (/thời lượng 30|chip 30|video 30s/i.test(r)) return T("🎞", "30s gửi chưa được", "Kiểm tra mạng/proxy rồi thử lại.");
   if (/server mới tắt|tự chạy lại \d+ lần|job quá cũ|khởi động lại server/i.test(r)) return T("🔁", "Server tắt giữa lúc chạy", "Kiểm tra dola.com; chưa có video thì chạy lại.");

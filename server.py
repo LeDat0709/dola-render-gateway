@@ -347,6 +347,7 @@ class TaskResponse(BaseModel):
     error: str | None = None
     account: str | None = None   # nick THẬT đã chạy job (khác nick thẻ nếu đã xoay nick) → UI hiện "chạy trên nick Y"
     charged: bool = False        # lệnh ĐÃ tới Dola (submitted_at) → chạy lại là trừ lượt lần 2; UI phải hỏi trước
+    conversation_id: str | None = None   # hội thoại Dola của job → UI mở đúng hội thoại bằng phiên của nick
     proxy_ip: str | None = None       # IP xoay đang gắn cho nick job này (peek cache, không gọi mạng)
     proxy_isp: str | None = None
     proxy_provider: str | None = None  # tmproxy | proxyxoay | "" (tĩnh/nối thẳng)
@@ -800,7 +801,7 @@ async def get_video(task_id: str, authorization: str | None = Header(default=Non
     return TaskResponse(
         id=row["id"], status=row["status"], stage=_task_stage(row), model=row["model"],
         prompt=row["prompt"], video_url=row["video_url"], error=row["error"], account=row.get("account"),
-        charged=bool(row.get("submitted_at")),
+        charged=bool(row.get("submitted_at")), conversation_id=row.get("conversation_id") or None,
         proxy_ip=px["ip"], proxy_isp=px["isp"], proxy_provider=px["provider"],
         proxy_used=px["used"], proxy_per=px["per"], proxy_fresh=px["fresh"], proxy_kind=px["kind"],
     )

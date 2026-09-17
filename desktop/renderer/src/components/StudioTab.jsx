@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Play, RotateCw, Settings, Trash2, FolderOpen, Copy, ArrowDown, Repeat, Stethoscope, Square, RefreshCw, Eraser, Power, Clock, ListOrdered, Zap, CheckCircle2, Film} from "lucide-react";
+import { Play, RotateCw, Settings, Trash2, FolderOpen, Copy, ArrowDown, Repeat, Stethoscope, Square, RefreshCw, Eraser, Power, Clock, ListOrdered, Zap, CheckCircle2, Film, Globe, FileVideo, Info, ExternalLink, X } from "lucide-react";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -8,7 +9,8 @@ import NickVideosDialog from "@/components/NickVideosDialog";
 import { toast } from "@/components/ui/toast";
 import { SelectNative } from "@/components/ui/select-native";
 import { ViewToggle, useView } from "@/components/ui/view-toggle";
-import { planPromptFill } from "../lib/promptFill.js";
+import { planPromptFill, nickRank } from "../lib/promptFill.js";
+import { summarizeJobs, filterNicks, pairRetries } from "../lib/jobSummary.js";
 import { api, submitJob, pollJob, fmtError, creditCost, cheaperHint, firstLine, leadingDuration, fnameFromUrl, sttFromUrl, accState, accChip, canRunAccount, deleteAccount, STAGE_TEXT, riskyPrompt, durationMismatch, deadNicks, setConcurrency, patchAccount, wakeAccount, inflightTasks, cookieInfo, accState as accStateOf } from "@/lib/api";
 
 const MODELS = ["seedance-2.0", "seedance-2.5"];
@@ -57,6 +59,8 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const [clock, setClock] = useState(0);
   // nick → { ctl: AbortController, id: job id | null }. Trước là Set: nick kẹt trong fetch treo (gateway bật lại) bị coi
   // "đang chạy" mãi → mọi lệnh Chạy sau bị nuốt trong im lặng, thẻ đứng "chờ server nhận job" hàng phút (15/09).
+  const [filterKey, setFilterKey] = useState(null);   // thanh tổng kết: "done" | "running" | "err:<nhãn>" | null
+  const [detailOf, setDetailOf] = useState("");       // nick đang mở cửa sổ chi tiết
   const [videosOf, setVideosOf] = useState("");   // nick (chuỗi) hoặc DANH SÁCH nick (mảng) đang mở "Quét video trên Dola"
   const inflight = useRef(new Map());
   // Khóa idempotency mỗi nick, giữ trong localStorage tới khi job KẾT THÚC (kể cả khi Dừng / đóng app): gửi lại cùng
@@ -128,9 +132,9 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const needForDur = cost(def.model, def.dur);
   const lowCredit = (a) => a.remaining != null && a.remaining < needForDur;
 
-  async function runOne(n, promptOverride) {
+  async function runOne(n, promptOverride, spec) {
     const acc = accounts.find((a) => a.account === n);
-    const s = row(n);
+    const s = { ...row(n), ...(spec || {}) };   // spec: model/ratio/dur truyền thẳng khi vừa setRow (state chưa kịp cập nhật)
     // Ô prompt riêng trống thì LẤY TẠM dòng đầu khung Prompt — CHỈ khi khung đó đúng 1 kịch bản. Trước đây lấy
     // vô điều kiện: khung có nhiều kịch bản (hoặc 1 khối dài không xuống dòng) thì nick nhận nguyên khối của
     // người khác — đúng cái "tràn prompt". Nút ▶ từng nick không đi qua rào chắn của runBatch nên lọt ở đây.
@@ -171,7 +175,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     const me = { ctl: new AbortController(), id: null };
     inflight.current.set(n, me);
     const mine = () => inflight.current.get(n) === me;   // bị Dừng / chạy lại đè lên → lần này im lặng rút lui
-    setRow(n, { prompt, phase: "running", stage: "queued", startedAt: Date.now(), stageAt: Date.now(), endedAt: 0, errorRaw: "", videoUrl: "", ranOn: "" });
+    setRow(n, { ...(spec || {}), prompt, phase: "running", stage: "queued", startedAt: Date.now(), stageAt: Date.now(), endedAt: 0, errorRaw: "", videoUrl: "", ranOn: "", conversationId: "", charged: false });
     try {
       // Người dùng đã chọn đích danh nick này thì "tạm ngưng" không còn là lý do chặn: mở lại giúp rồi
       // gửi luôn (server từ chối job vào nick tạm ngưng). Trước đây thẻ chỉ báo "bấm Bật lịch tất cả rồi chạy lại".
@@ -226,7 +230,8 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
       if (!mine()) return true;
       const pk = [pj.proxy_ip, pj.proxy_provider, pj.proxy_used, pj.proxy_per, pj.proxy_fresh, pj.proxy_kind].join("|");   // IP + lượt + NCC + loại → cột Proxy
       if (pk !== pip) { pip = pk; setRow(n, { proxyIp: pj.proxy_ip || "", proxyIsp: pj.proxy_isp || "", proxyProvider: pj.proxy_provider || "", proxyUsed: pj.proxy_used, proxyPer: pj.proxy_per, proxyFresh: pj.proxy_fresh, proxyKind: pj.proxy_kind || "" }); }
-      if (pj.account && pj.account !== n) setRow(n, { ranOn: pj.account });   // job đã XOAY sang nick khác → hiện nick thật
+      if (pj.account && pj.account !== n) setRow(n, { ranOn: pj.account });
+      if (pj.conversation_id && pj.conversation_id !== row(n).conversationId) setRow(n, { conversationId: pj.conversation_id, charged: !!pj.charged });   // job đã XOAY sang nick khác → hiện nick thật
       // note = cảnh báo kèm job ĐÃ xong (vd Dola trả clip ngắn hơn số giây đã đặt mà vẫn trừ đủ lượt).
       if (pj.status === "completed") { clearJobKey(n); setRow(n, { phase: "done", stage: "done", videoUrl: pj.video_url, endedAt: Date.now(), note: pj.error || "" }); api.saveVideo?.(pj.video_url); return true; }
       if (pj.status === "failed") { clearJobKey(n); setRow(n, { phase: "error", errorRaw: pj.error || "?", endedAt: Date.now(), charged: !!pj.charged }); return false; }   // charged: lệnh đã tới Dola → chạy lại là trừ lượt lần 2
@@ -441,18 +446,36 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
   const needCredit = selected.reduce((s, n) => s + cost(row(n).model, row(n).dur), 0);
   const runningNow = Object.values(rows).filter((r) => r.phase === "running").length;
   const allSel = accounts.length > 0 && accounts.every((a) => sel[a.account]);
-  // Nick chạy được lên đầu: đang chạy → sẵn sàng → vừa xong / lỗi (chạy lại được) → nghỉ → hết credit/lượt
-  // → tắt lịch → chưa đăng nhập. Người dùng nhìn hàng đầu là biết còn bao nhiêu nick dùng được.
-  const rank = (a) => {
-    const ph = rows[a.account]?.phase, st = accState(a);
-    if (ph === "running" || st === "busy") return 0;
-    if (st === "ready" && !lowCredit(a)) return 1;   // còn ĐỦ điểm cho thời lượng này → lên đầu
-    if (ph === "done" || ph === "error") return 2;
-    if (st === "ready" && lowCredit(a)) return 4;    // còn điểm nhưng KHÔNG đủ → xuống cùng nhóm hết điểm
-    return { cooling: 3, quota: 4, off: 5 }[st] ?? 6;
-  };
+  // Nick chạy được lên đầu, nick lỗi xuống dưới (xem nickRank). Nhìn hàng đầu là biết còn bao nhiêu nick dùng được.
+  const rank = (a) => nickRank(rows[a.account]?.phase, accState(a), lowCredit(a));
   const ordered = [...accounts].sort((x, y) => rank(x) - rank(y) || String(x.account).localeCompare(String(y.account)));
-  const usable = accounts.filter((a) => rank(a) <= 1).length;
+  const usable = accounts.filter((a) => rank(a) <= 3).length;   // đang chạy / sẵn sàng / vừa xong / lỗi mà nick vẫn chạy lại được
+  // Thanh tổng kết + lọc (lib/jobSummary.js). Nhóm đang lọc hết lỗi (đã chạy lại / sửa) → bảng rỗng kèm nút Bỏ lọc.
+  const summary = summarizeJobs(ordered.map((a) => a.account), (n) => rows[n], fmtError);
+  const onlyNicks = filterNicks(summary, filterKey);
+  const shown = onlyNicks ? ordered.filter((a) => onlyNicks.includes(a.account)) : ordered;
+  // Chạy lại một nhóm lỗi trên nick KHÁC đang sẵn sàng: chép prompt + cấu hình sang nick đích, nick nguồn về "chưa chạy"
+  // (khỏi bấm 2 lần thành 2 job). Hỏi trước, nói rõ credit và job có thể đã trừ lượt.
+  async function retryGroupOnOthers(g) {
+    const free = ordered.map((a) => a.account).filter((n) => readyForPrompt(n) && idleRow(n) && !inflight.current.has(n));
+    const { pairs, missing } = pairRetries(g.nicks, free);
+    if (!pairs.length) { setGen(`Không còn nick sẵn sàng (đủ điểm, đang rảnh) để chạy lại ${g.nicks.length} job "${g.label}".`); return; }
+    const credit = pairs.reduce((sum, [src]) => sum + cost(row(src).model, row(src).dur), 0);
+    const charged = pairs.filter(([src]) => rows[src]?.charged).length;
+    const msg = `Chạy lại ${pairs.length} job "${g.label}" trên nick khác — tốn khoảng ${credit} credit.`
+      + (charged ? `\n\n⚠ ${charged} job lệnh ĐÃ tới Dola (đã trừ lượt) — video có thể vẫn ra. Nên bấm "Quét video" trước.` : "")
+      + (missing ? `\n\nThiếu nick sẵn sàng: ${missing} job chưa được chạy lại.` : "")
+      + "\n\nTiếp tục?";
+    if (!window.confirm(msg)) return;
+    stop.current = false;
+    pairs.forEach(([src, dst]) => setRow(src, { phase: "idle", status: `↦ đã chạy lại trên ${dst}`, errorRaw: "" }));
+    setGen(`Đang chạy lại ${pairs.length} job "${g.label}" trên nick khác…`);
+    const res = await Promise.all(pairs.map(([src, dst]) => {
+      const s0 = row(src);
+      return runOne(dst, s0.prompt, { model: s0.model, ratio: s0.ratio, dur: s0.dur });
+    }));
+    setGen(`Chạy lại "${g.label}": ${res.filter(Boolean).length}/${pairs.length} xong.`);
+  }
   // Thẻ (lưới) và dòng (bảng) nhận đúng cùng một bộ props — đổi kiểu hiển thị không đổi hành vi.
   // IP xoay đang dùng + lượt k/N (dùng chung khi 1 key cho nhiều nick) — lấy từ /health, không gọi mạng.
   const proxyCell = health?.rotating_ip?.ip
@@ -470,6 +493,7 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
     rotatedPrompt: rotatedInto[a.account] ? (row(rotatedInto[a.account]).prompt || "") : "",
     onSel: (v) => setSel((p) => ({ ...p, [a.account]: v })), onChange: (patch) => setRow(a.account, patch),
     onScanVideos: () => setVideosOf(a.account),
+    onDetail: () => setDetailOf(a.account),
     onRun: () => {
       if (row(a.account).charged && !window.confirm(`${a.account}: lệnh trước ĐÃ tới Dola (đã trừ lượt) — xem dola.com có video chưa. Chạy lại sẽ trừ lượt lần 2, vẫn chạy?`)) return;
       stop.current = false; runOne(a.account);
@@ -577,13 +601,22 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
       })()}
       {gen && <div className="text-xs text-muted-foreground">{gen}</div>}
 
+      <JobSummaryBar summary={summary} filterKey={filterKey} setFilterKey={setFilterKey}
+        creditOf={(ns) => ns.reduce((sum, n) => sum + cost(row(n).model, row(n).dur), 0)}
+        onRetry={retryGroupOnOthers} onScan={(ns) => setVideosOf(ns)} />
+
       {/* Thẻ theo nick */}
       <NickVideosDialog name={videosOf} onOpenChange={(o) => { if (!o) setVideosOf(""); }} />
+      {detailOf && (() => {
+        const a = accounts.find((x) => x.account === detailOf);
+        return a ? <RowDetail a={a} s={row(detailOf)} onClose={() => setDetailOf("")} onRun={nickProps(a).onRun}
+          onScan={() => { setDetailOf(""); setVideosOf(detailOf); }} setGen={setGen} /> : null;
+      })()}
       {!health && <div className="rounded-lg bg-surface p-6 text-center text-sm text-muted-foreground">Server chưa chạy — bấm "Bật server" ở thanh trên.</div>}
       {health && accounts.length === 0 && <div className="rounded-lg bg-surface p-6 text-center text-sm text-muted-foreground">Chưa có nick — sang Kho tài khoản, bấm "Thêm bằng Facebook" hoặc "Nhập kho".</div>}
       {view === "grid" ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {ordered.map((a) => <NickCard key={a.account} {...nickProps(a)} />)}
+          {shown.map((a) => <NickCard key={a.account} {...nickProps(a)} />)}
         </div>
       ) : accounts.length > 0 && (
         <div className="overflow-x-auto rounded-lg bg-surface">
@@ -599,13 +632,12 @@ export default function StudioTab({ health, onRefresh, onPlay }) {
                 <th className={TH}>Model</th>
                 <th className={TH}>Tỷ lệ</th>
                 <th className={TH}>Dài</th>
-                <th className={TH}>Proxy (IP xoay)</th>
-                <th className={TH}>Tệp</th>
-                <th className={TH}>Tiến trình</th>
-                <th className={TH + " text-right"}>Thao tác</th>
+                <th className={TH} title="Proxy / IP xoay và tệp video — rê chuột lên biểu tượng để xem">Mạng · Tệp</th>
+                <th className={TH + STICKY_PROG + " bg-surface"}>Tiến trình</th>
+                <th className={TH + STICKY_ACT + " bg-surface text-right"}>Thao tác</th>
               </tr>
             </thead>
-            <tbody>{ordered.map((a, i) => <NickRow key={a.account} idx={i + 1} {...nickProps(a)} />)}</tbody>
+            <tbody>{shown.map((a, i) => <NickRow key={a.account} idx={i + 1} {...nickProps(a)} />)}</tbody>
           </table>
         </div>
       )}
@@ -628,6 +660,10 @@ const STAGE_HINT = {
   waiting: "slot Chrome đang bận — máy khỏe thì tăng 'Nick gửi cùng lúc'",
   opening: "mở Chrome + vào Dola (treo quá 5 phút tự cắt, xoay nick)", submitting: "chờ Dola nhận lệnh",
 };
+// Ghim Tiến trình + Thao tác bên phải: bảng rộng cuộn ngang vẫn thấy lý do lỗi (trước đây bị cắt "Bị ch…").
+// Tailwind chỉ sinh class viết NGUYÊN CHỮ — đừng ghép số bằng biến. 164px = bề rộng cột Thao tác (6 nút).
+const STICKY_ACT = " sticky right-0 z-[1] w-[164px] min-w-[164px]";
+const STICKY_PROG = " sticky right-[164px] z-[1] w-[280px] min-w-[280px] max-w-[280px] shadow-[-10px_0_12px_-10px_rgba(0,0,0,0.55)]";
 const renderSec = (dur) => (parseInt(dur, 10) >= 30 ? 900 : 480);
 const fmtMs = (ms) => { const x = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(x / 60)}p ${String(x % 60).padStart(2, "0")}s`; };
 
@@ -711,14 +747,15 @@ function CookieTag({ a }) {
 }
 
 // Dạng bảng: một dòng một nick, cùng dữ liệu và thao tác với thẻ nhưng nhìn được 15–20 nick không cần cuộn.
-function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotatedPrompt, lowCredit, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew , onScanVideos}) {
+function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotatedPrompt, lowCredit, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew , onScanVideos, onDetail}) {
   const n = a.account;
   const chip = stateChip(a, s);
   const tint = s.phase === "done" ? " bg-tertiary/5" : s.phase === "error" ? " bg-error/5" : "";
   const icon = "h-7 w-7 text-muted-foreground hover:text-foreground";
   const td = "px-2 py-1.5 align-middle";
   return (
-    <tr className={"border-b border-surface-high/60 last:border-0" + tint + (isDim(a, s) || (lowCredit && s.phase === "idle") ? " opacity-60" : "")}>
+    <tr className={"cursor-pointer border-b border-surface-high/60 last:border-0 hover:bg-surface-high/40" + tint + (isDim(a, s) || (lowCredit && s.phase === "idle") ? " opacity-60" : "")}
+        title="Bấm để xem chi tiết" onClick={(e) => { if (!e.target.closest("input,select,textarea,button,video,a,label")) onDetail?.(); }}>
       <td className={td}><input type="checkbox" checked={selected} onChange={(e) => onSel(e.target.checked)} /></td>
       <td className={td + " font-mono text-[11px] text-muted-foreground tabular-nums"}>{idx}</td>
       <td className={td + " whitespace-nowrap"}>
@@ -753,38 +790,12 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotated
       <td className={td}><SelectNative className="h-8 w-[122px] text-xs" value={s.model} onChange={(e) => onChange({ model: e.target.value })}>{MODELS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
       <td className={td}><SelectNative className="h-8 w-[68px] text-xs" value={s.ratio} onChange={(e) => onChange({ ratio: e.target.value })}>{RATIOS.map((m) => <option key={m}>{m}</option>)}</SelectNative></td>
       <td className={td}><SelectNative className="h-8 w-[74px] text-xs" value={s.dur} onChange={(e) => onChange({ dur: e.target.value })}>{DURS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}</SelectNative></td>
-      <td className={td + " whitespace-nowrap font-mono text-[11px]"}>
-        {s.proxyIp ? (
-          <div className="inline-block rounded bg-tertiary/10 px-1.5 py-0.5 leading-tight">
-            <div className="text-tertiary">{s.proxyIp}</div>
-            <div className="text-[10px] text-muted-foreground">{[
-              s.proxyFresh === true ? "IP mới" : s.proxyFresh === false ? "IP cũ" : "",
-              s.proxyUsed && s.proxyPer ? `lượt ${s.proxyUsed}/${s.proxyPer}` : "",
-              s.proxyProvider || "", s.proxyIsp || "",
-            ].filter(Boolean).join(" · ") || " "}</div>
-          </div>
-        ) : s.proxyKind === "direct" ? (
-          <span className="text-muted-foreground">nối thẳng</span>
-        ) : s.proxyKind === "static" ? (
-          <span className="text-tertiary">proxy tĩnh</span>
-        ) : s.phase === "running" && s.proxyKind === "rotating" ? (
-          <span className="text-primary">đang chờ IP…</span>
-        ) : proxyCell ? (
-          <div className="leading-tight">
-            <div className="text-tertiary">{proxyCell.ip}</div>
-            <div className="text-[10px] text-muted-foreground">{proxyCell.isp ? proxyCell.isp + " · " : ""}lượt {Math.min(proxyCell.used, proxyCell.per) || proxyCell.used}/{proxyCell.per}</div>
-          </div>
-        ) : <span className="text-muted-foreground">—</span>}
-      </td>
-      <td className={td + " max-w-[180px]"}>
-        {s.videoUrl
-          ? <span className="block truncate font-mono text-[11px] text-muted-foreground" title={fnameFromUrl(s.videoUrl)}>{fnameFromUrl(s.videoUrl)}</span>
-          : <span className="text-muted-foreground">—</span>}
-      </td>
-      <td className={td + " w-[240px] max-w-[280px]"}>
+      <td className={td + " whitespace-nowrap"}><NetFileIcons s={s} proxyCell={proxyCell} onCopy={onCopy} /></td>
+      <td className={td + STICKY_PROG + " bg-surface"}>
         <Progress s={s} a={a} compact onRun={onRun} rotatedFrom={rotatedFrom} />
       </td>
-      <td className={td + " whitespace-nowrap text-right"}>
+      <td className={td + STICKY_ACT + " whitespace-nowrap bg-surface text-right"}>
+        <Button variant="ghost" size="icon" className={icon} title="Chi tiết (lý do đầy đủ, câu Dola, hội thoại)" onClick={onDetail}><Info className="h-3.5 w-3.5" /></Button>
         {s.phase !== "running" && <Button variant="ghost" size="icon" className={icon + " text-primary"} title="Chạy nick này" onClick={onRun}><Play className="h-3.5 w-3.5" /></Button>}
         <Button variant="ghost" size="icon" className={icon + " text-primary"} title="Quét video trên Dola của nick (lấy lại video job lỗi/quá giờ — không tốn lượt)" onClick={onScanVideos}><Film className="h-3.5 w-3.5" /></Button>
         <Button variant="ghost" size="icon" className={icon} title="Đăng nhập lại" onClick={onRelogin}><RotateCw className="h-3.5 w-3.5" /></Button>
@@ -795,7 +806,7 @@ function NickRow({ a, s, idx, selected, elapsed, proxyCell, rotatedFrom, rotated
   );
 }
 
-function NickCard({ a, s, selected, elapsed, rotatedFrom, rotatedPrompt, lowCredit, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew , onScanVideos}) {
+function NickCard({ a, s, selected, elapsed, rotatedFrom, rotatedPrompt, lowCredit, onSel, onChange, onRun, onRelogin, onProxy, onDelete, onPlay, onOpen, onCopy, onRemoveWm, onNew , onScanVideos, onDetail}) {
   const n = a.account;
   const cardChip = stateChip(a, s);
   const border = s.phase === "done" ? " ring-1 ring-tertiary/25" : s.phase === "error" ? " ring-1 ring-error/30" : "";
@@ -827,6 +838,7 @@ function NickCard({ a, s, selected, elapsed, rotatedFrom, rotatedPrompt, lowCred
       <div className="flex min-h-7 items-center gap-1">
         <CookieTag a={a} />
         <span className="ml-auto" />
+        <Button variant="ghost" size="icon" className={icon} title="Chi tiết (lý do đầy đủ, câu Dola, hội thoại)" onClick={onDetail}><Info className="h-3.5 w-3.5" /></Button>
         {s.phase !== "running" && <Button variant="ghost" size="icon" className={icon + " text-primary"} title="Chạy nick này" onClick={onRun}><Play className="h-3.5 w-3.5" /></Button>}
         <Button variant="ghost" size="icon" className={icon + " text-primary"} title="Quét video trên Dola của nick (lấy lại video job lỗi/quá giờ — không tốn lượt)" onClick={onScanVideos}><Film className="h-3.5 w-3.5" /></Button>
         <Button variant="ghost" size="icon" className={icon} title="Đăng nhập lại" onClick={onRelogin}><RotateCw className="h-3.5 w-3.5" /></Button>
@@ -874,5 +886,148 @@ function DoneRow({ s, onPlay, onOpen, onCopy, onRemoveWm, onNew }) {
       <Button variant="ghost" size="icon" className="h-7 w-7" title="Xoá logo Dola" onClick={() => onRemoveWm(s.videoUrl)}><Eraser className="h-3.5 w-3.5" /></Button>
       <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" title="Tạo video mới trên nick này (nhập prompt khác)" onClick={onNew}><Repeat className="h-3.5 w-3.5" /></Button>
     </div>
+  );
+}
+
+// Cột "Mạng · Tệp": 2 biểu tượng thay cho 2 cột rộng; chi tiết nằm trong chú thích khi rê chuột.
+function NetFileIcons({ s, proxyCell, onCopy }) {
+  let tone = "text-muted-foreground", tip = "Chưa có thông tin proxy";
+  if (s.proxyIp) {
+    tone = "text-tertiary";
+    tip = [`Proxy: ${s.proxyIp}`, s.proxyFresh === true ? "IP mới" : s.proxyFresh === false ? "IP cũ" : "",
+      s.proxyUsed && s.proxyPer ? `lượt ${s.proxyUsed}/${s.proxyPer}` : "", s.proxyProvider || "", s.proxyIsp || ""].filter(Boolean).join(" · ");
+  } else if (s.proxyKind === "direct") { tip = "Nối thẳng (không proxy — đi IP máy)"; tone = "text-warn"; }
+  else if (s.proxyKind === "static") { tip = "Proxy tĩnh"; tone = "text-tertiary"; }
+  else if (s.phase === "running" && s.proxyKind === "rotating") { tip = "Đang chờ IP proxy xoay…"; tone = "text-primary animate-pulse"; }
+  else if (proxyCell) { tip = `IP xoay chung: ${proxyCell.ip}${proxyCell.isp ? " · " + proxyCell.isp : ""} · lượt ${Math.min(proxyCell.used, proxyCell.per) || proxyCell.used}/${proxyCell.per}`; tone = "text-tertiary"; }
+  const file = s.videoUrl ? fnameFromUrl(s.videoUrl) : "";
+  return (
+    <div className="flex items-center gap-1.5">
+      <span title={tip} className={"inline-flex " + tone}><Globe className="h-4 w-4" /></span>
+      {file
+        ? <button type="button" title={`${file}\n(bấm để copy đường dẫn)`} className="inline-flex text-tertiary hover:text-foreground" onClick={() => onCopy?.(s.videoUrl)}><FileVideo className="h-4 w-4" /></button>
+        : <span title="Chưa có tệp video" className="inline-flex text-muted-foreground/40"><FileVideo className="h-4 w-4" /></span>}
+    </div>
+  );
+}
+
+// "✅ 8 xong · ⏳ 3 đang dựng · 🚫 4 bị chặn nội dung · ⚠ 5 lỗi tạm thời" — bấm để lọc; nhóm đang lọc hiện nút xử lý riêng.
+function JobSummaryBar({ summary, filterKey, setFilterKey, creditOf, onRetry, onScan }) {
+  const { done, running, groups } = summary;
+  if (!done.length && !running.length && !groups.length && !filterKey) return null;
+  const chip = (key, text, n, tone) => (
+    <button key={key} type="button" onClick={() => setFilterKey(filterKey === key ? null : key)}
+      className={"rounded-full px-2.5 py-1 text-[12px] font-medium transition-colors " +
+        (filterKey === key ? "bg-primary text-primary-foreground" : "bg-surface-high hover:text-foreground " + tone)}>
+      {text} <b className="tabular-nums">{n}</b>
+    </button>
+  );
+  const active = groups.find((g) => g.key === filterKey);
+  return (
+    <div className="space-y-2 rounded-lg bg-surface px-3 py-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {done.length > 0 && chip("done", "✅ xong", done.length, "text-tertiary")}
+        {running.length > 0 && chip("running", "⏳ đang dựng", running.length, "text-primary")}
+        {groups.map((g) => chip(g.key, `${g.icon} ${g.label}`, g.nicks.length, g.action === "edit" ? "text-error" : "text-warn"))}
+        {filterKey && (
+          <button type="button" className="ml-1 inline-flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground" onClick={() => setFilterKey(null)}>
+            <X className="h-3.5 w-3.5" />Bỏ lọc
+          </button>
+        )}
+      </div>
+      {active && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-surface-high pt-2 text-[12px]">
+          {active.action === "retry" && (
+            <Button size="sm" variant="outline" onClick={() => onRetry(active)}>
+              <RefreshCw className="h-3.5 w-3.5" />Chạy lại {active.nicks.length} job trên nick khác (tốn ~{creditOf(active.nicks)} credit)
+            </Button>
+          )}
+          {active.action === "edit" && (
+            <span className="text-error">Dola chặn theo nội dung — chạy lại y nguyên sẽ bị chặn tiếp. Sửa prompt ở cột Prompt (nhẹ hơn), rồi bấm ▶ từng dòng.</span>
+          )}
+          {active.action === "scan" && (
+            <Button size="sm" variant="outline" className="border-primary/40 text-primary" onClick={() => onScan(active.nicks)}>
+              <Film className="h-3.5 w-3.5" />Quét video {active.nicks.length} nick trên Dola (không tốn lượt)
+            </Button>
+          )}
+          {active.action !== "edit" && <span className="text-muted-foreground">Bấm từng dòng để xem lý do đầy đủ + câu Dola trả lời.</span>}
+        </div>
+      )}
+      {filterKey && !active && filterKey.startsWith("err:") && (
+        <div className="text-[12px] text-muted-foreground">Nhóm này đã hết lỗi.</div>
+      )}
+    </div>
+  );
+}
+
+// Cửa sổ chi tiết một dòng: lý do đầy đủ, nguyên văn Dola trả lời, prompt, hội thoại trên dola.com.
+function RowDetail({ a, s, onClose, onRun, onScan, setGen }) {
+  const n = a.account;
+  const f = s.phase === "error" ? fmtError(s.errorRaw || "") : null;
+  const raw = s.errorRaw || "";
+  const dolaSaid = (raw.match(/(?:↳\s*Dola[^:]*:|Dola báo:)\s*([\s\S]+)/) || [])[1] || "";
+  const conv = s.conversationId || "";
+  const onNick = s.ranOn || n;
+  const link = conv ? `https://www.dola.com/chat/${conv}` : "";
+  const openConv = async () => {
+    const r = await api.openConversation?.(onNick, conv);
+    if (r && !r.ok) setGen("Không mở được hội thoại: " + (r.error || "?"));
+  };
+  const K = "font-mono text-[10px] uppercase tracking-wider text-muted-foreground";
+  const took = s.startedAt ? fmtMs((s.endedAt || Date.now()) - s.startedAt) : "";
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-h-[88vh] max-w-2xl overflow-y-auto">
+        <div className="flex items-center gap-2 pr-8">
+          <span className="font-mono text-[14px] font-semibold">{n}</span>
+          <Badge variant={stateChip(a, s).variant}>{stateChip(a, s).text}</Badge>
+          {s.ranOn && s.ranOn !== n && <span className="font-mono text-[11px] text-primary">↦ chạy trên {s.ranOn}</span>}
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[12px] sm:grid-cols-4">
+          <div><div className={K}>Model</div>{s.model}</div>
+          <div><div className={K}>Tỉ lệ · dài</div>{s.ratio} · {s.dur}s</div>
+          <div><div className={K}>Thời gian</div>{took || "—"}</div>
+          <div><div className={K}>Lượt</div>{s.charged ? <span className="text-warn">đã tới Dola</span> : "chưa trừ"}</div>
+        </div>
+        {f && (
+          <div className="space-y-1.5 rounded-md border border-error/30 bg-error/5 p-3">
+            <div className={"text-[13px] font-semibold " + (f.kind === "account" ? "text-warn" : "text-error")}>{f.icon} {f.short}</div>
+            {f.hint && <div className="text-[12px] text-muted-foreground">{f.hint}</div>}
+            {dolaSaid && (
+              <div>
+                <div className={K}>Dola trả lời (nguyên văn)</div>
+                <div className="whitespace-pre-wrap break-words rounded bg-surface-lowest p-2 text-[12.5px]">{dolaSaid.trim()}</div>
+              </div>
+            )}
+            <details>
+              <summary className="cursor-pointer text-[11px] text-muted-foreground">Lỗi đầy đủ</summary>
+              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-lowest p-2 text-[11px]">{raw}</pre>
+            </details>
+          </div>
+        )}
+        {s.phase !== "error" && s.status && <div className="text-[12px] text-muted-foreground">{s.status}</div>}
+        {s.note && <div className="text-[12px] text-warn">{s.note}</div>}
+        <div>
+          <div className={K}>Prompt</div>
+          <div className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-lowest p-2 text-[12px]">{s.prompt || "—"}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className={K + " w-full"}>Hội thoại trên Dola</div>
+          {conv ? (
+            <>
+              <span className="font-mono text-[12px]">{conv}</span>
+              <Button size="sm" variant="outline" onClick={openConv} title={`Mở bằng phiên + proxy của ${onNick}`}><ExternalLink className="h-3.5 w-3.5" />Mở hội thoại</Button>
+              <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(link).then(() => setGen("Đã copy: " + link)).catch(() => {})}><Copy className="h-3.5 w-3.5" />Copy link</Button>
+            </>
+          ) : <span className="text-[12px] text-muted-foreground">Chưa có (lệnh chưa tới Dola, hoặc job từ trước khi cập nhật)</span>}
+        </div>
+        <div className="flex flex-wrap justify-end gap-2 border-t border-surface-high pt-3">
+          <Button size="sm" variant="outline" className="border-primary/40 text-primary" onClick={onScan}><Film className="h-3.5 w-3.5" />Quét video của nick</Button>
+          {s.phase !== "running" && (!f || !/chặn nội dung|chân dung|không hiểu prompt/i.test(f.short)) && (
+            <Button size="sm" onClick={() => { onClose(); onRun(); }}><Play className="h-3.5 w-3.5" />Chạy lại nick này</Button>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

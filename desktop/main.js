@@ -23,6 +23,7 @@ const { applyProxy, applyParsed, resolveProxy, attachLoadErrorHandler, preflight
         parseProxy, isKeyLink, isRotating, normalizeProxyInput, globalProxy, testProxy, PROXY_FORMATS } = require("./proxy.cjs");
 const { gatewayBase, normalizeRemoteBase, testRemote, getAccountProxy, setAccountProxy, getRemoteConfig } = require("./remote.cjs");
 const { createGateway } = require("./gateway.cjs");
+const license = require("./license.cjs");
 const _IS_WIN = process.platform === "win32";
 const _VENV_BIN = _IS_WIN ? "Scripts" : "bin";   // Windows: .venv\\Scripts, macOS/Linux: .venv/bin
 const VENV_PY = PACKAGED
@@ -270,7 +271,37 @@ ipcMain.handle("video:fetchGenerate", async (_e, { name, prompt, model, duration
   }
 });
 
-ipcMain.handle("gateway:start", () => gateway.start());
+// Mở ĐÚNG hội thoại Dola của một job trong cửa sổ dùng phiên + proxy của nick đó (trình duyệt thường không có cookie nick,
+// lại đi IP máy). Chỉ xem: không gửi gì, không cần nhả profile.
+ipcMain.handle("dola:openConversation", async (_e, { name, conversationId }) => {
+  if (!NAME_RE.test(name || "") || !/^\d{6,30}$/.test(String(conversationId || ""))) return { ok: false, error: "Thiếu nick hoặc mã hội thoại." };
+  let proxyInfo = null;
+  try { proxyInfo = await resolveProxy(DATA_DIR, name); }
+  catch (err) { return { ok: false, error: String((err && err.message) || err).slice(0, 200) }; }
+  const partition = `persist:dola-${name}`;
+  const ses = session.fromPartition(partition);
+  cleanUserAgent(ses);
+  await applyParsed(ses, proxyInfo, null);
+  try {   // nick nạp bằng cookie (không đăng nhập qua app) → gieo cookie đã lưu vào phiên cửa sổ
+    const jf = path.join(DATA_DIR, "accounts", name, "cookies.json");
+    const saved = fs.existsSync(jf) ? JSON.parse(fs.readFileSync(jf, "utf8")) : [];
+    for (const c of Array.isArray(saved) ? saved : []) {
+      if (!c || !c.name || !String(c.domain || ".dola.com").includes("dola.com")) continue;
+      await ses.cookies.set({ url: "https://www.dola.com", name: c.name, value: String(c.value ?? ""), domain: c.domain || ".dola.com",
+        path: c.path || "/", secure: c.secure !== false, httpOnly: !!c.httpOnly,
+        expirationDate: Math.floor(Date.now() / 1000) + 180 * 86400 }).catch(() => {});
+    }
+  } catch (_) { /* không có cookie đã lưu thì mở với phiên sẵn có */ }
+  const url = `https://www.dola.com/chat/${conversationId}`;
+  const pre = await preflightDola(ses, DATA_DIR, name, url, proxyInfo);
+  if (!pre.ok) return { ok: false, error: pre.error };
+  const win = new BrowserWindow({ width: 900, height: 860, title: `Hội thoại Dola — ${name}`, autoHideMenuBar: true,
+    webPreferences: { partition, contextIsolation: true, nodeIntegration: false } });
+  attachLoadErrorHandler(win, null, () => proxyInfo);
+  win.loadURL(url).catch(() => {});
+  return { ok: true };
+});
+ipcMain.handle("gateway:start", () => (licenseOk() ? gateway.start() : { ok: false, error: "Chưa kích hoạt key." }));
 ipcMain.handle("app:version", () => ({ version: app.getVersion(), platform: process.platform, arch: process.arch, packaged: PACKAGED }));
 ipcMain.handle("gateway:stop", async () => { await gateway.stop(); return { ok: true, remote: isRemote() }; });
 // Khởi động lại: chờ tiến trình cũ nhả cổng rồi mới spawn (bật ngay là "address already in use").
@@ -1321,7 +1352,62 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
-app.whenReady().then(() => {
+// ---- Key theo máy (license.cjs) ----
+// Chỉ bắt buộc ở bản đóng gói; chạy từ mã nguồn thì bỏ qua (DOLA_REQUIRE_LICENSE=1 để thử màn kích hoạt khi dev).
+const LICENSE_REQUIRED = PACKAGED || process.env.DOLA_REQUIRE_LICENSE === "1";
+const LICENSE_RECHECK_MS = 3600 * 1000;
+let licenseWin = null;
+let appStarted = false;
+let autoUpdateSet = false;
+const licenseDir = () => app.getPath("userData");
+const licenseOk = () => !LICENSE_REQUIRED || license.checkLicense(licenseDir()).ok;
+
+function showLicenseWindow() {
+  if (licenseWin && !licenseWin.isDestroyed()) { licenseWin.focus(); return; }
+  licenseWin = new BrowserWindow({
+    width: 520, height: 520, resizable: false, title: "Kích hoạt Dola Studio", backgroundColor: "#0f0f1a",
+    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false },
+  });
+  licenseWin.setMenuBarVisibility(false);
+  licenseWin.loadFile(path.join(__dirname, "license.html"));
+}
+
+ipcMain.handle("license:status", () => license.checkLicense(licenseDir()));
+ipcMain.handle("license:activate", async (_e, { key }) => {
+  await license.refreshRevocations(licenseDir()).catch(() => false);   // key/máy đã bị khoá thì chặn ngay lúc nhập
+  const r = license.activateLicense(licenseDir(), key);
+  if (r.ok) {
+    setTimeout(() => {   // để màn kích hoạt kịp hiện "thành công"
+      if (licenseWin && !licenseWin.isDestroyed()) licenseWin.destroy();
+      startApp();
+    }, 900);
+  }
+  return r;
+});
+ipcMain.handle("app:quit", () => app.quit());
+
+// Hết hạn / bị khoá từ xa giữa lúc đang mở: tắt server + đóng Studio, quay về màn kích hoạt.
+async function lockIfExpired() {
+  await license.refreshRevocations(licenseDir()).catch(() => false);
+  if (licenseOk()) return;
+  appStarted = false;
+  gateway.stop().catch(() => {});
+  for (const w of BrowserWindow.getAllWindows()) if (w !== licenseWin) w.destroy();
+  showLicenseWindow();
+}
+
+app.whenReady().then(async () => {
+  if (LICENSE_REQUIRED) {
+    setInterval(lockIfExpired, LICENSE_RECHECK_MS);
+    await license.refreshRevocations(licenseDir()).catch(() => false);   // tối đa 8s; mất mạng thì dùng bản đã lưu
+  }
+  if (!licenseOk()) { showLicenseWindow(); return; }
+  startApp();
+});
+
+function startApp() {
+  if (appStarted) return;
+  appStarted = true;
   createWindow();
   // Trước đây gọi kiểu bắn-rồi-quên: spawnProc ném lỗi (thiếu quyền, %APPDATA% bị khoá) là lỗi biến mất sạch,
   // app im lặng không server. Nay bắt lỗi, ghi lại, và thử lại 2 lần — tiến trình cũ có thể chưa nhả cổng.
@@ -1340,10 +1426,11 @@ app.whenReady().then(() => {
       gwLog('bật gateway thất bại sau 3 lần — bấm "Bật server" ở thanh trên để xem lý do.');
     })();
   }
-  setupAutoUpdate();
-});
+  if (!autoUpdateSet) { autoUpdateSet = true; setupAutoUpdate(); }
+}
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  if (BrowserWindow.getAllWindows().length > 0) return;
+  if (licenseOk() && appStarted) createWindow(); else showLicenseWindow();
 });
 app.on("window-all-closed", () => {
   gateway.stop();   // không chờ ở đây: before-quit mới là chỗ chặn thoát để chờ tắt hẳn

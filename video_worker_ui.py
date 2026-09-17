@@ -491,21 +491,57 @@ def _is_spec_menu(text: str) -> bool:
     return (hit and has_opts) or (spec_word and asks) or needs_confirm or (gen_ctx and lists_durations)
 
 
+# Phương án menu KHÔNG được chọn: "9:16 ではなく別のアスペクト比" (KHÔNG phải 9:16 — chứa chữ 9:16 nên từng bị chọn nhầm,
+# ảnh 17/9 "D、15秒" → Dola hỏi lại mãi), "フック部分のみ" (chỉ một đoạn), "前半…後半…2 回に分けて" (2 lần dựng = 2 lượt).
+_BAD_OPTION = re.compile(r"ではなく|以外|instead|\bnot\b|のみ|only|分けて|[2２二]\s*回|split|前半|後半|two (?:parts|videos)", re.IGNORECASE)
+# Phương án nên chọn khi Dola chặn thời lượng: nén/rút gọn TOÀN BỘ nội dung về N giây.
+_GOOD_OPTION = re.compile(r"圧縮|短縮|まとめ|凝縮|compress|condens|shorten", re.IGNORECASE)
+
+
+def _menu_options(ht: str) -> list[tuple[str, str]]:
+    """[(chữ cái, nội dung)] của menu "A. …" mỗi dòng một phương án."""
+    return [(m.group(1), m.group(2).strip()) for m in re.finditer(r"(?m)^\s*[-・*•]?\s*([A-G])\s*[.\)、:：]\s*(.+)$", ht)]
+
+
+def _pick_duration_option(ht: str, duration: int) -> tuple[str, int] | None:
+    """Chọn phương án thời lượng an toàn: bỏ phương án xấu, hạ giây về mức tối đa Dola nói, ưu tiên đúng số giây rồi tới 'nén'."""
+    good = [(L, body) for L, body in _menu_options(ht) if re.search(r"\d+\s*秒|second", body, re.I) and not _BAD_OPTION.search(body)]
+    if not good:
+        return None
+    cap = _capped_seconds(ht)
+    want = min(int(duration), cap) if cap else int(duration)
+    for L, body in good:
+        secs = [int(x) for x in re.findall(r"(\d{1,2})\s*秒", body)]
+        if want in secs:
+            return L, want
+    for L, body in good:
+        if _GOOD_OPTION.search(body):
+            secs = [int(x) for x in re.findall(r"(\d{1,2})\s*秒", body)]
+            # job NGẮN hơn phương án (10s vs "15秒版") → giữ 10s: nâng lên 15s là tốn thêm credit (xem _effective_duration)
+            return L, (min(secs[0], want) if secs else want)
+    return None
+
+
 def _spec_menu_answer(text: str, ratio, duration) -> str:
     """Reply satisfying the menu. Dola thường đòi cả hai (ví dụ đáp "B、10秒" = chữ cái tỉ lệ + số giây)."""
     ht = _zen2han(text or "")
     want = _norm_ratio(ratio)
-    # chữ cái cho tỉ lệ mong muốn: "A. 16:9", "B) 9:16", "1、16:9"
+    orient = {"9:16": "縦向き", "3:4": "縦", "16:9": "横向き", "4:3": "横", "1:1": "正方形"}.get(want, "")
+    # Menu THỜI LƯỢNG (Dola chặn độ dài): chọn phương án nén về N giây, kèm tỉ lệ bằng chữ — xét TRƯỚC chữ cái tỉ lệ.
+    if duration:
+        picked = _pick_duration_option(ht, duration)
+        if picked:
+            tail = f"、{want}{('（' + orient + '）') if orient else ''}" if want else ""
+            return f"{picked[0]}、{picked[1]}秒{tail}でお願いします。"
+    # chữ cái cho tỉ lệ mong muốn: "A. 16:9", "B) 9:16", "1、16:9" — bỏ phương án phủ định ("9:16 ではなく…")
     ratio_letter = ""
     if want:
-        for m in re.finditer(r"([A-G1-9])\s*[.\)、]\s*(\d{1,2}\s*:\s*\d{1,2})", ht):
-            if _norm_ratio(m.group(2)) == want:
+        for m in re.finditer(r"([A-G1-9])\s*[.\)、]\s*(\d{1,2}\s*:\s*\d{1,2})([^\n]{0,20})", ht):
+            if _norm_ratio(m.group(2)) == want and not _BAD_OPTION.search(m.group(3)):
                 ratio_letter = m.group(1)
                 break
     # menu có hỏi thời lượng không?
     has_seconds = bool(re.search(r"秒数|長さ|duration|giây|second|\d+\s*秒", ht, re.IGNORECASE))
-    # từ khoá dọc/ngang giúp Dola không nhầm khi phải ĐỔI tỉ lệ (nguyên nhân "dọc ra ngang")
-    orient = {"9:16": "縦向き", "3:4": "縦", "16:9": "横向き", "4:3": "横", "1:1": "正方形"}.get(want, "")
     # chữ cái cho phương án THỜI LƯỢNG: "- A. 15秒版 / - B. 10秒版" → gọi đúng chữ cái,
     # nói vòng ("15秒に変更して…") thì Dola hay hỏi lại menu đó lần nữa.
     if duration and not ratio_letter:
@@ -1461,6 +1497,51 @@ def _creation_fail_error(fail: dict) -> Exception:
     return RuntimeError("Dola dựng xong nhưng KHÔNG trả video." + tail)
 
 
+# Dola TRẢ LỜI BẰNG CHỮ mà KHÔNG nhận dựng (đọc thật 17/9, 7 job đang "processing"): 4 job chỉ có tin cờ
+# is_creation_clarifying=1 / ai_creation_res_code 710082041 ("Only two videos can be generated at a time. I'll start…",
+# menu hỏi lại, "直接生成できません") — không dựng gì, tool vẫn hiện "Dola đang dựng" tới hết 40 phút. 2 job dựng thật đều
+# có tin force_submit_review=1 ("2クレジットを使用し、15分後に完成"). Tin kết quả (send_scene 77) cũng tính là đã dựng.
+NOT_STARTED_QUIET_SEC = 120   # hội thoại im quá lâu (không tin mới nào, kể cả câu tool trả lời) mà Dola chưa nhận dựng
+
+
+def _render_flags(messages: list) -> dict:
+    started, last_msg_at, last_bot_at, last_bot_clar = False, 0.0, 0.0, False
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        try:
+            at = float(msg.get("create_time") or 0)
+        except (TypeError, ValueError):
+            at = 0.0
+        last_msg_at = max(last_msg_at, at)
+        if str(msg.get("user_type") or "") == "1":
+            continue
+        ext = _msg_ext(msg)
+        if str(ext.get("force_submit_review") or "") == "1" or _is_creation_result(msg):
+            started = True
+        if at >= last_bot_at:
+            last_bot_at, last_bot_clar = at, str(ext.get("is_creation_clarifying") or "") == "1"
+    return {"render_started": started, "last_msg_at": last_msg_at, "last_bot_clarifying": last_bot_clar}
+
+
+class DolaNotStartedError(RuntimeError):
+    """Dola chỉ trả lời chữ, không nhận lệnh dựng. Lệnh ĐÃ tới Dola → không tự gửi lại (pool coi như đã giao)."""
+
+
+def _check_not_started(poll: dict, now: float, last_msg: str = "") -> None:
+    """Ném DolaNotStartedError khi: chưa có video, Dola CHƯA từng nhận dựng, tin Dola mới nhất là câu chữ
+    (clarifying), và cả hội thoại im quá NOT_STARTED_QUIET_SEC. Thiếu cờ (bản POLL_JS cũ) → không làm gì."""
+    if poll.get("videos") or poll.get("render_started") is not False or not poll.get("last_bot_clarifying"):
+        return
+    last_at = float(poll.get("last_msg_at") or 0)
+    if not last_at or now - last_at < NOT_STARTED_QUIET_SEC:
+        return
+    said = f"\n↳ Dola: {last_msg[:170]}" if last_msg else ""
+    raise DolaNotStartedError(
+        f"Dola chưa dựng: chỉ trả lời bằng chữ, không nhận lệnh dựng sau {int(now - last_at)}s (thường KHÔNG trừ lượt). "
+        "Hay gặp khi prompt ghi > 15s hoặc có nhiều phiên bản A/B/C — sửa prompt rồi chạy lại." + said)
+
+
 def _parse_single(data: dict) -> dict:
     """Mirror of POLL_JS message parsing, in Python (texts / videos / videoModels / images)."""
     dl = (data.get("downlink_body") or {}).get("pull_singe_chain_downlink_body") or {}
@@ -1500,7 +1581,7 @@ def _parse_single(data: dict) -> dict:
                     video_models.append(model)
                     stream.append(("v", url, model))
     return {"texts": texts, "videos": videos, "videoModels": video_models, "images": images, "stream": stream,
-            "creation_fail": creation_fail}
+            "creation_fail": creation_fail, **_render_flags(dl.get("messages") or [])}
 
 
 # Lỗi mạng LIÊN TIẾP khi theo dõi → coi như IP proxy chết giữa lúc Dola dựng (đã trừ lượt) → đổi đường đọc hội thoại.
@@ -1790,6 +1871,7 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
                     last_msg = tt
             if poll.get("creation_fail") and not poll.get("videos"):
                 raise _creation_fail_error(poll["creation_fail"])
+            _check_not_started(poll, time.time(), next((t for t in poll.get("texts", []) if not _is_own_message(t)), ""))
             if poll["images"] and not poll["videos"]:
                 image_polls += 1
                 if image_polls >= IMAGE_ONLY_POLLS:
@@ -1971,6 +2053,9 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             # Dola rendered an IMAGE instead of a video (usually reference-image runs).
             if poll.get("creation_fail") and not poll.get("videos"):
                 raise _creation_fail_error(poll["creation_fail"])
+            # Vừa trả lời Dola trong trang: tin trả lời có thể chưa kịp vào lịch sử → tính im lặng từ lúc trả lời
+            _check_not_started({**poll, "last_msg_at": max(float(poll.get("last_msg_at") or 0), last_answer_at)},
+                               time.time(), next((t for t in poll.get("texts", []) if not _is_own_message(t)), ""))
             if poll.get("images") and not poll.get("videos"):
                 image_polls += 1
                 if image_polls >= IMAGE_ONLY_POLLS:

@@ -43,3 +43,13 @@ export function planPromptFill(mode, bulk, nicks, ready, idle) {
   const clear = nicks.filter((n) => !ready(n) && idle(n));
   return { assign, clear, readyCount: readyNicks.length, extra: Math.max(0, prompts.length - readyNicks.length), unit };
 }
+
+// Thứ tự dòng trong Studio: nick CHẠY ĐƯỢC lên đầu, nick LỖI xuống dưới.
+// 0 đang chạy → 1 sẵn sàng (đủ điểm) → 2 vừa xong → 3 lỗi (vẫn chạy lại được) → 4 nghỉ → 5 hết điểm/lượt → 6 tắt lịch → 7 còn lại.
+// Trước đây "sẵn sàng + đủ điểm" được xét TRƯỚC phase nên dòng Lỗi/Xong chung nhóm với Sẵn sàng, xen kẽ theo tên (ảnh 17/9).
+export function nickRank(phase, state, lowCredit) {
+  if (phase === "running" || state === "busy") return 0;
+  if (state === "ready" && !lowCredit) return phase === "error" ? 3 : phase === "done" ? 2 : 1;
+  if (state === "ready") return 5;   // còn điểm nhưng KHÔNG đủ cho thời lượng này
+  return { cooling: 4, quota: 5, off: 6 }[state] ?? 7;
+}

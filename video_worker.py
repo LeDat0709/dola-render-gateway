@@ -59,6 +59,18 @@ async ({conversationId, msToken, fp}) => {
   const videos = [];
   const videoModels = [];
   let images = 0;   // type-1 creations => Dola rendered an IMAGE, not a video
+  // Cờ "Dola THẬT SỰ nhận dựng" (xem _render_flags bên video_worker_ui.py — hai bên phải khớp).
+  let renderStarted = false, lastMsgAt = 0, lastBotClarifying = false, lastBotAt = 0;
+  for (const m of messages) {
+    let ext = m.ext;
+    if (typeof ext === "string") { try { ext = JSON.parse(ext); } catch (e) { ext = {}; } }
+    ext = ext || {};
+    const at = Number(m.create_time) || 0;
+    lastMsgAt = Math.max(lastMsgAt, at);
+    if (String(m.user_type) === "1") continue;
+    if (String(ext.force_submit_review) === "1" || String(m.send_scene) === "77") renderStarted = true;
+    if (at >= lastBotAt) { lastBotAt = at; lastBotClarifying = String(ext.is_creation_clarifying) === "1"; }
+  }
   for (const msg of messages) {
     let content = msg.content;
     if (typeof content === "string") {
@@ -81,7 +93,8 @@ async ({conversationId, msToken, fp}) => {
       }
     }
   }
-  return {ok: true, status: resp.status, texts, videos, videoModels, images};
+  return {ok: true, status: resp.status, texts, videos, videoModels, images,
+          render_started: renderStarted, last_msg_at: lastMsgAt, last_bot_clarifying: lastBotClarifying};
 }
 """
 
