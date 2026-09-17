@@ -110,11 +110,11 @@ export function fmtError(raw) {
   if (/hết lượt tạo video hôm nay|daily limit|本日は|上限/i.test(r)) return A("📅", "Hết lượt hôm nay", "Mai chạy lại, hoặc dùng nick khác.");
   if (/không đủ lượt|hết điểm|insufficient|đủ điểm|quota|クレジット|残り|lượt cho video|giảm thời lượng|credit hôm nay|còn \d+ credit/i.test(r)) return A("💳", "Không đủ lượt/điểm", "2.5: 30s rẻ nhất (2 điểm) · Seedance 2.0 chỉ 1 điểm · hoặc đổi nick.");
   if (/không hiểu prompt|意味不明|内容が不明|内容が不足|not a valid prompt/i.test(r)) return T("✍️", "Dola không hiểu prompt", "Viết mô tả cảnh quay cụ thể (không mất lượt).");
-  if (/chặn nội dung|content policy|bản quyền|ポリシー|著作/i.test(r)) return A("🚫", "Bị chặn nội dung", "Đổi prompt nhẹ hơn (không mất lượt).");
+  if (/chặn nội dung|content policy|bản quyền|ポリシー|著作/i.test(r)) return A("🚫", "Bị chặn nội dung", "Đổi prompt nhẹ hơn. Dola giấu video sau khi dựng thì lượt đã trừ.");
   if (/chân dung|portrait|顔/i.test(r)) return A("🧑", "Chặn bảo vệ chân dung", "Dùng ảnh mặt của chính bạn.");
   if (/chặn vùng|không khả dụng ở quốc gia|地域ではDolaは利用できません/i.test(r)) return A("🌏", "Dola chặn vùng (proxy)", "Nick đang ra mạng từ nước bị chặn — gán/đổi proxy cho nick ở tab Proxy.");
   if (/đăng xuất|logged out|cookie.{0,10}chết|mất phiên|đăng nhập lại|log ?in/i.test(r)) return A("🔑", "Cookie hết hạn", "Bấm đăng nhập lại nick.");
-  if (/lỗi tạm thời|エラーが発生|try again|システムエラー|問題が発生/i.test(r)) return T("⏳", "Dola lỗi tạm thời", "Đã tự thử lại; chạy lại nếu vẫn lỗi.");
+  if (/lỗi tạm thời|エラーが発生|try again|システムエラー|問題が発生/i.test(r)) return T("⏳", "Dola lỗi tạm thời", "Tool không tự gửi lại (lượt có thể đã trừ) — bấm Chạy lại nếu muốn.");
   if (/thời lượng 30|chip 30|video 30s/i.test(r)) return T("🎞", "30s gửi chưa được", "Kiểm tra mạng/proxy rồi thử lại.");
   if (/server mới tắt|tự chạy lại \d+ lần|job quá cũ|khởi động lại server/i.test(r)) return T("🔁", "Server tắt giữa lúc chạy", "Kiểm tra dola.com; chưa có video thì chạy lại.");
   if (/traceback|exception|nameerror|attributeerror|typeerror|keyerror|valueerror|is not defined|has no attribute|not subscriptable|not callable|unexpected keyword|positional argument|indexerror|module .* has no/i.test(L)) return T("🐞", "Lỗi tool", "Lỗi phần mềm — gửi Log cho dev (không phải lỗi nick).");

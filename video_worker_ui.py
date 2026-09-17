@@ -119,6 +119,11 @@ DAILY_LIMIT_PATTERN = re.compile(
 CONTENT_POLICY_PATTERN = re.compile(
     r"動画の生成はできません|生成はできません|生成できません|暴力的な内容|不適切な内容|"
     r"ポリシーに違反|規約に違反|违反(?:社区|内容)*(?:规范|政策|准则)|"
+    # Dola dựng xong rồi GIẤU video: "著作権を保護するため、生成された動画を表示できません" (không có chữ ポリシー → trước đây
+    # không khớp mẫu nào, job treo tới hết 40 phút).
+    r"著作権|動画を表示できません|版权保护|无法显示.{0,6}视频|copyright|"
+    # Dola bảo SỬA PROMPT rồi thử lại = lượt này đã thua, chờ tiếp chỉ treo job.
+    r"プロンプトを(?:編集|変更|修正)|修改提示词|(?:edit|modify|change) (?:the |your )?prompt|"
     r"cannot be generated|can'?t be generated|violates? (?:our |the )?polic",
     re.IGNORECASE,
 )
@@ -174,6 +179,9 @@ _STATUS_MARKERS = (
     "will be generated", "will complete", "will send", "i'll send", "i'll start", "minutes", "残っています",
     # "安全チェックの対象外です。直接生成を開始します" = Dola BẮT ĐẦU tạo — từng bị coi là từ chối, job chết sau 20s
     "生成を開始", "開始します", "安全チェックの対象外", "start generating", "starting generation", "开始生成",
+    # "動画の生成を受け付けました。" / "動画を生成しました。" = Dola NHẬN lệnh / báo đang ra; video tới sau vài phút
+    # (log 17/9 08:28: 2 job chết oan "Dola báo: …" sau 20s dù lượt đã trừ).
+    "受け付けました", "受け付けいたしました", "生成しました", "作成しました",
     # Dola BÁO là đang/sắp tạo bằng câu kể (không hỏi gì): "…15秒で生成します", "4秒のフック版をまず生成します",
     # "完了し次第、お知らせします". Thiếu mấy mẫu này thì sau 4 nhịp poll job bị kết luận "Dola báo: …" = LỖI,
     # trong khi Dola vẫn dựng và LƯỢT ĐÃ TRỪ (ảnh chụp 16/9: 3–5 nick lỗi oan kiểu này).
@@ -304,8 +312,19 @@ async def _persist_before_close(context, account: str) -> None:
 _OWN_MESSAGE_MARKS = ("この仕様で直接生成してください", "追加の確認は不要")
 
 
+# Câu tool TỰ TRẢ LỜI menu thông số (_spec_menu_answer): "A、15秒、9:16（縦向き）でお願いします。", "…秒に変更して生成してください。"
+_OWN_ANSWER_TAILS = ("でお願いします。", "に変更して生成してください。")
+
+
 def _is_own_message(text: str) -> bool:
-    return any(k in (text or "") for k in _OWN_MESSAGE_MARKS)
+    """Tin DO TOOL GỬI (prompt, câu trả lời menu) — không bao giờ là câu Dola nói.
+
+    Lịch sử hội thoại trả CẢ tin người dùng. Log 17/9 08:27: prompt "生成された動画："15.8s…0–1.5秒…"" bị đọc như
+    Dola hỏi thời lượng → mở Chrome trả lời câu hỏi không có thật, lấy "5秒" trong prompt làm mức giây → tự chọn
+    "5秒に変更"; câu tool trả lời "A、15秒…でお願いします。" bị báo "Dola báo: …" → job chết oan (lượt đã trừ)."""
+    t = (text or "").strip()
+    return (any(k in t for k in _OWN_MESSAGE_MARKS) or t.startswith(_SENT_PREFIX)
+            or (len(t) < 60 and t.endswith(_OWN_ANSWER_TAILS)))
 
 
 def _capped_seconds(text: str) -> int | None:
@@ -531,8 +550,15 @@ def _capped_reply(text: str, ratio, want: int | None) -> str:
     return "はい"
 
 
+# Câu có chữ PHỦ ĐỊNH thì không bao giờ là "đang dựng", dù chứa marker: "…生成された動画を表示できません" (chặn bản quyền,
+# ảnh 16/9) dính marker 生成された動画 → nhánh "câu lạ lặp lại → báo lỗi" bỏ qua, job treo tới hết 40 phút.
+_REFUSAL_MARKERS = ("できません", "できない", "できませんでした", "无法", "不能", "cannot", "can't", "unable to", "không thể")
+
+
 def _is_status_text(text: str) -> bool:
     low = (text or "").lower()
+    if any(m in text or m in low for m in _REFUSAL_MARKERS):
+        return False
     return any(m in text or m in low for m in _STATUS_MARKERS)
 
 
@@ -1390,12 +1416,62 @@ def _newest_first(messages: list) -> list:
     return [m for _, m in sorted(zip(idx, messages), key=lambda p: p[0], reverse=True)]
 
 
+# Tin KẾT QUẢ dựng video Dola đẩy về sau khi render xong (đọc thật 17/9 từ im/chain/single):
+#   ra video      → send_scene "77", ext.ai_creation_res_code 0, có khối 2074
+#   giấu bản quyền → send_scene "77", ext.ai_creation_res_code 710082022, KHÔNG có khối 2074
+# Mã ≠ 0 ở tin 77 = lượt dựng đã THUA (credit đã trừ), chờ tiếp chỉ treo tới hết giờ. Không dựa vào câu chữ.
+# KHÔNG dùng các cờ ở tin trả lời thường: 710082041 / is_creation_clarifying có cả ở câu hỏi thời lượng lẫn câu
+# "bắt đầu dựng"; tin "tốn N credit" và tin "エラーが発生しました" mang cờ y hệt nhau.
+CREATION_RESULT_SCENE = "77"
+CREATION_POLICY_CODES = {710082022}
+
+
+def _msg_ext(msg: dict) -> dict:
+    ext = msg.get("ext")
+    if isinstance(ext, str):
+        try:
+            ext = json.loads(ext)
+        except json.JSONDecodeError:
+            return {}
+    return ext if isinstance(ext, dict) else {}
+
+
+def _is_creation_result(msg: dict) -> bool:
+    return str(msg.get("send_scene") or "") == CREATION_RESULT_SCENE and str(msg.get("user_type") or "") != "1"
+
+
+def _creation_fail(msg: dict) -> dict | None:
+    """{"code", "text"} nếu tin kết quả báo dựng THẤT BẠI (mã ≠ 0), không thì None."""
+    raw = _msg_ext(msg).get("ai_creation_res_code")
+    try:
+        code = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    if code == 0:
+        return None
+    return {"code": code, "text": str(msg.get("tts_content") or msg.get("brief") or "")[:200]}
+
+
+def _creation_fail_error(fail: dict) -> Exception:
+    """Lỗi cuối cùng cho lượt dựng đã thua. Lượt ĐÃ TRỪ → dùng loại lỗi không gửi lại."""
+    tail = f"\n↳ Dola (mã {fail['code']}): {fail['text'][:170]}"
+    if fail["code"] in CREATION_POLICY_CODES:
+        return ContentPolicyViolationError(
+            "Dola dựng xong nhưng GIẤU video (bản quyền / vi phạm chính sách) — đổi prompt." + tail)
+    return RuntimeError("Dola dựng xong nhưng KHÔNG trả video." + tail)
+
+
 def _parse_single(data: dict) -> dict:
     """Mirror of POLL_JS message parsing, in Python (texts / videos / videoModels / images)."""
     dl = (data.get("downlink_body") or {}).get("pull_singe_chain_downlink_body") or {}
     texts, videos, video_models, images = [], [], [], 0
     stream = []   # ("t", text) / ("v", url, model) theo đúng thứ tự Dola trả (tin MỚI đứng trước)
+    creation_fail = None
+    result_seen = False
     for msg in _newest_first(dl.get("messages") or []):
+        if not result_seen and _is_creation_result(msg):
+            result_seen = True   # chỉ tin kết quả MỚI NHẤT quyết định
+            creation_fail = _creation_fail(msg)
         content = msg.get("content")
         if isinstance(content, str):
             try:
@@ -1423,7 +1499,8 @@ def _parse_single(data: dict) -> dict:
                     model = (cre.get("video") or {}).get("video_model") or ""
                     video_models.append(model)
                     stream.append(("v", url, model))
-    return {"texts": texts, "videos": videos, "videoModels": video_models, "images": images, "stream": stream}
+    return {"texts": texts, "videos": videos, "videoModels": video_models, "images": images, "stream": stream,
+            "creation_fail": creation_fail}
 
 
 # Lỗi mạng LIÊN TIẾP khi theo dõi → coi như IP proxy chết giữa lúc Dola dựng (đã trừ lượt) → đổi đường đọc hội thoại.
@@ -1681,7 +1758,7 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
                     raise GuestRefusedError(f"{_GUEST_MSG}\n↳ Dola: {text[:140]}")
                 if CONTENT_POLICY_PATTERN.search(text) and not _is_duration_capped(text):
                     raise ContentPolicyViolationError(
-                        "Dola chặn nội dung (bạo lực / vi phạm chính sách) — đổi prompt nhẹ nhàng hơn.\n↳ Dola: " + text[:170])
+                        "Dola chặn nội dung (bạo lực / bản quyền / vi phạm chính sách) — đổi prompt nhẹ nhàng hơn.\n↳ Dola: " + text[:170])
                 if PORTRAIT_PROTECTION_PATTERN.search(text):
                     raise PortraitProtectionError(
                         "Dola chặn (bảo vệ chân dung): model chỉ tạo video với ảnh MẶT CỦA CHÍNH BẠN.\n↳ Dola: " + text[:160])
@@ -1711,6 +1788,8 @@ async def poll_conversation_http(account: str, cookie: str, ms_token: str, fp: s
                 tt = (text or "").strip()
                 if len(tt) > 8 and not _is_status_text(tt) and not tt.startswith("生成された"):
                     last_msg = tt
+            if poll.get("creation_fail") and not poll.get("videos"):
+                raise _creation_fail_error(poll["creation_fail"])
             if poll["images"] and not poll["videos"]:
                 image_polls += 1
                 if image_polls >= IMAGE_ONLY_POLLS:
@@ -1831,7 +1910,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                     raise GuestRefusedError(f"{_GUEST_MSG}\n↳ Dola: {text[:140]}")
                 if CONTENT_POLICY_PATTERN.search(text) and not _is_duration_capped(text):
                     raise ContentPolicyViolationError(
-                        "Dola chặn nội dung (bạo lực / vi phạm chính sách) — đổi prompt nhẹ nhàng hơn."
+                        "Dola chặn nội dung (bạo lực / bản quyền / vi phạm chính sách) — đổi prompt nhẹ nhàng hơn."
                         f"\n↳ Dola: {text[:170]}")
                 if PORTRAIT_PROTECTION_PATTERN.search(text):
                     raise PortraitProtectionError(
@@ -1890,6 +1969,8 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 if len(tt) > 8 and not _is_status_text(tt) and not tt.startswith("生成された"):
                     last_msg = tt
             # Dola rendered an IMAGE instead of a video (usually reference-image runs).
+            if poll.get("creation_fail") and not poll.get("videos"):
+                raise _creation_fail_error(poll["creation_fail"])
             if poll.get("images") and not poll.get("videos"):
                 image_polls += 1
                 if image_polls >= IMAGE_ONLY_POLLS:
