@@ -576,6 +576,7 @@ class BrowserPool:
 
     def list_accounts(self) -> list:
         """Dashboard view: combines metadata, quota, and busy status."""
+        from submit_http import has_real_mstoken as _has_real_mstoken
         self._clear_expired_rate_limits()
         now = time.time()
         reset_at = self._next_limit_reset() - 86400   # mốc reset credit gần nhất (0h JST)
@@ -611,6 +612,7 @@ class BrowserPool:
                 "limit": DAILY_LIMIT,
                 "remaining": cb if cb is not None else max(0, DAILY_LIMIT - used),
                 "busy": bool(lock and lock.locked()),
+                "has_mstoken": _has_real_mstoken(a),   # thiếu → gửi bằng msToken giả, dễ 710022002 (UI cảnh báo)
             })
         return out
 
@@ -859,7 +861,7 @@ class BrowserPool:
             "remaining": a.get("remaining"),
             "scheduling": a.get("scheduling", True), "cooling": a.get("cooling", False),
             "cooldown_until": a.get("cooldown_until", 0), "quarantine": a.get("quarantine", ""),
-            "busy": a.get("busy", False),
+            "busy": a.get("busy", False), "has_mstoken": a.get("has_mstoken", True),
         } for a in self.list_accounts()]
 
     async def verify_account_http(self, name: str):

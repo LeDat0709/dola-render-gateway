@@ -740,8 +740,13 @@ function CookieTag({ a }) {
   const c = cookieInfo(a);
   const tone = { fresh: "text-tertiary", stale: "text-muted-foreground", unknown: "text-muted-foreground/70", dead: "text-error" }[c.st];
   return (
-    <span className={"font-mono text-[10px] " + tone} title="Cookie được xác nhận MỖI KHI Dola nhận lệnh của nick (hoặc khi kiểm tra). Xác nhận trong 60 phút thì bấm Chạy bỏ qua bước kiểm tra nick.">
-      {c.st === "fresh" ? "● " : c.st === "dead" ? "✗ " : "○ "}{c.text}
+    <span className="inline-flex items-center gap-1">
+      <span className={"font-mono text-[10px] " + tone} title="Cookie được xác nhận MỖI KHI Dola nhận lệnh của nick (hoặc khi kiểm tra). Xác nhận trong 60 phút thì bấm Chạy bỏ qua bước kiểm tra nick.">
+        {c.st === "fresh" ? "● " : c.st === "dead" ? "✗ " : "○ "}{c.text}
+      </span>
+      {a.has_mstoken === false && (
+        <span className="font-mono text-[10px] text-warn" title="Nick thiếu msToken thật — khi gửi phải dùng msToken giả, Dola dễ chặn 'gửi quá dày' (710022002). Bấm 'Đăng nhập lại' để bắt msToken thật.">⚠ msToken</span>
+      )}
     </span>
   );
 }

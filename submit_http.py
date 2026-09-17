@@ -10,6 +10,7 @@ CHƯA nối pool — bật qua cờ DOLA_SUBMIT_ENGINE=http ở Giai đoạn 2b.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 import uuid
@@ -22,6 +23,9 @@ WEB_URL = "https://www.dola.com/chat/completion"
 BOT_ID = "7339470689562525703"                       # khớp SUBMIT_JS client_meta.bot_id
 REPLY_FORMAT = "生成された動画：%s"
 UA = signer.DEFAULT_UA
+# Vân tay TLS/JA3 + HTTP2 mà curl_cffi giả lập. "chrome" (alias) trỏ về Chrome cũ (~116); WAF Dola so vân tay với UA
+# → dùng bản Chrome mới cho khớp. Đổi được qua .env (DOLA_SUBMIT_IMPERSONATE) khi curl_cffi ra bản Chrome mới hơn.
+SUBMIT_IMPERSONATE = os.getenv("DOLA_SUBMIT_IMPERSONATE", "chrome131").strip() or "chrome131"
 _ORIENT = {"9:16": "縦", "3:4": "縦", "16:9": "横", "4:3": "横", "1:1": "正方形"}
 
 
@@ -48,6 +52,28 @@ def load_account_cookies(account: str) -> dict[str, str]:
     if isinstance(items, dict):
         return {k: v for k, v in items.items()}
     return {c["name"]: c["value"] for c in items if c.get("name")}
+
+
+_MSTOKEN_CACHE: dict[str, tuple[float, bool]] = {}   # nick -> (mtime, có msToken thật)
+
+
+def has_real_mstoken(account: str) -> bool:
+    """Nick có msToken THẬT trong cookies.json chưa? Thiếu → submit_http phải dùng msToken giả, dễ bị Dola chặn 710022002
+    (doubao2api: 'empty/fake values trigger rate limiting'). Cache theo mtime để bảng nick không đọc lại 95 file mỗi lần."""
+    f = config.ACCOUNTS_DIR / account / "cookies.json"
+    try:
+        mtime = f.stat().st_mtime
+    except OSError:
+        return False
+    hit = _MSTOKEN_CACHE.get(account)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    try:
+        ok = bool((load_account_cookies(account).get("msToken") or "").strip())
+    except (OSError, ValueError):
+        ok = False
+    _MSTOKEN_CACHE[account] = (mtime, ok)
+    return ok
 
 
 def _khan_extra(model: str) -> dict:
@@ -222,7 +248,7 @@ async def submit_via_http(account: str, prompt: str, ratio: str | None, duration
 
     def _post() -> tuple[int, str]:
         r = creq.post(url, data=body_json.encode(), headers=headers, proxies=proxies,
-                      impersonate="chrome", timeout=120)
+                      impersonate=SUBMIT_IMPERSONATE, timeout=120)
         return r.status_code, r.text
 
     if on_submitted:
