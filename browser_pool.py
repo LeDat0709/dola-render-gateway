@@ -367,6 +367,19 @@ async def _egress_slot(account: str, on_wait=None, early_release=None):
     if early_release is None:
         early_release = {"released": False}
     while 0 < config.MAX_JOBS_PER_IP <= _egress_busy.get(key, 0):
+        # P1: check proxy_status BẨN TRƯỚC KHI grab slot — tránh grab rồi _wait_clean_ip raise
+        # (DirtyIpWaitTimeout) → finally giải phóng slot → waiter grab → raise → VÒNG LẶP VÔ HẠN.
+        # Khi proxy bẩn, slot IP đầy hay không không quan trọng — đều phải rotate proxy khác.
+        try:
+            import proxy_status as _ps
+            if _ps.is_dirty(key):
+                raise DirtyIpWaitTimeout(
+                    f"proxy key {mask_proxy(key) or 'IP máy'} bị WAF-flag (24h cooldown) — nhả slot, xoay proxy khác"
+                )
+        except DirtyIpWaitTimeout:
+            raise
+        except Exception:   # noqa: BLE001 — wrap không được fail logic
+            pass
         # TIPEES hotfix A: kiểm tra rate-limit THEO PROXY để không kẹt cứng
         s = _rs(key)
         now = time.monotonic()
