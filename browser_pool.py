@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from dola_client import CreditError
+from dola_error_codes import classify_dola_error, DolaErrorKind
 from browser import RegionBlockedError, account_proxy_raw, mask_proxy, normalize_proxy_input
 from video_worker_ui import (
     AccountLimitedError,
@@ -160,7 +161,24 @@ def _rs(key: str) -> dict[str, float]:
 
 
 def _reset_rate_state() -> None:
+    """Xoá toàn bộ rate state. CHÚ Ý: gọi khi KHÔNG có job đang chạy (test/admin reset)."""
     _rate_state.clear()
+    _PACE_LOCKS.clear()
+
+
+_RATE_STATE_MAX_ENTRIES = 500
+
+
+def _gc_rate_state(now=None) -> None:
+    """Dọn proxy key đã 'êm' để giữ _rate_state không phình vô hạn."""
+    if len(_rate_state) <= _RATE_STATE_MAX_ENTRIES:
+        return
+    now = time.monotonic() if now is None else now
+    stale = [k for k, s in _rate_state.items()
+             if s["until"] <= now and s["boost"] <= 0 and s.get("learned_extra", 0) <= 0]
+    for k in stale[:max(0, len(_rate_state) - _RATE_STATE_MAX_ENTRIES)]:
+        _rate_state.pop(k, None)
+        _PACE_LOCKS.pop(k, None)
 
 # Chỉ dừng-rồi-chạy-lại ở cùng nhịp thì hết dừng là dồn vào IP y như cũ → dính tiếp (vòng leo thang
 # 90→180→…→900s như log). Nên mỗi lần bị chặn còn GIÃN THÊM nhịp gửi, rồi tự giảm dần khi êm. Đây là
@@ -181,7 +199,12 @@ def _effective_gap_boost(now: float, key: str = "") -> float:
 
 def note_rate_limited(now: float | None = None, key: str = "") -> float:
     """Ghi nhận proxy `key` bị Dola báo gửi quá dày; trả số giây còn phải dừng. 10 job cùng dính một đợt = một lần dừng.
-    Chỉ dừng gửi qua ĐÚNG proxy đó — nick trên proxy khác vẫn chạy."""
+    Chỉ dừng gửi qua ĐÚNG proxy đó — nick trên proxy khác vẫn chạy.
+
+    TIPEES hotfix B: gộp `learned_extra` và `boost` để bỏ double-counting. Trước đây mỗi lần dính
+    `learned_extra += 1` + `boost += 5s` → gap hiệu dụng +6s/lần (log 17/09: nick ăn 2 phạt chồng).
+    Nay: chỉ `learned_extra += 2`, `boost = 0`. Mỗi 5 job OK: `learned_extra -= 0.5`. Trần vẫn _ADAPTIVE_EXTRA_MAX.
+    Test test_browser_pool_fixes.py kiểm _effective_gap_boost trả đúng sau hotfix."""
     s = _rs(key)
     now = time.monotonic() if now is None else now
     if now < s["until"]:
@@ -189,11 +212,18 @@ def note_rate_limited(now: float | None = None, key: str = "") -> float:
     recent = now - s["until"] < RATE_LIMIT_WINDOW     # dính lại sớm sau khi hết dừng → gấp đôi
     s["pause"] = min(RATE_LIMIT_PAUSE_MAX, s["pause"] * 2 if recent else RATE_LIMIT_PAUSE_SEC)
     s["until"] = now + s["pause"]
-    s["boost"] = min(RATE_LIMIT_GAP_MAX, _effective_gap_boost(now, key) + RATE_LIMIT_GAP_STEP)
-    s["boost_at"] = now
-    # Adaptive pacing: cộng thêm phạt khi bị chặn, reset streak
-    s["learned_extra"] = min(_ADAPTIVE_EXTRA_MAX, s.get("learned_extra", 0.0) + 1.0)
+    # TIPEES hotfix B: BỎ boost (không dùng nữa), tăng learned_extra gấp đôi để bù lại phần boost cũ.
+    s["learned_extra"] = min(_ADAPTIVE_EXTRA_MAX, s.get("learned_extra", 0.0) + 2.0)
     s["streak"] = 0.0
+    s["boost"] = 0.0
+    s["boost_at"] = 0.0
+    # Mirror sang proxy_status (key-level cooling — gate trước khi gửi qua key này)
+    if key:
+        try:
+            import proxy_status as _ps
+            _ps.mark_cooling(key, reason="rate_limited", ttl=min(RATE_LIMIT_PAUSE_MAX, 300))
+        except Exception:   # noqa: BLE001 — wrap không được fail logic chính
+            pass
     return s["pause"]
 
 
@@ -214,6 +244,13 @@ def note_submit_ok(key: str = "") -> None:
         if s["learned_extra"] < old:
             print(f"[pace] proxy {key[:30] or 'chung'}: 5 job OK liên tiếp → bớt phạt nhịp {old:.1f}s → "
                   f"{s['learned_extra']:.1f}s (nhịp = {config.SUBMIT_GAP_SEC:.1f}s + phạt)", flush=True)
+    # Mirror sang proxy_status (note_success → auto-clean cooling khi streak ≥ 5)
+    if key:
+        try:
+            import proxy_status as _ps
+            _ps.note_success(key)
+        except Exception:   # noqa: BLE001
+            pass
 
 
 # Cổng giãn nhịp: mỗi lần gửi lệnh lấy một "khe" cách khe trước >= SUBMIT_GAP + ngẫu nhiên. Khoá chỉ giữ lúc
@@ -227,6 +264,37 @@ _PACE_LOCKS: dict[str, asyncio.Lock] = {}
 # chặn được cảnh 10 job cùng dội vào một IP (log: 27 nick không proxy, 10 job song song → 710022002 hàng loạt).
 _egress_busy: dict[str, int] = {}
 EGRESS_POLL_SEC = 0.5
+# TIPEES hotfix A: nick chờ chỗ trên IP bận KHÔNG được kẹt cứng khi proxy đó đang rate-limit (s["until"]>now).
+# Trước đây _egress_slot chỉ nhìn thấy _egress_busy → 4 nick đứng chờ 5+ phút trong khi nick giữ slot đang
+# dính 710022002 và IP-level pause 90-900s. Grace = số giây chờ tối đa, quá thì raise DirtyIpWaitTimeout để
+# flow ngoài xử lý (xoay nick hoặc proxy khác).
+EGRESS_RATE_LIMIT_GRACE_SEC = float(os.getenv("DOLA_EGRESS_RATE_GRACE_SEC", "30"))
+
+# TIPEES P1 (sửa 18/09): thay busy-poll bằng Event-based wait. Mỗi key (proxy/IP) có 1 Event,
+# set khi _egress_busy[key] GIẢM (có slot vừa rảnh), clear khi job mới bắt đầu chờ. Trước đây
+# mỗi waiter sleep 0.5s → 10 job chờ cùng IP = 20 wake-up/giây không cần thiết. Giờ chỉ wake đúng
+# lúc slot release, hoặc sau EGRESS_POLL_SEC timeout (an toàn nếu notify bị miss).
+#
+# Cảnh báo event-loop: asyncio.Event() BỊ RÀNG BUỘC với loop lúc tạo. Test/loop ngắn hạn (pytest mỗi test = 1
+# loop mới) sẽ nổ "bound to a different event loop" nếu cache cross-loop. Cách an toàn: KHÔNG cache Event — tạo
+# mới mỗi lần _egress_slot cần, dùng asyncio.Event hiện tại. Notify bằng cách: tạo Event MỚI ở loop hiện tại,
+# set ngay, rồi gán vào dict — waiter đang chờ ở loop hiện tại đọc dict sẽ thấy Event đã set. (Cách cũ là set
+# Event cũ; với cross-loop là lỗi. Cách mới: set Event mới trong loop hiện tại là idempotent — waiter chỉ cần
+# thấy dict trỏ đến Event đã set.)
+_EGRESS_EVENTS: dict[str, asyncio.Event] = {}
+
+
+def _get_egress_event(key: str) -> asyncio.Event:
+    """Lấy Event cho key trong loop hiện tại. Luôn tạo mới để tránh 'bound to different event loop'."""
+    ev = asyncio.Event()
+    ev.set()   # set sẵn: nếu không có waiter, check vẫn đúng
+    _EGRESS_EVENTS[key] = ev
+    return ev
+
+
+def _notify_egress(key: str) -> None:
+    """Đánh thức tất cả waiter đang chờ slot trên key. Tạo Event mới + set ngay trong loop hiện tại."""
+    _get_egress_event(key)   # đã set sẵn
 
 
 def _egress_key(account: str) -> str:
@@ -243,11 +311,26 @@ class DirtyIpWaitTimeout(RuntimeError):
 async def _wait_clean_ip(account: str, sleep=asyncio.sleep, clock=time.time) -> None:
     """TRƯỚC khi mở nick: IP proxy xoay của nick vừa bị Dola chặn (bẩn) mà còn job khác đang dựng trên key (không đổi IP
     được, đổi sẽ cắt job đó) → CHỜ, không gửi trên IP bẩn. Hết job trên key → rotate_if_expiring ngay sau đổi IP mới.
-    Chờ quá DIRTY_IP_WAIT_SEC → DirtyIpWaitTimeout (chưa gửi). Proxy tĩnh / đi thẳng / IP sạch → trả về ngay."""
+    Chờ quá DIRTY_IP_WAIT_SEC → DirtyIpWaitTimeout (chưa gửi). Proxy tĩnh / đi thẳng / IP sạch → trả về ngay.
+
+    TIPEES hotfix Phase 4: thêm check `proxy_status.is_dirty(key)` để block ngay khi key WAF-flag,
+    không cần đợi IP-level dirty (proxy_status 24h vs IP-level 24h trùng TTL, nhưng proxy_status còn
+    track cooling streak để auto-clean)."""
     from browser import _effective_rotating, ip_dirty, mask_proxy, proxy_busy, rotating_status
     key = _effective_rotating(account)
     if not key or config.DIRTY_IP_WAIT_SEC <= 0:
         return
+    # Phase 4: check proxy_status gate TRƯỚC — nếu key bị WAF-flag (24h), raise ngay để xoay proxy
+    try:
+        import proxy_status as _ps
+        if _ps.is_dirty(key):
+            raise DirtyIpWaitTimeout(
+                f"proxy key {mask_proxy(key)} bị WAF-flag (710022002 / 24h cooldown) — xoay proxy hoặc đợi 24h"
+            )
+    except DirtyIpWaitTimeout:
+        raise
+    except Exception:   # noqa: BLE001 — wrap không được fail logic chính
+        pass
     deadline = clock() + config.DIRTY_IP_WAIT_SEC
     logged = False
     while ip_dirty(rotating_status(key)) and proxy_busy(key) > 0:
@@ -264,12 +347,42 @@ async def _wait_clean_ip(account: str, sleep=asyncio.sleep, clock=time.time) -> 
 
 
 @contextlib.asynccontextmanager
-async def _egress_slot(account: str, on_wait=None):
-    """Giữ 1 chỗ trên IP ra của nick. on_wait() gọi MỘT lần khi phải chờ (nhả slot Chrome: job trên IP rảnh vẫn chạy)."""
+async def _egress_slot(account: str, on_wait=None, early_release=None):
+    """Giữ 1 chỗ trên IP ra của nick.
+
+    - on_wait(): gọi MỘT lần khi phải chờ.
+    - early_release: dict {"released": bool} chia sẻ với caller — dùng để tránh double-decrement
+      (cả _release_egress_early() và finally đều check + set cờ).
+
+    TIPEES hotfix A: nếu slot IP đầy VÀ proxy đó đang rate-limit (s["until"] > now) → chờ thêm tối đa
+    EGRESS_RATE_LIMIT_GRACE_SEC. Quá grace → raise DirtyIpWaitTimeout để flow ngoài xử lý (xoay nick/proxy).
+    Trước đây nick chờ kẹt cứng 5+ phút trong khi nick giữ slot dính 710022002 (log 17/09 21:08–21:09).
+
+    TIPEES P1 (sửa 18/09): chờ bằng Event thay vì busy-poll 0.5s. Khi job khác nhả slot → set Event cho key.
+    Có fallback timeout EGRESS_POLL_SEC đề phòng notify miss (defensive).
+    """
     key = _egress_key(account)
     waited = False
-    # ponytail: dò vòng + đọc config mỗi nhịp (đổi trần lúc chạy là ăn ngay); không xếp hàng công bằng — cần FIFO thì Condition.
+    rl_deadline: float | None = None  # set khi phát hiện rate-limit, đếm grace
+    if early_release is None:
+        early_release = {"released": False}
     while 0 < config.MAX_JOBS_PER_IP <= _egress_busy.get(key, 0):
+        # TIPEES hotfix A: kiểm tra rate-limit THEO PROXY để không kẹt cứng
+        s = _rs(key)
+        now = time.monotonic()
+        if now < s["until"]:
+            if rl_deadline is None:
+                rl_deadline = now + EGRESS_RATE_LIMIT_GRACE_SEC
+                print(f"[pool] {account}: slot IP {mask_proxy(key) or 'IP máy'} đầy + proxy đang rate-limit "
+                      f"({s['until'] - now:.0f}s) — chờ tối đa {EGRESS_RATE_LIMIT_GRACE_SEC:.0f}s rồi nhường "
+                      f"(tránh kẹt cứng log 17/09)", flush=True)
+            if now >= rl_deadline:
+                raise DirtyIpWaitTimeout(
+                    f"Proxy {mask_proxy(key) or 'IP máy'} rate-limit + slot IP đầy — chờ {EGRESS_RATE_LIMIT_GRACE_SEC:.0f}s "
+                    f"vượt grace. Nick {account} nhường slot, xoay nick/proxy khác."
+                )
+        else:
+            rl_deadline = None  # rate-limit đã hết, reset grace
         if not waited:
             waited = True
             where = mask_proxy(key) if key else "IP máy (không proxy)"
@@ -277,32 +390,61 @@ async def _egress_slot(account: str, on_wait=None):
                   f"{config.MAX_JOBS_PER_IP} job chạy", flush=True)
             if on_wait:
                 on_wait()
-        await asyncio.sleep(EGRESS_POLL_SEC)
-    _egress_busy[key] = _egress_busy.get(key, 0) + 1   # không có await giữa kiểm và cộng → nguyên tử trong asyncio
+        # P1: chờ bằng Event — wake ngay khi job khác nhả slot (notify bên dưới trong finally).
+        # Fallback timeout EGRESS_POLL_SEC phòng trường hợp notify miss (race với GC dict, v.v.).
+        ev = _get_egress_event(key)
+        ev.clear()
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=EGRESS_POLL_SEC)
+        except asyncio.TimeoutError:
+            pass  # kiểm tra lại điều kiện vòng while
+    _egress_busy[key] = _egress_busy.get(key, 0) + 1
     try:
         yield
     finally:
-        left = _egress_busy.get(key, 1) - 1
-        if left > 0:
-            _egress_busy[key] = left
-        else:
-            _egress_busy.pop(key, None)
+        if early_release.get("released"):
+            # P1: nhảng rồi thì vẫn notify (early release cũng cần đánh thức waiter)
+            _notify_egress(key)
+            return
+        early_release["released"] = True
+        cur = _egress_busy.get(key)
+        if cur is not None and cur > 0:
+            new = cur - 1
+            if new > 0:
+                _egress_busy[key] = new
+            else:
+                _egress_busy.pop(key, None)
+        # P1: đánh thức waiter cùng key để chúng retry điều kiện
+        _notify_egress(key)
 
 
 async def _pace(key: str = "") -> None:
     """Giãn nhịp gửi cho proxy `key`: mỗi khe cách khe trước >= SUBMIT_GAP (+giãn nếu vừa bị chặn), và chờ
-    qua lệnh tạm dừng của ĐÚNG proxy đó. Proxy khác có khe riêng nên không bị một IP quá tải kéo theo."""
-    global _rate_state
-    lock = _PACE_LOCKS.setdefault(key, asyncio.Lock())
-    async with lock:
-        s = _rs(key)
-        now = time.monotonic()
-        base = max(now, s["slot"], s["until"])
-        wait = base - now
-        # Nhịp = mức người dùng đặt (đọc MỖI LẦN, để /api/admin/submit-gap ăn ngay) + phạt tự học + giãn
-        # tạm sau 710022002.
-        gap = config.SUBMIT_GAP_SEC + s.get("learned_extra", 0.0) + _effective_gap_boost(now, key)
-        s["slot"] = base + gap + random.uniform(0, config.SUBMIT_JITTER_SEC)
+    qua lệnh tạm dừng của ĐÚNG proxy đó. Proxy khác có khe riêng nên không bị một IP quá tải kéo theo.
+
+    TIPEES P3 (sửa 18/09): thay asyncio.Lock() (serialize 2 job cùng key) bằng atomic compare-and-set
+    trên _rate_state[key]["slot"]. Trước đây 2 job cùng proxy phải xếp hàng qua 1 lock → job B đợi job
+    A pace xong (~30-60s) TRƯỚC KHI biết mình cần pace bao nhiêu. Nay: mỗi job tự tính base/now,
+    commit slot mới nhất (CAS Python: GIL đảm bảo atomic cho dict[key] = value). Job đến sau sẽ thấy
+    slot đã được commit bởi job đến trước → wait tương ứng. Vẫn serial VỀ MẶT NHỊP (khe B nối tiếp
+    khe A, không bao giờ overlap), nhưng không cần lock → waiter không nằm chờ lock để "biết mình cần chờ".
+    """
+    s = _rs(key)
+    now = time.monotonic()
+    base = max(now, s["slot"], s["until"])
+    wait = base - now
+    # Nhịp = mức người dùng đặt (đọc MỖI LẦN, để /api/admin/submit-gap ăn ngay) + phạt tự học + giãn
+    # tạm sau 710022002.
+    gap = config.SUBMIT_GAP_SEC + s.get("learned_extra", 0.0) + _effective_gap_boost(now, key)
+    new_slot = base + gap + random.uniform(0, config.SUBMIT_JITTER_SEC)
+    # CAS: nếu ai vừa commit slot xa hơn (job song song cùng key), GIỮ slot xa hơn (an toàn).
+    cur_slot = s["slot"]
+    if new_slot > cur_slot:
+        s["slot"] = new_slot
+    # GC rate_state nếu quá lớn (chỉ khi thực sự đông)
+    if len(_rate_state) > _RATE_STATE_MAX_ENTRIES:
+        _gc_rate_state(now)
+    # Slot ĐÃ commit trước sleep → nếu task cancel giữa sleep, job SAU vẫn thấy đúng nhịp
     if wait > 0:
         await asyncio.sleep(wait)
 
@@ -356,6 +498,7 @@ class BrowserPool:
         # chung giữ qua lời gọi nhà bán (proxyxoay tới ~17s) là cả kho đứng im.
         self._ip_locks: dict[str, asyncio.Lock] = {}
         self._fail_ips: dict[str, dict[str, float]] = {}   # nick -> {đường ra (IP proxy/host/"direct"): lúc lỗi gần nhất}
+        self._fail_lock: asyncio.Lock = asyncio.Lock()   # serialize _rest_after_presubmit_fail
         self._quarantine: dict[str, str] = {}            # nick -> lý do cách ly (hiện ở blocked_reason)
         self._proxy_stamp: dict[str, dict] = {}  # dấu proxy đang gắn cho job mỗi nick → cột "Proxy" hiện IP/lượt/NCC
         self._locks: dict[str, asyncio.Lock] = {}
@@ -401,6 +544,8 @@ class BrowserPool:
             ("quota_reason", "TEXT DEFAULT ''"),
             ("credit_balance", "INTEGER"),
             ("credit_checked_at", "REAL DEFAULT 0"),
+            # TIPEES hotfix C: ghi lý do cách ly nick (kết hợp cooldown_until) để UI/audit biết vì sao nick nghỉ
+            ("quarantine_reason", "TEXT DEFAULT ''"),
         ):
             try:
                 self._conn.execute(f"ALTER TABLE accounts_meta ADD COLUMN {column} {definition}")
@@ -445,22 +590,31 @@ class BrowserPool:
         self._conn.execute("UPDATE accounts_meta SET last_used_at=? WHERE name=?", (time.time(), account))
         self._conn.commit()
 
-    def _rest_after_presubmit_fail(self, account: str, err: Exception) -> None:
+    async def _rest_after_presubmit_fail(self, account: str, err: Exception) -> None:
         """Nick lỗi/treo TRƯỚC khi gửi (chưa tốn credit) mà pool sắp xoay → nghỉ ngắn để job sau khỏi đâm vào nó trước.
-        Tắt tự xoay thì không nghỉ: người dùng sửa proxy/cookie xong chạy lại ngay được."""
+        Tắt tự xoay thì không nghỉ: người dùng sửa proxy/cookie xong chạy lại ngay được.
+
+        Async + _fail_lock: trước đây method này sync, nhiều job fail đồng thời trên cùng nick →
+        race condition ghi _fail_ips và đặt cooldown. Giờ serialize qua asyncio.Lock."""
         if not config.AUTO_RETRY:
             return
-        now = time.time()
-        seen = {ip: t for ip, t in self._fail_ips.get(account, {}).items() if now - t < SPAM_WINDOW_SEC}
-        seen[self._egress_id(account)] = now
-        self._fail_ips[account] = seen
-        rest, why = PRESUBMIT_FAIL_COOLDOWN_SEC, ""
-        self._ensure_meta(account)   # nick chưa có dòng meta thì UPDATE cooldown không ghi được gì
-        if len(seen) >= SPAM_IP_COUNT:
-            rest = SPAM_COOLDOWN_SEC
-            why = (f"cách ly: lỗi trước khi gửi trên {len(seen)} IP khác nhau trong {SPAM_WINDOW_SEC // 3600} giờ — lỗi ở nick "
-                   f"(cookie/nick bị hạn chế), không phải proxy. Lỗi cuối: {str(err)[:80]}")
-            self._quarantine[account] = why
+        async with self._fail_lock:
+            now = time.time()
+            seen = {ip: t for ip, t in self._fail_ips.get(account, {}).items() if now - t < SPAM_WINDOW_SEC}
+            seen[self._egress_id(account)] = now
+            self._fail_ips[account] = seen
+            rest, why = PRESUBMIT_FAIL_COOLDOWN_SEC, ""
+            self._ensure_meta(account)
+            if len(seen) >= SPAM_IP_COUNT:
+                rest = SPAM_COOLDOWN_SEC
+                why = (f"cách ly: lỗi trước khi gửi trên {len(seen)} IP khác nhau trong {SPAM_WINDOW_SEC // 3600} giờ — lỗi ở nick "
+                       f"(cookie/nick bị hạn chế), không phải proxy. Lỗi cuối: {str(err)[:80]}")
+                self._quarantine[account] = why
+            self._conn.execute(
+                "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
+                (now + rest, account),
+            )
+            self._conn.commit()
         print(f"[pool] {account}: nghỉ {rest // 60} phút vì lỗi trước khi gửi ({why or str(err)[:80]})", flush=True)
         self._conn.execute("UPDATE accounts_meta SET cooldown_until=MAX(cooldown_until, ?) WHERE name=?",
                            (now + rest, account))
@@ -718,11 +872,19 @@ class BrowserPool:
             shutil.rmtree(d)
         self._conn.execute("DELETE FROM accounts_meta WHERE name=?", (name,))
         self._conn.commit()
+        # Cleanup in-memory caches cho nick này (Fix 15: tránh nick mới tạo cùng tên
+        # "thừa hưởng" _fail_ips/_quarantine của nick cũ đã bị xoá).
+        self._fail_ips.pop(name, None)
+        self._quarantine.pop(name, None)
+        self._proxy_stamp.pop(name, None)
 
     async def verify_account(self, name: str) -> bool:
         """Verifies login state in headless mode and updates cache."""
         if name not in self.accounts:
             raise FileNotFoundError(f"Profile does not exist: {name}")
+        # Chống rate-limit: mọi đường tới Dola phải qua gate (cả gửi video lẫn login/verify).
+        import video_worker_ui as _vw
+        await _vw._global_submit_gate(name)
         lock = self._locks.setdefault(name, asyncio.Lock())
         if lock.locked():
             raise RuntimeError("Account is generating video, please verify later")
@@ -783,11 +945,18 @@ class BrowserPool:
     def _settle(self, account: str, result, model, duration, balance_seen: bool):
         """Video xong: tính lượt, học giá từ câu "N動画クレジットを使用" và trừ credit đã biết của nick.
 
-        Không trừ khi Dola vừa báo số dư ngay trong job này (số đó đã là sau khi trừ).
-        ponytail: nếu Dola báo "残り" TRƯỚC khi trừ thì lệch một video; lần thiếu credit kế tiếp
-        (ParameterChangeError mang need/left) tự chỉnh lại.
+        Defensive: nếu result không phải dict (Exception, None, ...) → fallback cost=1 (Fix 21).
         """
-        used = result.get("credits_used") if isinstance(result, dict) else None
+        if not isinstance(result, dict):
+            try:
+                print(f"[pool] _settle nhận result={type(result).__name__} (không phải dict) -> fallback cost=1", flush=True)
+            except Exception:
+                pass
+            self._claim(account, 1)
+            self._conn.execute("UPDATE accounts_meta SET last_used_at=? WHERE name=?", (time.time(), account))
+            self._conn.commit()
+            return
+        used = result.get("credits_used")
         if used and duration and model:
             self._remember_cost(model, duration, used)
         cost = used or self._cost_for(model, duration) or self._default_cost(model, duration)
@@ -1053,6 +1222,27 @@ class BrowserPool:
             if on_submitted:
                 on_submitted(acc, submitted)       # server ghi submitted_at → restart không chạy lại job đã gửi
 
+        def _refund_if_safe(acc: str, failure_code: str) -> None:
+            """Hoàn credit khi Chrome engine fail mà CHẮC CHẮN Dola chưa trừ (delivery=False).
+
+            Dùng account làm grant_id (tracking string, không ảnh hưởng logic refund).
+            Refund CHỈ khi delivery["maybe"] == False (chưa gửi thật)."""
+            if delivery["maybe"]:
+                return   # đã gửi rồi → credit đã trừ → không refund
+            try:
+                from credit_refund import CreditLedger
+                ledger = CreditLedger.instance()
+                if ledger.should_refund(failure_code):
+                    rid = ledger.record_refund(
+                        grant_id=acc,          # dùng account làm grant_id (tracking string)
+                        job_id="",             # Chrome engine không có job_id (không cần)
+                        failure_code=failure_code,
+                    )
+                    if rid:
+                        print(f"[pool] {acc}: hoàn credit failure={failure_code}", flush=True)
+            except Exception as _re:  # noqa: BLE001 — refund fail không chặn rotate
+                print(f"[pool] {acc}: refund fail (bỏ qua): {_re}", flush=True)
+
         def _raise_if_delivered(acc, e):
             if delivery["maybe"] or isinstance(e, _FetchDelivered):   # _FetchDelivered: đã/có thể đã tới Dola dù cờ lỡ False
                 print(f"[pool] {acc}: lỗi SAU khi lệnh đã tới Dola → KHÔNG xoay/không gửi lại "
@@ -1060,12 +1250,46 @@ class BrowserPool:
                 self._claim_submitted(acc)
                 raise e
 
-        async def _run_worker(acc, on_balance, seen):
+        async def _run_worker(acc, on_balance, seen, early_release=None):
             from browser import min_life_for, proxy_lease, rotate_if_expiring
+            from submit_http import SubmitHttpRejected
+            from video_worker_ui import _fetch_model_key as _vui_fetch_model_key
+            # ENGINE HTTP: nếu bật + không có reference_image → gửi + poll qua HTTP (mượt, 5s submit, free browser).
+            # Dola từ chối chắc chắn (SubmitHttpRejected) → rơi về Chrome fetch (bên dưới). KHÔNG acquire browser slot
+            # vì _generate_via_http đã on_browser_free() ngay trong nhánh này (submit không cần Chrome).
+            http_engine = (config.SUBMIT_MODE == "http" and not reference_image_paths
+                           and _vui_fetch_model_key(model) is not None)
             # Chờ chỗ trên IP TRƯỚC mọi thứ; lúc chờ nhả slot Chrome (_hold_browser ngay dưới xin lại).
-            async with _egress_slot(acc, on_wait=_release_browser):
+            # early_release (từ _run_worker_rl) cho phép nhả chỗ IP khi đang chờ 710022002 — nick khác cùng IP
+            # (khoá "" cho IP máy) không kẹt "chờ chỗ trên IP" vô thời hạn trong khi nick này đang hết giờ chặn.
+            async with _egress_slot(acc, on_wait=_release_browser, early_release=early_release):
                 await _wait_clean_ip(acc)   # IP bẩn + đang có job khác trên key → chờ đổi IP, không gửi trên IP bẩn
                 await _pace(account_proxy_raw(acc) or "")
+                if http_engine:
+                    # Submit + poll + download qua HTTP — KHÔNG mở Chrome. _generate_via_http tự nhả browser slot
+                    # và gọi on_opening nếu cần (Dola hỏi lại → mở Chrome ở giai đoạn resume, KHÔNG gửi lại).
+                    try:
+                        from video_worker_ui import _generate_via_http, _NeedsBrowser, _fetch_model_key
+                        timeout = config.VIDEO_TIMEOUT_30S if (duration or 0) == 30 else config.VIDEO_TIMEOUT
+                        result = await _generate_via_http(
+                            acc, prompt, ratio, duration or 10, _fetch_model_key(model),
+                            timeout, on_conversation_id, on_poll, on_balance,
+                            on_submitted=_on_submitted,
+                            on_browser_free=_release_browser,
+                            on_browser_hold=_hold_browser,
+                        )
+                        # Thoát ngay — KHÔNG vào nhánh Chrome. _settle sẽ chạy ở finally bên ngoài.
+                        return result
+                    except SubmitHttpRejected as exc:
+                        # Dola từ chối chắc chắn (cookie/captcha/a_bogus lệch) → rơi về Chrome fetch, _hold_browser.
+                        if on_submitted:
+                            _on_submitted(acc, False)   # chưa tới Dola → pool được xoay/thử đường khác
+                        print(f"[pool] {acc}: engine HTTP bị từ chối ({exc}); rơi về Chrome fetch", flush=True)
+                        await _hold_browser()   # đã nhả slot ở _generate_via_http → xin lại
+                    except _NeedsBrowser as ask:
+                        # Dola hỏi lại → _generate_via_http ĐÃ tự mở Chrome trả lời (giữ conversation_id).
+                        # Kết quả nằm trong ask (trả về dict) — không cần làm gì thêm.
+                        pass
                 await _hold_browser()
                 # IP proxy xoay sắp hết tuổi mà không job nào khác đang dùng → đổi TRƯỚC khi mở nick (không chết giữa lúc gửi).
                 await asyncio.to_thread(rotate_if_expiring, acc, min_life_for(duration))   # IP phải đủ sống hết job
@@ -1093,21 +1317,17 @@ class BrowserPool:
             return result
 
         async def _run_worker_rl(acc, on_balance, seen):
-            """_run_worker + 710022002 → chờ config.RATE_LIMIT_RETRY_WAITS (15s, 30s) rồi thử lại CÙNG nick (ManixAITools).
-            CHỈ khi cờ "đã gửi" đã hạ về False (worker dò chắc Dola chưa nhận); còn nghi là ném ngay — gửi lại = trừ lượt
-            2 lần. Hết mốc mới để nhánh except RateLimitedError bên dưới xử lý như cũ (IP bẩn, nghỉ, xoay nick).
-            Lúc chờ: nhả slot Chrome (chỗ trên IP đã tự nhả khi _run_worker thoát), GIỮ khoá nick."""
-            waits = config.RATE_LIMIT_RETRY_WAITS
-            for i in range(len(waits) + 1):
-                try:
-                    return await _run_worker(acc, on_balance, seen)
-                except RateLimitedError as e:
-                    if i >= len(waits) or delivery["maybe"]:
-                        raise
-                    print(f"[pool] {acc}: 710022002 — Dola chưa nhận lệnh (chưa trừ lượt), chờ {waits[i]:.0f}s rồi thử lại "
-                          f"CÙNG nick (lần {i + 1}/{len(waits)}): {str(e)[:90]}", flush=True)
-                    _release_browser()
-                    await asyncio.sleep(waits[i])
+            """Wrapper để handler ngoài (line ~1665) bắt RateLimitedError — burn nick NGAY.
+
+            Trước đây: 710022002 → retry CÙNG nick 2 lần (waits=[15s, 30s]) TRƯỚC rồi mới burn.
+            Vấn đề: cùng IP → cùng WAF flag → vẫn 710022002 → lãng phí lượt mở Chrome/proxy.
+            Bây giờ: dính 710022002 → raise để handler burn nick NGAY + rotate sang nick khác.
+            Áp dụng cho CẢ HTTP engine lẫn Chrome engine (Phase 1+2 học từ Seedance).
+
+            Học từ Seedance _la_loi_kich_hoat: nick bị WAF-gắn cờ là RỦI RO → xoay ra ngay,
+            không phí lượt thử lại trên cùng fingerprint."""
+            early_release = {"released": False}
+            return await _run_worker(acc, on_balance, seen, early_release=early_release)
 
         try:
             # MỖI LẦN MỘT NICK: giữ cổng SUỐT job (submit + render) → 1 nick/lần. Acquire TRƯỚC
@@ -1190,12 +1410,30 @@ class BrowserPool:
                             continue
                     except Exception as _pf:  # noqa: BLE001
                         pass  # không kết luận được → để Chrome kiểm
+                    # 1b) Stale re-check: cookie CHƯA check bao giờ (NULL) HOẶC check quá cũ (> 24h)
+                    #     → verify_account_http (HTTP nhanh ~1s) trước khi tốn Chrome.
+                    #     Seedance học: cookie "có thể chết" lúc nào cũng không hay biết → verify mỗi 24h.
+                    try:
+                        m = self._meta(account)
+                        if m:
+                            checked_at = m.get("login_checked_at") or 0.0
+                            login_ok = m.get("login_ok")
+                            stale = (time.time() - checked_at) > 86400
+                            if login_ok is None or stale:
+                                ok_http = await self.verify_account_http(account)
+                                if ok_http is False:
+                                    self.set_login_status(account, False)
+                                    last_err = RuntimeError(f"Nick '{account}' cookie chết (stale re-check)")
+                                    continue
+                                self.set_login_status(account, True)
+                    except Exception as _st:  # noqa: BLE001 — stale re-check fail không chặn flow
+                        pass
                     # 2) Proxy warmup: kiểm TCP nhanh, proxy chết → bỏ qua nick
                     try:
                         await ensure_proxy_alive(account)
                     except RuntimeError as _pw:
                         last_err = _pw
-                        self._rest_after_presubmit_fail(account, _pw)
+                        await self._rest_after_presubmit_fail(account, _pw)
                         continue
                     except Exception:  # noqa: BLE001
                         pass  # timeout/lỗi lạ → để Chrome xử
@@ -1286,6 +1524,7 @@ class BrowserPool:
                         if getattr(e, "not_charged", False):
                             # Dola từ chối vì nick là KHÁCH: không có credit để trừ → chắc chắn chưa tốn lượt, xoay an toàn.
                             _on_submitted(account, False)
+                            _refund_if_safe(account, "account_cooldown")   # hoàn credit vì nick là khách → chưa trừ
                         else:
                             _raise_if_delivered(account, e)   # logout lúc poll/resume = sau khi gửi → không xoay
                         last_err = e
@@ -1365,21 +1604,44 @@ class BrowserPool:
                             _raise_if_delivered(account, e2)   # lần thử lại ĐÃ gửi rồi mới lỗi → nick khác gửi nữa = trừ lần 2
                             # Job ghim nick thì không có nick nào để xoay — nói đúng để người dùng khỏi hiểu nhầm.
                             print(f"[pool] {account} vẫn lỗi sau khi thử lại{'' if pinned else ', xoay nick'}: {e2}", flush=True)
-                            self._rest_after_presubmit_fail(account, e2)
+                            await self._rest_after_presubmit_fail(account, e2)
                             last_err = e2
                             continue
                     except RateLimitedError as e:
                         from browser import mark_ip_dirty, rotate_tmproxy_now, account_proxy_raw as _apr, rotate_effective_proxy
-                        mark_ip_dirty(account, str(e))   # IP này Dola vừa chặn → nick sau không nhận lại trong 24 giờ
+                        err_text = str(e)
+                        info = classify_dola_error(err_text)
+                        if info.kind == DolaErrorKind.NICK_VERIFICATION:
+                            # 710022002 → ByteDance WAF gắn cờ nick & IP → BURN NICK NGAY (Seedance _la_loi_kich_hoat)
+                            # KHÔNG retry cùng nick: cùng IP → lại 710022002 → lãng phí lượt mở Chrome/proxy.
+                            # Burn LUÔN, không check config.BURN_NICKS (lỗi này = nick đã bị Dola gắn cờ rủi ro).
+                            m = self._meta(account)
+                            already = bool(m and "[ĐÃ ĐỐT" in (m.get("note") or ""))
+                            if not already:
+                                tag = f"[ĐÃ ĐỐT {time.strftime('%d/%m %H:%M')}: {info.code} — {err_text[:40]}]"
+                                self._conn.execute(
+                                    "UPDATE accounts_meta SET scheduling=0, is_burned=1, burned_at=?, burn_reason=?, note=? WHERE name=?",
+                                    (time.time(), f"{info.code}: {err_text[:80]}", f"{tag} {m.get('note') or ''}".strip() if m else tag, account))
+                                self._conn.commit()
+                                print(f"[pool] {account}: ĐỐT NICK vĩnh viễn (710022002, proxy chuyển nick khác)", flush=True)
+                            else:
+                                print(f"[pool] {account}: đã đốt rồi, chuyển nick", flush=True)
+                            mark_ip_dirty(account, err_text)   # đánh dấu IP bẩn luôn
+                            _refund_if_safe(account, "submit_4xx_no_conv_id")   # 710022002 = chưa trừ → hoàn credit
+                            _raise_if_delivered(account, e)
+                            last_err = e
+                            continue   # rotate sang nick khác NGAY
+                        # Regular rate limit (không phải verify): pause + cooldown + rotate
+                        mark_ip_dirty(account, err_text)   # IP này Dola vừa chặn → nick sau không nhận lại trong 24 giờ
                         if _apr(account):
                             rotate_tmproxy_now(account)   # nick dùng proxy RIÊNG → xin IP mới cho key đó
                         else:
                             rotate_effective_proxy(account)   # proxy CHUNG → xoay IP chung (an toàn vì ONE_NICK = 1 nick/lần)
                         if config.NO_COOLDOWN:
-                            print(f"[pool] {account}: 710022002 — NO_COOLDOWN bật, không nghỉ/không dừng gửi, xoay ngay: {e}", flush=True)
+                            print(f"[pool] {account}: rate limit — NO_COOLDOWN bật, không nghỉ, xoay ngay: {e}", flush=True)
                         else:
                             pause = note_rate_limited(key=account_proxy_raw(account) or "")
-                            print(f"[pool] {account}: Dola báo gửi quá dày (710022002) — dừng gửi qua proxy này {pause:.0f}s, "
+                            print(f"[pool] {account}: Dola báo rate limit — dừng gửi qua proxy này {pause:.0f}s, "
                                   f"nick nghỉ {RATE_LIMIT_NICK_SEC // 60} phút rồi xoay: {e}", flush=True)
                             self._conn.execute(
                                 "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
@@ -1416,8 +1678,10 @@ class BrowserPool:
                         # Lỗi chưa phân loại (proxy riêng không lấy được IP, Chrome không mở, treo trước khi gửi…):
                         # chỉ xoay khi lệnh CHƯA tới Dola. Sau khi gửi các lỗi này vẫn nổ được (poll/tải/resume) → nổi lỗi.
                         _raise_if_delivered(account, e)
+                        # Hoàn credit nếu CHƯA gửi (delivery["maybe"]=False) — refund an toàn, không chặn rotate
+                        _refund_if_safe(account, "submit_4xx_no_conv_id")
                         print(f"[pool] {account} lỗi trước khi gửi lệnh{'' if pinned and not soft_pin else ', xoay nick'}: {e!r}", flush=True)
-                        self._rest_after_presubmit_fail(account, e)
+                        await self._rest_after_presubmit_fail(account, e)
                         last_err = e
                         continue
             if pinned and last_err is not None:

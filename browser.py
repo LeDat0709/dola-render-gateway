@@ -454,12 +454,24 @@ def _ip_keys(st: dict) -> list[str]:
 
 
 def mark_ip_dirty(account: str, reason: str = "") -> None:
-    """Nick vừa dính 710022002 trên proxy xoay → ghi IP hiện tại là bẩn (trước khi đổi IP)."""
+    """Nick vừa dính 710022002 trên proxy xoay → ghi IP hiện tại là bẩn (trước khi đổi IP).
+
+    Double-update cả 2 nơi:
+    - _dirty_ips[ip]: IP-level dirty (block nick khác dùng chung IP trong 24h)
+    - proxy_status.mark_dirty(proxy_key): proxy-key-level dirty (track WAF trên key 24h)
+    """
     key = _effective_rotating(account)
     st = rotating_status(key) if key else {}
     for k in _ip_keys(st):
         _dirty_ips[k] = time.time() + DIRTY_IP_SEC
         print(f"[proxy] {account}: IP {k} bẩn 24 giờ ({reason[:60]}) — không dùng lại cho nick khác", flush=True)
+    # Mirror sang proxy_status (per-key WAF tracking — gate trước khi gửi)
+    if key:
+        try:
+            import proxy_status as _ps
+            _ps.mark_dirty(key, reason=reason, ttl=86400)   # 24h
+        except Exception as _e:   # noqa: BLE001 — wrap không được fail logic chính
+            print(f"[proxy] {account}: proxy_status.mark_dirty fail (bỏ qua): {_e}", flush=True)
 
 
 def ip_dirty(st: dict) -> bool:
@@ -567,11 +579,17 @@ def _sub_session(raw: str, account: str) -> str:
     return raw.replace("{SESSION}", _current_session(account)) if raw and "{SESSION}" in raw else raw
 
 
-def account_proxy(account: str) -> dict | None:
+def account_proxy(account: str, prefer_cached: bool = False) -> dict | None:
     """Per-account proxy from accounts/<account>/proxy.txt, else the global config.PROXY.
 
     Lets each nick egress from its own IP (Dola flags many nicks on one IP; one dead IP
     then kills only that nick, not the whole pool).
+
+    prefer_cached=True: KHI proxy xoay của nick ĐANG CÓ JOB KHÁC chạy trên nó (proxy_busy>0), trả IP đang
+    cache mà KHÔNG gọi nhà bán — gọi API lúc đó có thể cấp IP mới và giết cổng cũ, cắt ngang video
+    ĐÃ TRỪ LƯỢT. Cache hết hạn (nhà bán đã quá lâu) → trả None; caller xử lý tiếp (Chrome sẽ báo lỗi
+    proxy thay vì âm thầm lấy IP mới). prefer_cached=False (mặc định, admin/test): gọi mạng bình
+    thường.
     """
     # Chuẩn hoá MỘT lần (qua account_proxy_raw) rồi thay {SESSION}: khoá tra lỗi == khoá resolve_dict đã ghi
     # (proxyvn://, topproxy://, key trần, {SESSION}), và mask không lộ key trần.
@@ -581,6 +599,13 @@ def account_proxy(account: str) -> dict | None:
         if got:
             return got
         if is_rotating_proxy(raw):
+            # Đang có job khác chạy trên cùng proxy xoay này → trả cache, KHÔNG gọi nhà bán.
+            if prefer_cached and proxy_busy(raw) > 0:
+                cached = rotating_cached_proxy(raw)
+                if cached is not None:
+                    return cached
+                # Cache hết hạn lúc đang bận: caller xử lý; KHÔNG gọi API vì sẽ đổi IP đang chạy.
+                return None
             # Proxy XOAY riêng (tmproxy://KEY, key trần, hoặc link get.php) không lấy được IP: KHÔNG lặng lẽ
             # rơi về proxy chung/IP máy — nick sẽ lộ IP thật và bị Dola gom chung. Báo lỗi rõ để sửa.
             reason = rotating_last_error(raw)
@@ -597,6 +622,12 @@ def account_proxy(account: str) -> dict | None:
     shared = normalize_proxy_input(config.PROXY)
     if not shared:
         return None   # nick không khai proxy riêng, cũng không có proxy chung → đi thẳng là cấu hình của người dùng
+    if prefer_cached and is_rotating_proxy(shared) and proxy_busy(shared) > 0:
+        # Proxy CHUNG đang bận (nhiều nick cùng dùng): cache, không gọi nhà bán.
+        cached = rotating_cached_proxy(shared)
+        if cached is not None:
+            return cached
+        return None
     got = parse_proxy(shared)
     if got:
         return got
@@ -924,7 +955,9 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     if launch_headless:
         kwargs["user_agent"] = await _headless_ua(p)
     # tmproxy://KEY → account_proxy gọi API TMProxy (đồng bộ, có cache) → đưa ra thread cho vòng lặp không khựng.
-    proxy_cfg = await asyncio.to_thread(account_proxy, account)
+    # prefer_cached=True: nếu proxy xoay đang có job khác dựng, trả cache để KHÔNG gọi nhà bán lấy IP mới (đổi IP giữa
+    # chừng = cắt cổng video đang dựng, đã trừ lượt).
+    proxy_cfg = await asyncio.to_thread(account_proxy, account, True)
     if proxy_cfg:
         kwargs["proxy"] = proxy_cfg
     context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
