@@ -1,26 +1,20 @@
-"""a_bogus web signer — port nguyên từ 5201213/doubao-free-api pure_signer.py (chỉ thay dòng import config).
+"""a_bogus web signer — port từ 5201213/doubao-free-api pure_signer.py (bỏ phần dựng URL doubao.com không dùng).
 Tính a_bogus cho cổng web ByteDance/Dola (www.dola.com/chat/completion) bằng Python thuần, không cần Chrome.
 CẢNH BÁO: thuật toán ByteDance xoay ~mỗi quý (salt/alphabet/layout). Nguồn push 2026-06-09 → phải kiểm bằng
-gửi thật (test_web_submit.py); Dola bắt CAPTCHA/param-error ⇒ đã lệch bản.
+gửi thật (submit_http.py --send); Dola bắt CAPTCHA/param-error ⇒ đã lệch bản. Gửi thật OK ngày 2026-09-19.
 """
 import hashlib
 import json
-import logging
-import os
 import random
 import secrets
 import time
-import uuid
 from typing import Any, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
-CONFIG: dict = {}
+DEFAULT_AID = 495671   # aid cổng web Dola (khớp signer.DEFAULT_AID; 497858 cũ của doubao là SAI)
 
-logger = logging.getLogger("doubao-api.pure-signer")
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MSTOKEN_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
 DEFAULT_ORIGIN = "https://www.doubao.com"
 B64_ALPHABET = "Dkdpgh4ZKsQB80/Mfvw36XI1R25-WUAlEi7NLboqYTOPuzmFjJnryx9HVGcaStCe="
@@ -33,27 +27,6 @@ def fake_mstoken(length: int = 172) -> str:
     if length <= 1:
         return ""
     return "".join(secrets.choice(MSTOKEN_ALPHABET) for _ in range(length - 1)) + "="
-
-
-def build_pure_url_params(account: dict[str, Any]) -> dict[str, str]:
-    return {
-        "aid": "497858",
-        "device_id": account.get("device_id", CONFIG.get("device_id", "")),
-        "device_platform": "web",
-        "language": "zh",
-        "pc_version": CONFIG.get("pc_version", "3.17.3"),
-        "pkg_type": "release_version",
-        "real_aid": "497858",
-        "region": "CN",
-        "samantha_web": "1",
-        "sys_region": "CN",
-        "tea_uuid": account.get("tea_uuid", CONFIG.get("tea_uuid", "")),
-        "use-olympus-account": "1",
-        "version_code": "20800",
-        "web_id": account.get("web_id", CONFIG.get("web_id", "")),
-        "web_tab_id": account.get("web_tab_id") or CONFIG.get("web_tab_id") or str(uuid.uuid4()),
-        "msToken": account.get("msToken") or CONFIG.get("msToken") or fake_mstoken(),
-    }
 
 
 # ---- Python-native a_bogus signer. ----
@@ -221,10 +194,6 @@ def custom_base64(data: list[int], alphabet: str = B64_ALPHABET) -> str:
     return "".join(out)
 
 
-def md5_hex_of_hex_bytes(hex_str: str) -> str:
-    return md5_hex(bytes(hex_to_bytes(hex_str)))
-
-
 def ob4(pair: Any, mode: int = 0) -> list[int]:
     p = bytes_of(pair)
     lo = random.randrange(65535) & 255
@@ -279,7 +248,7 @@ def long_a_bogus(query_string: str, body: str, opts: Optional[dict[str, Any]] = 
     opts = opts or {}
     ua = opts.get("userAgent") or USER_AGENT
     page_id = int(opts.get("pageId", 26930))
-    aid = int(opts.get("aid", 497858))
+    aid = int(opts.get("aid", DEFAULT_AID))
     version = opts.get("sdkVersion") or "1.0.1.20-alpha.14"
     now = int(opts.get("now", int(time.time() * 1000)))
     envcode = int(opts.get("envcode", 129))
@@ -377,26 +346,6 @@ def sign_payload_python(payload: dict[str, Any]) -> dict[str, Any]:
         "headers": dict(payload.get("headers") or {}),
         "payload": {**payload, "body": body_json},
     }
-
-
-def sign_samantha_url(base_url: str, account: dict[str, Any], body_json: str) -> tuple[str, str]:
-    params = build_pure_url_params(account)
-    unsigned_url = f"{base_url}?{urlencode(params)}"
-    payload = {
-        "url": unsigned_url,
-        "method": "POST",
-        "body": body_json,
-        "headers": {"Content-Type": "application/json"},
-        "signOptions": {"userAgent": USER_AGENT},
-    }
-    signed = sign_payload_python(payload)
-
-    signed_url = signed.get("signed_url")
-    a_bogus = signed.get("a_bogus", "")
-    if not signed_url or not a_bogus:
-        raise RuntimeError(f"pure signer returned invalid payload: {signed}")
-    logger.info("Pure signer generated a_bogus length=%s mode=%s", len(a_bogus), signed.get("mode"))
-    return signed_url, a_bogus
 
 
 def _self_check() -> None:

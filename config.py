@@ -98,10 +98,13 @@ AUTO_RETRY = os.getenv("DOLA_AUTO_RETRY", "1").strip().lower() not in ("0", "fal
 BURN_NICKS = os.getenv("DOLA_BURN_NICKS", "0").strip().lower() in ("1", "true", "yes", "on")
 
 # Giãn nhịp giữa các lần gửi lệnh lên Dola (toàn server, mọi nick): cố định + ngẫu nhiên 0..JITTER giây.
-# Học từ DomixHub ("Nghỉ giữa các job" + jitter 2–5s). Bắn 10 nick trong cùng 1 giây là dấu hiệu bot rõ nhất
-# và trùng với các đợt "Dola lỗi tạm thời" (43 lần/ngày 11/9).
-SUBMIT_GAP_SEC = float(os.getenv("DOLA_SUBMIT_GAP", "3"))
-SUBMIT_JITTER_SEC = float(os.getenv("DOLA_SUBMIT_JITTER", "3"))
+# Khuyến nghị chuẩn Seedance: 15s + jitter để tránh ByteDance WAF rate limit 710022002.
+SUBMIT_GAP_SEC = float(os.getenv("DOLA_SUBMIT_GAP", "15"))
+SUBMIT_JITTER_SEC = float(os.getenv("DOLA_SUBMIT_JITTER", "5"))
+
+# Chu kỳ New Chat tối đa 2 prompt/hội thoại (học từ Seedance Studio Pro v1.1 content.js).
+# Tránh Dola chặn quota 2 video và tránh clarifying questions.
+STRICT_2_PROMPT_CYCLE = os.getenv("DOLA_STRICT_2_PROMPT_CYCLE", "1").strip().lower() in ("1", "true", "yes", "on")
 
 # Job KHÔNG ghim nick: thử tối đa N nick rồi dừng (DomixHub: 3). Trước đây duyệt hết danh sách →
 # 1 lỗi hệ thống = mở Chrome trên cả chục nick, đốt sạch lượt.
@@ -169,10 +172,9 @@ RATE_LIMIT_RETRY_WAITS = _float_list(os.getenv("DOLA_RATE_LIMIT_RETRY_WAITS", "1
 # báo lỗi "chưa gửi". Trước đây gửi luôn trên IP bẩn → cả loạt nick chung key dính 710022002 liên tiếp (log 17/9 10:56).
 DIRTY_IP_WAIT_SEC = max(0, int(os.getenv("DOLA_DIRTY_IP_WAIT", "600")))
 # Giãn nhịp CHUNG cho MỌI proxy, ngay trước lúc gửi thật: hai lần gửi bất kỳ (khác nick, khác proxy) cách nhau ít nhất
-# GAP + ngẫu nhiên(0..JITTER) giây. SUBMIT_GAP_SEC chỉ giãn trong CÙNG proxy và lúc BẮT ĐẦU job → 8 nick trên 8 proxy
-# vẫn gửi trong cùng một giây (16/09). 0 = tắt.
-SUBMIT_GAP_GLOBAL_SEC = max(0.0, float(os.getenv("DOLA_SUBMIT_GAP_GLOBAL", "4") or 0))
-SUBMIT_JITTER_GLOBAL_SEC = max(0.0, float(os.getenv("DOLA_SUBMIT_JITTER_GLOBAL", "3") or 0))
+# GAP + ngẫu nhiên(0..JITTER) giây. Đặt 12s + 6s jitter để triệt tiêu việc gửi chùm request cùng lúc gây rate limit.
+SUBMIT_GAP_GLOBAL_SEC = max(0.0, float(os.getenv("DOLA_SUBMIT_GAP_GLOBAL", "12") or 0))
+SUBMIT_JITTER_GLOBAL_SEC = max(0.0, float(os.getenv("DOLA_SUBMIT_JITTER_GLOBAL", "6") or 0))
 
 # Tự xóa watermark "Dola AI" ngay khi tải video xong (BẬT mặc định; DOLA_AUTO_REMOVE_WM=0 để tắt)
 AUTO_REMOVE_WM = os.getenv("DOLA_AUTO_REMOVE_WM", "1").strip().lower() not in ("0", "false", "no", "off", "")
@@ -251,6 +253,11 @@ MODEL_KEY_SEEDANCE25 = os.getenv("DOLA_MODEL_KEY_SEEDANCE25", "seedance_v2.5").s
 # patchright's bundled Chromium). Set DOLA_BROWSER_CHANNEL="" to fall back to bundled
 # Chromium on hosts without Chrome installed.
 BROWSER_CHANNEL = os.getenv("DOLA_BROWSER_CHANNEL", "chrome").strip()
+
+# CDP launch: mở Chrome THẬT bằng subprocess + connect_over_cdp (kiểu đối thủ Seedance) thay cho patchright
+# launch_persistent_context. ĐÁNH ĐỔI: mất phần lớn stealth của patchright và lộ --remote-debugging-port (dấu hiệu
+# automation). MẶC ĐỊNH TẮT. Lợi: nạp extension qua CDP Extensions.loadUnpacked (Chrome 137+ bỏ --load-extension).
+CDP_LAUNCH = os.getenv("DOLA_CDP_LAUNCH", "0").strip().lower() in ("1", "true", "yes", "on")
 
 # Headless Chrome tags its UA with "HeadlessChrome" (a trivial detection tell). When empty,
 # the launcher probes the real UA once and strips that token; set to pin an exact UA instead.

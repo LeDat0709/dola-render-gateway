@@ -491,6 +491,12 @@ def rotate_if_expiring(account: str, min_life: int | None = None) -> bool:
     st = rotating_status(key) if key else {}
     if not st:
         return False
+    if "expires_in" not in st and proxy_busy(key) == 0:
+        # CHƯA có IP trong cache (vừa bật app) mà proxy đang RẢNH → lấy IP NGAY, lúc gọi nhà bán còn an toàn. Job sắp giữ
+        # lease của CHÍNH nó rồi mới mở Chrome: trong lease account_proxy(prefer_cached) chỉ đọc cache, trống là báo lỗi
+        # (không đi IP máy). Cache hết hạn thì nhánh dưới tự xoay (expires_in nhỏ). Lỗi nhà bán nổi ở đây với lý do thật.
+        account_proxy(account)
+        st = rotating_status(key)
     dirty = ip_dirty(st)
     if not dirty and st.get("expires_in", need) >= need:
         return False
@@ -519,7 +525,10 @@ def _rotate_raw(raw: str, label: str, ignore_leases: bool = False) -> bool:
     if busy and not ignore_leases:
         print(f"[proxy] {label}: KHÔNG đổi IP — {busy} job khác đang chạy trên proxy này (đổi sẽ cắt IP của chúng)", flush=True)
         return False
+    def _exit_ip(st: dict) -> str:
+        return st.get("exit_ip") or st.get("endpoint") or ""
     try:
+        old_ip = _exit_ip(rotating_status(raw))   # IP TRƯỚC khi xoay (rotate mutate cache)
         if raw.lower().startswith("tmproxy://"):
             import tmproxy
             ip = tmproxy.rotate(tmproxy.key_of(raw))["https"]
@@ -528,6 +537,15 @@ def _rotate_raw(raw: str, label: str, ignore_leases: bool = False) -> bool:
             if not proxyxoay.is_key_link(raw):
                 return False
             ip = proxyxoay.rotate(raw)["ip"]
+        new_ip = _exit_ip(rotating_status(raw))
+        if new_ip and new_ip != old_ip:
+            # IP THẬT SỰ đổi → key có IP mới sạch: xoá cờ WAF 24h để nick khác trên key chạy lại ngay (đối thủ chỉ khoá
+            # IP, không khoá cả key mãi). Nhà bán còn cooldown trả LẠI IP cũ (new_ip == old_ip) → GIỮ cờ (IP vẫn bị chặn).
+            try:
+                import proxy_status as _ps
+                _ps.mark_clean(raw)
+            except Exception:  # noqa: BLE001 — wrap không được làm hỏng logic xoay
+                pass
         print(f"[proxy] {label}: IP hiện hành {ip}", flush=True)
         return True
     except Exception as exc:
@@ -579,6 +597,12 @@ def _sub_session(raw: str, account: str) -> str:
     return raw.replace("{SESSION}", _current_session(account)) if raw and "{SESSION}" in raw else raw
 
 
+def _busy_proxy_error(account: str, raw: str) -> RuntimeError:
+    return RuntimeError(
+        f"Proxy xoay của nick {account} ({mask_proxy(raw)}) đang có job khác dựng và IP đã hết hạn cache — không lấy "
+        "IP mới (sẽ cắt video đang dựng) và không đi IP máy. Thử lại khi job kia xong.")
+
+
 def account_proxy(account: str, prefer_cached: bool = False) -> dict | None:
     """Per-account proxy from accounts/<account>/proxy.txt, else the global config.PROXY.
 
@@ -587,25 +611,28 @@ def account_proxy(account: str, prefer_cached: bool = False) -> dict | None:
 
     prefer_cached=True: KHI proxy xoay của nick ĐANG CÓ JOB KHÁC chạy trên nó (proxy_busy>0), trả IP đang
     cache mà KHÔNG gọi nhà bán — gọi API lúc đó có thể cấp IP mới và giết cổng cũ, cắt ngang video
-    ĐÃ TRỪ LƯỢT. Cache hết hạn (nhà bán đã quá lâu) → trả None; caller xử lý tiếp (Chrome sẽ báo lỗi
-    proxy thay vì âm thầm lấy IP mới). prefer_cached=False (mặc định, admin/test): gọi mạng bình
-    thường.
+    ĐÃ TRỪ LƯỢT. Cache hết hạn (nhà bán đã quá lâu) → NÉM RuntimeError, không trả None (None = "không có
+    proxy" → Chrome mở bằng IP máy). prefer_cached=False (mặc định, admin/test): gọi mạng bình thường.
+
+    None CHỈ khi nick không khai proxy riêng và cũng không có proxy chung.
     """
     # Chuẩn hoá MỘT lần (qua account_proxy_raw) rồi thay {SESSION}: khoá tra lỗi == khoá resolve_dict đã ghi
     # (proxyvn://, topproxy://, key trần, {SESSION}), và mask không lộ key trần.
     raw = _sub_session(account_proxy_raw(account), account)
     if raw:
+        # Kiểm "đang bận" TRƯỚC parse_proxy: với proxy xoay, parse_proxy → nhà bán (get-current, rỗng thì get-new) khi
+        # cache hết hạn — chính việc prefer_cached phải chặn. Trước đây kiểm SAU nên bảo vệ vô hiệu đúng lúc cần.
+        if prefer_cached and is_rotating_proxy(raw) and proxy_busy(raw) > 0:
+            cached = rotating_cached_proxy(raw)
+            if cached is not None:
+                return cached
+            # Cache hết hạn lúc đang bận: KHÔNG gọi API (đổi IP đang chạy) và KHÔNG trả None — None nghĩa là
+            # "nick không có proxy", launch_account_context sẽ mở Chrome bằng IP máy. Ném lỗi → pool xoay nick khác.
+            raise _busy_proxy_error(account, raw)
         got = parse_proxy(raw)
         if got:
             return got
         if is_rotating_proxy(raw):
-            # Đang có job khác chạy trên cùng proxy xoay này → trả cache, KHÔNG gọi nhà bán.
-            if prefer_cached and proxy_busy(raw) > 0:
-                cached = rotating_cached_proxy(raw)
-                if cached is not None:
-                    return cached
-                # Cache hết hạn lúc đang bận: caller xử lý; KHÔNG gọi API vì sẽ đổi IP đang chạy.
-                return None
             # Proxy XOAY riêng (tmproxy://KEY, key trần, hoặc link get.php) không lấy được IP: KHÔNG lặng lẽ
             # rơi về proxy chung/IP máy — nick sẽ lộ IP thật và bị Dola gom chung. Báo lỗi rõ để sửa.
             reason = rotating_last_error(raw)
@@ -627,7 +654,7 @@ def account_proxy(account: str, prefer_cached: bool = False) -> dict | None:
         cached = rotating_cached_proxy(shared)
         if cached is not None:
             return cached
-        return None
+        raise _busy_proxy_error(account, shared)   # như nhánh proxy riêng: không None (= đi IP máy)
     got = parse_proxy(shared)
     if got:
         return got
@@ -913,6 +940,10 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
         raise FileNotFoundError(
             f"Account profile does not exist: {profile_dir} (run python add_account.py {account} first)"
         )
+    # getattr: config.so biên dịch cũ (chưa build lại) không có CDP_LAUNCH → mặc định TẮT, KHÔNG ném AttributeError
+    # làm hỏng đường Chrome mặc định. Cờ chỉ có hiệu lực sau khi build lại/xoá config.so.
+    if getattr(config, "CDP_LAUNCH", False):   # kiểu đối thủ: Chrome thật + connect_over_cdp (mất stealth patchright)
+        return await _launch_account_context_cdp(p, account, headless=headless, use_extension=use_extension)
     # Hàm này gọi `ps` và ngủ 0.6s đồng bộ; chạy thẳng trong coroutine là đứng cả vòng lặp sự kiện
     # (mọi nick khác, /health) tới ~4.6s cho mỗi profile có Chrome mồ côi sau crash.
     await asyncio.to_thread(assert_profile_free, profile_dir)
@@ -973,6 +1004,159 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     return context
 
 
+# ── CDP launch (kiểu đối thủ Seedance) — sau cờ config.CDP_LAUNCH, mặc định TẮT ──────────────────
+def _find_free_port() -> int:
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _resolve_chrome_exe(p) -> str:
+    """Đường Chrome THẬT cho subprocess (channel là tên, Popen cần đường dẫn). Không thấy Chrome hệ thống → Chromium
+    của patchright (p.chromium.executable_path)."""
+    if config.BROWSER_CHANNEL in ("chrome", "", None):
+        for c in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                  r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                  r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                  os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")):
+            if Path(c).exists():
+                return c
+    return p.chromium.executable_path
+
+
+def _cdp_chrome_cmd(exe: str, profile_dir: Path, port: int, args: list[str],
+                    proxy_server: str | None, headless: bool) -> list[str]:
+    """Dựng dòng lệnh Chrome cho CDP launch (thuần, để test). proxy_server = 'host:port' (không kèm user:pass —
+    Chrome không nhận; user:pass đi qua CDP Fetch auth). headless=True → '--headless=new'."""
+    cmd = [
+        exe,
+        f"--user-data-dir={profile_dir}",
+        "--profile-directory=Default",
+        f"--remote-debugging-port={port}",
+        "--remote-allow-origins=*",
+        "--enable-unsafe-extension-debugging",   # cần cho Extensions.loadUnpacked
+        *args,
+    ]
+    if headless:
+        cmd.append("--headless=new")
+    if proxy_server:
+        cmd.append(f"--proxy-server={proxy_server}")
+    cmd.append("about:blank")
+    return cmd
+
+
+async def _launch_account_context_cdp(p, account: str, headless: bool = None, use_extension: bool = False):
+    """launch_account_context phiên bản CDP: Popen Chrome thật + connect_over_cdp. Trả BrowserContext như bản
+    patchright; context.close() cũng giết tiến trình Chrome. Extension nạp qua CDP (Chrome 137+ bỏ --load-extension)."""
+    profile_dir = config.ACCOUNTS_DIR / account
+    await asyncio.to_thread(assert_profile_free, profile_dir)
+    launch_headless = config.HEADLESS if headless is None else headless
+
+    args = list(LAUNCH_ARGS)
+    if config.BLOCK_WEBRTC:
+        args.append("--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
+    ext_dirs: list[str] = []
+    hijack_30s = use_extension and config.SKILLPACK_HIJACK
+    if use_extension and not hijack_30s:
+        if not config.EXTENSION_ENABLED:
+            raise RuntimeError("Dola extension is disabled (DOLA_EXTENSION_ENABLED=0)")
+        d = Path(config.EXTENSION_DIR).resolve()
+        if not d.exists():
+            raise FileNotFoundError(f"Dola extension directory does not exist: {d}")
+        ext_dirs.append(str(d))
+    if config.EXTRA_EXTENSION_DIR:
+        extra = Path(config.EXTRA_EXTENSION_DIR).resolve()
+        if extra.exists():
+            ext_dirs.append(str(extra))
+    if ext_dirs:
+        launch_headless = False   # MV3 không chạy headless
+
+    # Proxy CÙNG quy tắc bản patchright (fail-closed: account_proxy ném lỗi khi proxy xoay bận/hết hạn → không mở IP máy).
+    proxy_cfg = await asyncio.to_thread(account_proxy, account, True)
+    proxy_server = None
+    if proxy_cfg:
+        proxy_server = proxy_cfg["server"].split("://", 1)[-1]   # host:port; user:pass đi qua CDP Fetch auth
+
+    exe = _resolve_chrome_exe(p)
+    port = _find_free_port()
+    cmd = _cdp_chrome_cmd(exe, profile_dir, port, args, proxy_server, launch_headless)
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    browser = None
+    for attempt in range(60):   # 30s: Chrome của profile này có thể cần >10s mở cổng debug (đo trên Mac)
+        await asyncio.sleep(0.5)
+        try:
+            browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+            break
+        except Exception:
+            if attempt == 59:
+                proc.terminate()
+                raise ValueError(f"CDP: không kết nối được Chrome cổng {port} sau 30s")
+    context = browser.contexts[0] if browser.contexts else await browser.new_context()
+
+    # Chrome mở ngoài Playwright: context.close()/browser.close() KHÔNG giết Chrome → gắn kill proc vào close.
+    context.on("close", lambda: proc.terminate())
+
+    if proxy_cfg and proxy_cfg.get("username"):
+        await _cdp_proxy_auth(context, proxy_cfg["username"], proxy_cfg.get("password", ""))
+    await _cdp_region(context, config.BROWSER_TIMEZONE, config.BROWSER_LOCALE)
+    for d in ext_dirs:
+        try:
+            b_cdp = await browser.new_browser_cdp_session()
+            await b_cdp.send("Extensions.loadUnpacked", {"path": str(Path(d).resolve())})
+        except Exception as e:  # noqa: BLE001 — extension lỗi không được chặn cả job
+            print(f"[browser] CDP load extension '{d}' lỗi: {str(e)[:120]}", flush=True)
+
+    if config.FINGERPRINT_PER_NICK:
+        await context.add_init_script(_fingerprint_js(account))
+    await force_ui_language(context)
+    if hijack_30s:
+        await context.add_init_script(_THIRTYSEC_HIJACK_JS)
+    return context
+
+
+async def _cdp_proxy_auth(context, username: str, password: str) -> None:
+    """Proxy có user/pass: Chrome --proxy-server không nhận credential → trả lời qua CDP Fetch.continueWithAuth."""
+    page = context.pages[0] if context.pages else await context.new_page()
+    cdp = await context.new_cdp_session(page)
+    await cdp.send("Fetch.enable", {"handleAuthRequests": True, "patterns": [{"urlPattern": "*"}]})
+
+    async def on_auth(evt):
+        try:
+            await cdp.send("Fetch.continueWithAuth", {
+                "requestId": evt["requestId"],
+                "authChallengeResponse": {"response": "ProvideCredentials", "username": username, "password": password},
+            })
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def on_paused(evt):
+        try:
+            await cdp.send("Fetch.continueRequest", {"requestId": evt["requestId"]})
+        except Exception:  # noqa: BLE001
+            pass
+
+    cdp.on("Fetch.authRequired", lambda e: asyncio.create_task(on_auth(e)))
+    cdp.on("Fetch.requestPaused", lambda e: asyncio.create_task(on_paused(e)))
+
+
+async def _cdp_region(context, timezone_id: str | None, locale: str | None) -> None:
+    """Khớp vùng với IP proxy qua CDP (launch_persistent_context làm bằng option context; CDP làm bằng Emulation)."""
+    page = context.pages[0] if context.pages else await context.new_page()
+    cdp = await context.new_cdp_session(page)
+    if timezone_id:
+        try:
+            await cdp.send("Emulation.setTimezoneOverride", {"timezoneId": timezone_id})
+        except Exception:  # noqa: BLE001
+            pass
+    if locale:
+        try:
+            await cdp.send("Emulation.setLocaleOverride", {"locale": locale})
+        except Exception:  # noqa: BLE001
+            pass
+
+
 PASSPORT_INFO_PATH = "/passport/account/info/v2/?aid=495671"
 
 
@@ -1028,14 +1212,68 @@ def cookie_value(cookies: list, name: str) -> str:
     return next((c["value"] for c in cookies if c["name"] == name and c["value"]), "")
 
 
+def _saved_mstoken(out_file: Path) -> list:
+    """msToken đang có trong cookies.json (list [{name,value}] hoặc dict {name: value}) → [cookie] hoặc []."""
+    import json
+    try:
+        old = json.loads(out_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    items = old if isinstance(old, list) else old.get("cookies", old) if isinstance(old, dict) else []
+    if isinstance(items, dict):
+        val = items.get("msToken")
+        return [{"name": "msToken", "value": val, "domain": ".dola.com", "path": "/"}] if val else []
+    return [c for c in items if isinstance(c, dict) and c.get("name") == "msToken" and c.get("value")][:1]
+
+
 def persist_dola_cookies(account: str, cookies: list) -> Path:
-    """Persists extracted Dola cookies to accounts/<account>/cookies.json for backup and export."""
+    """Persists extracted Dola cookies to accounts/<account>/cookies.json for backup and export.
+
+    Ảnh chụp chụp TRƯỚC khi JS trang Dola kịp ghi msToken (import cookie không mở trang, đăng nhập vừa xong) thì
+    không có msToken → giữ lại msToken đang lưu, không để lần lưu sau xoá mất (nick rơi về gửi bằng msToken giả)."""
+    import json
     profile_dir = config.ACCOUNTS_DIR / account
     profile_dir.mkdir(parents=True, exist_ok=True)
     out_file = profile_dir / "cookies.json"
-    import json
+    if not cookie_value(cookies, "msToken"):
+        cookies = [c for c in cookies if c.get("name") != "msToken"] + _saved_mstoken(out_file)
     config.atomic_write_text(out_file, json.dumps(cookies, ensure_ascii=False, indent=2))
     return out_file
+
+
+MSTOKEN_WAIT_SEC = 10.0   # chờ JS trang Dola tự ghi msToken sau khi mở /chat
+
+
+async def wait_for_mstoken(context, seconds: float = MSTOKEN_WAIT_SEC, poll: float = 0.5) -> bool:
+    """Chờ tới khi trang Dola đã ghi cookie msToken (chỉ ĐỌC cookie, không tạo/sửa). True nếu thấy trong hạn."""
+    deadline = time.monotonic() + seconds
+    while True:
+        if cookie_value(await context.cookies("https://www.dola.com"), "msToken"):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(poll)
+
+
+async def refresh_mstoken(account: str, wait_sec: float = MSTOKEN_WAIT_SEC) -> bool:
+    """Mở dola.com/chat bằng profile + proxy của nick, để JS trang tự ghi msToken, rồi lưu lại cookies.json.
+
+    Chỉ đọc cookie do chính trang Dola sinh cho phiên này — không tự tạo hay sửa token. Nơi gọi phải bảo đảm nick
+    KHÔNG đang render (launch_account_context sẽ giết Chrome đang giữ profile). True = sau khi lưu nick có msToken."""
+    from patchright.async_api import async_playwright
+    with proxy_lease(account):   # giữ IP proxy xoay của nick suốt lúc mở trang, như các đường khác
+        async with async_playwright() as p:
+            context = await launch_account_context(p, account)
+            try:
+                page = context.pages[0] if context.pages else await context.new_page()
+                await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
+                await wait_for_mstoken(context, wait_sec)
+                await pin_session_cookies(context)
+                live = await context.cookies("https://www.dola.com")
+                persist_dola_cookies(account, live)
+                return bool(cookie_value(live, "msToken"))
+            finally:
+                await context.close()
 
 
 _FAR_FUTURE = 1800000000  # 2027-01-15: far-future cookie expiry so profiles keep sessions across restarts

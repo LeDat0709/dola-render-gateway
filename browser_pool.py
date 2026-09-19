@@ -6,12 +6,12 @@ import random
 import shutil
 import sqlite3
 import time
+import uuid
 from datetime import date, datetime, time as dt_time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from dola_client import CreditError
-from dola_error_codes import classify_dola_error, DolaErrorKind
 from browser import RegionBlockedError, account_proxy_raw, mask_proxy, normalize_proxy_input
 from video_worker_ui import (
     AccountLimitedError,
@@ -232,6 +232,14 @@ def note_rate_limited(now: float | None = None, key: str = "") -> float:
 _ADAPTIVE_EXTRA_MAX = 12.0
 _ADAPTIVE_STREAK_THRESHOLD = 5   # số job thành công liên tiếp để bớt phạt
 
+# TIPEES hotfix D: hệ số jitter adaptive. jitter = SUBMIT_JITTER_SEC * (1 + α·learned_extra + β·busy_proxy)
+# α=0.3: mỗi 1s phạt learned_extra → jitter × 1.3 (max ×4 = ±20s với SUBMIT_JITTER_SEC=5).
+# β=0.2: IP đầy 100% → jitter × 1.2 (nhẹ, vì IP đầy đã là bottleneck chính ở MAX_JOBS_PER_IP).
+# Trần ×4 (_JITTER_BOOST_MAX=4): không jitter vô tận, kẻo user tưởng tool "lag".
+_JITTER_LEARNED_COEF = 0.3
+_JITTER_BUSY_COEF = 0.2
+_JITTER_BOOST_MAX = 4.0
+
 
 def note_submit_ok(key: str = "") -> None:
     """Ghi nhận proxy `key` gửi THÀNH CÔNG: tăng streak, bớt phạt nếu đủ điều kiện."""
@@ -449,7 +457,19 @@ async def _pace(key: str = "") -> None:
     # Nhịp = mức người dùng đặt (đọc MỖI LẦN, để /api/admin/submit-gap ăn ngay) + phạt tự học + giãn
     # tạm sau 710022002.
     gap = config.SUBMIT_GAP_SEC + s.get("learned_extra", 0.0) + _effective_gap_boost(now, key)
-    new_slot = base + gap + random.uniform(0, config.SUBMIT_JITTER_SEC)
+    # TIPEES hotfix D: JITTER ADAPTIVE — jitter TĂNG khi proxy bị phạt nặng (giảm va chạm khe khi nhiều nick
+    # cùng proxy) và TĂNG khi IP bận (nhiều job song song). Trước đây jitter cố định SUBMIT_JITTER_SEC=5s → 5
+    # nick chung proxy + learned_extra=8s vẫn dồn khe ±5s quanh cùng 1 điểm. Nay jitter = SUBMIT_JITTER_SEC *
+    # (1 + α·learned_extra + β·busy_proxy), trần _JITTER_BOOST_MAX để không tăng vô tận. Hệ số β đo tải IP
+    # hiện tại (busy/max_jobs_per_ip) — IP bận = jitter rộng hơn = ít va chạm khe giữa các job.
+    learned_extra = s.get("learned_extra", 0.0)
+    max_jobs = max(1, config.MAX_JOBS_PER_IP)
+    busy = _egress_busy.get(key, 0) / max_jobs    # tỉ lệ tải IP ra (0 = rảnh, 1 = đầy)
+    jitter_scale = min(_JITTER_BOOST_MAX,
+                       1.0 + _JITTER_LEARNED_COEF * learned_extra
+                            + _JITTER_BUSY_COEF * busy)
+    effective_jitter = config.SUBMIT_JITTER_SEC * jitter_scale
+    new_slot = base + gap + random.uniform(0, effective_jitter)
     # CAS: nếu ai vừa commit slot xa hơn (job song song cùng key), GIỮ slot xa hơn (an toàn).
     cur_slot = s["slot"]
     if new_slot > cur_slot:
@@ -582,8 +602,14 @@ class BrowserPool:
             return []
         names = sorted(d.name for d in self.accounts_dir.iterdir()
                        if d.is_dir() and not d.name.startswith("."))
-        for n in names:
-            self._ensure_meta(n)
+        # 1 SELECT thay cho N INSERT+commit mỗi lần gọi (dashboard 10s/lần, generate_video nhiều lần/job).
+        known = {r[0] for r in self._conn.execute("SELECT name FROM accounts_meta")}
+        missing = [n for n in names if n not in known]
+        if missing:
+            now = time.time()
+            self._conn.executemany("INSERT OR IGNORE INTO accounts_meta (name, created_at) VALUES (?, ?)",
+                                   [(n, now) for n in missing])
+            self._conn.commit()
         return names
 
     def _meta(self, name: str):
@@ -741,16 +767,24 @@ class BrowserPool:
         self._conn.commit()
         self._burn_if_enabled(account, "hết lượt ngày")
 
-    def list_accounts(self) -> list:
-        """Dashboard view: combines metadata, quota, and busy status."""
+    def list_accounts(self, names: list[str] | None = None) -> list:
+        """Dashboard view: combines metadata, quota, and busy status. `names` → chỉ các nick đó (giữ thứ tự tên).
+
+        Số câu SQL cố định (meta + usage mỗi thứ 1 SELECT), không tăng theo số nick."""
         from submit_http import has_real_mstoken as _has_real_mstoken
         self._clear_expired_rate_limits()
         now = time.time()
         reset_at = self._next_limit_reset() - 86400   # mốc reset credit gần nhất (0h JST)
+        wanted = self.accounts
+        if names is not None:
+            keep = set(names)
+            wanted = [n for n in wanted if n in keep]
+        metas = {r["name"]: r for r in self._conn.execute("SELECT * FROM accounts_meta")}
+        used_by = dict(self._conn.execute("SELECT account, used FROM usage WHERE day=?", (self._usage_day(),)))
         out = []
-        for a in self.accounts:
-            m = self._meta(a)
-            used = self.used_today(a)
+        for a in wanted:
+            m = metas.get(a)
+            used = used_by.get(a, 0)
             lock = self._locks.get(a)
             # Credit Dola reset theo ngày: số đọc trước mốc reset là số cũ → coi như chưa biết. Không thì
             # nick về 0 credit hôm qua kẹt "hết credit" mãi (_schedulable đòi cb >= 1 khi đã biết cb).
@@ -1229,6 +1263,7 @@ class BrowserPool:
         # (biến cục bộ, không để trên self: job song song sẽ ghi đè nhau), không reset theo nick: True thì mọi nhánh
         # đều raise nên không bao giờ sang nick kế.
         delivery = {"maybe": False}
+        refund_attempt = uuid.uuid4().hex   # 1 khoá / lần gọi generate_video: cùng lần gọi không hoàn 2 lần
 
         def _on_submitted(acc, submitted: bool):
             delivery["maybe"] = submitted          # gán TRƯỚC khi chuyển cho server: callback server lỗi vẫn giữ cờ
@@ -1250,6 +1285,7 @@ class BrowserPool:
                         grant_id=acc,          # dùng account làm grant_id (tracking string)
                         job_id="",             # Chrome engine không có job_id (không cần)
                         failure_code=failure_code,
+                        reason=f"chrome:{refund_attempt}",   # chống trùng theo LẦN CHẠY, không theo đời nick
                     )
                     if rid:
                         print(f"[pool] {acc}: hoàn credit failure={failure_code}", flush=True)
@@ -1362,8 +1398,9 @@ class BrowserPool:
             soft_pin = False   # ghim MỀM: vẫn ưu tiên + báo lý do thật của nick thẻ, nhưng cho xoay sang nick khác
             tried: set[str] = set()
             need = self._cost_for(model, duration) or self._default_cost(model, duration)
+            all_accts = self.list_accounts()   # 1 lần/job; trong khoá nick sẽ đọc lại riêng nick đó cho tươi
             if account is not None:
-                match = next((a for a in self.list_accounts() if a["name"] == account), None)
+                match = next((a for a in all_accts if a["name"] == account), None)
                 if match is None:
                     raise RuntimeError(f"Nick '{account}' không tồn tại")
                 if not config.AUTO_RETRY and self._locks.setdefault(account, asyncio.Lock()).locked():
@@ -1376,7 +1413,7 @@ class BrowserPool:
                     # Giữ pinned=True để khi KHÔNG còn nick nào chạy được vẫn báo LÝ DO THẬT của nick thẻ (không bọc).
                     soft_pin = True
                     # Xoay ƯU TIÊN nick còn NHIỀU điểm nhất → rải đều, né dồn 1 nick, tận dụng tối đa lượt/ngày.
-                    others = sorted((a for a in self.list_accounts() if a["name"] != account),
+                    others = sorted((a for a in all_accts if a["name"] != account),
                                     key=_rotation_order)
                     candidates = [match] + others
                 else:
@@ -1389,7 +1426,7 @@ class BrowserPool:
                     candidates = [match]
             else:
                 # Không ghim: cũng ưu tiên nick còn nhiều điểm nhất trước.
-                candidates = sorted(self.list_accounts(), key=_rotation_order)
+                candidates = sorted(all_accts, key=_rotation_order)
             for a in candidates:
                 if not config.AUTO_RETRY and last_err is not None:
                     raise last_err   # người dùng tắt xoay nick: nick đầu hỏng là dừng, không thử nick khác
@@ -1409,8 +1446,9 @@ class BrowserPool:
                 if lock.locked():
                     continue
                 async with lock:
-                    if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
-                        continue  # State changed while waiting
+                    fresh = self.list_accounts([account])
+                    if not fresh or not self._schedulable(fresh[0]):
+                        continue  # State changed while waiting (hoặc thư mục nick vừa bị xoá)
                     tried.add(account)
                     # ── Pre-flight checks (TRƯỚC khi tốn Chrome) ──────
                     # 1) Cookie check: kiểm HTTP nhanh, cookie chết → bỏ qua nick
@@ -1623,28 +1661,8 @@ class BrowserPool:
                     except RateLimitedError as e:
                         from browser import mark_ip_dirty, rotate_tmproxy_now, account_proxy_raw as _apr, rotate_effective_proxy
                         err_text = str(e)
-                        info = classify_dola_error(err_text)
-                        if info.kind == DolaErrorKind.NICK_VERIFICATION:
-                            # 710022002 → ByteDance WAF gắn cờ nick & IP → BURN NICK NGAY (Seedance _la_loi_kich_hoat)
-                            # KHÔNG retry cùng nick: cùng IP → lại 710022002 → lãng phí lượt mở Chrome/proxy.
-                            # Burn LUÔN, không check config.BURN_NICKS (lỗi này = nick đã bị Dola gắn cờ rủi ro).
-                            m = self._meta(account)
-                            already = bool(m and "[ĐÃ ĐỐT" in (m.get("note") or ""))
-                            if not already:
-                                tag = f"[ĐÃ ĐỐT {time.strftime('%d/%m %H:%M')}: {info.code} — {err_text[:40]}]"
-                                self._conn.execute(
-                                    "UPDATE accounts_meta SET scheduling=0, is_burned=1, burned_at=?, burn_reason=?, note=? WHERE name=?",
-                                    (time.time(), f"{info.code}: {err_text[:80]}", f"{tag} {m.get('note') or ''}".strip() if m else tag, account))
-                                self._conn.commit()
-                                print(f"[pool] {account}: ĐỐT NICK vĩnh viễn (710022002, proxy chuyển nick khác)", flush=True)
-                            else:
-                                print(f"[pool] {account}: đã đốt rồi, chuyển nick", flush=True)
-                            mark_ip_dirty(account, err_text)   # đánh dấu IP bẩn luôn
-                            _refund_if_safe(account, "submit_4xx_no_conv_id")   # 710022002 = chưa trừ → hoàn credit
-                            _raise_if_delivered(account, e)
-                            last_err = e
-                            continue   # rotate sang nick khác NGAY
-                        # Regular rate limit (không phải verify): pause + cooldown + rotate
+                        # 710022002 = rate limit theo IP (dola_error_codes: RATE_LIMIT) → IP bẩn + xoay + nick nghỉ.
+                        # KHÔNG đốt nick vĩnh viễn ở đây: đốt là tuỳ chọn BURN_NICKS (mặc định tắt), xem _burn_if_enabled.
                         mark_ip_dirty(account, err_text)   # IP này Dola vừa chặn → nick sau không nhận lại trong 24 giờ
                         if _apr(account):
                             rotate_tmproxy_now(account)   # nick dùng proxy RIÊNG → xin IP mới cho key đó
@@ -1660,6 +1678,7 @@ class BrowserPool:
                                 "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
                                 (time.time() + RATE_LIMIT_NICK_SEC, account))
                             self._conn.commit()
+                        _refund_if_safe(account, "submit_4xx_no_conv_id")   # chỉ hoàn khi chắc chắn Dola chưa nhận
                         _raise_if_delivered(account, e)   # worker chỉ báo False khi dò đủ không thấy hội thoại mới
                         last_err = e
                         continue

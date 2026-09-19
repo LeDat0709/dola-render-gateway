@@ -31,13 +31,18 @@ def _setup(tmp, proxies, max_concurrency=10):
 
 class _env:
     """Giả worker: đo số job ĐANG chạy cùng lúc theo từng IP và mốc bắt đầu/kết thúc."""
-    def __init__(self, cap, hold=0.15):
-        self.cap, self.hold = cap, hold
+    def __init__(self, cap, hold=0.15, mode="chrome"):
+        self.cap, self.hold, self.mode = cap, hold, mode
 
     def __enter__(self):
+        import video_worker_ui as _vui
+        # Ghim SUBMIT_MODE: .env.local để "http" → pool đi nhánh _generate_via_http THẬT (gọi mạng) trước cả gen mock,
+        # test đỏ oan. mode="http" → mock luôn _generate_via_http để kiểm trần IP trên ĐÚNG đường production.
         self.saved = (browser_pool.config.MAX_JOBS_PER_IP, browser_pool.config.ACCOUNTS_DIR, browser_pool.config.PROXY,
-                      browser_pool.generate_video, browser.probe_proxy)
+                      browser_pool.generate_video, browser.probe_proxy, browser_pool.config.SUBMIT_MODE,
+                      _vui._generate_via_http)
         browser_pool.config.MAX_JOBS_PER_IP = self.cap
+        browser_pool.config.SUBMIT_MODE = self.mode
         self.running, self.peak, self.start, self.end = 0, 0, {}, {}
 
         async def ok_probe(raw, timeout=3.0):
@@ -58,11 +63,20 @@ class _env:
                 self.running -= 1
                 self.end[account] = time.monotonic()
         browser_pool.generate_video = gen
+        import video_worker_ui as _vui
+        # Nhánh HTTP tự nhả browser slot (bình thường _generate_via_http làm) — mock phải gọi để không kẹt slot.
+        async def gen_http(account, *a, on_submitted=None, on_browser_free=None, **kw):
+            if on_browser_free:
+                on_browser_free()
+            return await gen(account, on_submitted=on_submitted)
+        _vui._generate_via_http = gen_http
         return self
 
     def __exit__(self, *a):
+        import video_worker_ui as _vui
         (browser_pool.config.MAX_JOBS_PER_IP, browser_pool.config.ACCOUNTS_DIR, browser_pool.config.PROXY,
-         browser_pool.generate_video, browser.probe_proxy) = self.saved
+         browser_pool.generate_video, browser.probe_proxy, browser_pool.config.SUBMIT_MODE,
+         _vui._generate_via_http) = self.saved
 
 
 async def _all(pool, nicks):
@@ -83,6 +97,16 @@ def test_zero_means_unlimited_like_before():
         pool = _setup(tmp, {"n1": "", "n2": "", "n3": ""})
         asyncio.run(_all(pool, ["n1", "n2", "n3"]))
         assert env.peak == 3, f"0 = không giới hạn (như cũ), gặp {env.peak}"
+
+
+def test_cap_limits_jobs_on_http_engine():
+    """Đường gửi MẶC ĐỊNH production là HTTP (SUBMIT_MODE=http). Trần IP phải chặn ở nhánh HTTP, không chỉ Chrome."""
+    with tempfile.TemporaryDirectory() as tmp, _env(cap=2, mode="http") as env:
+        pool = _setup(tmp, {"n1": "", "n2": "", "n3": ""})
+        res = asyncio.run(_all(pool, ["n1", "n2", "n3"]))
+        assert env.peak == 2, f"trần 2 trên đường HTTP mà có {env.peak} job cùng lúc"
+        assert sorted(r["account"] for r in res) == ["n1", "n2", "n3"], "job HTTP phải CHỜ rồi chạy, không bỏ"
+        assert browser_pool._egress_busy == {}, f"hết job phải trả chỗ: {browser_pool._egress_busy}"
 
 
 def test_different_ips_do_not_block_each_other():

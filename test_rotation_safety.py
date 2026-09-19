@@ -19,6 +19,9 @@ from video_worker_ui import ParameterChangeError, TransientDolaError, _FetchDeli
 browser_pool.config.SUBMIT_GAP_SEC = 0
 browser_pool.config.SUBMIT_JITTER_SEC = 0
 browser_pool.config.AUTO_RETRY = True
+# Test giả worker Chrome (browser_pool.generate_video). Engine HTTP mặc định (SUBMIT_MODE=http) sẽ được thử trước,
+# bị từ chối vì nick test không có cookies.json → chuỗi on_submitted lẫn thêm (nick, False). Ghim đường Chrome.
+browser_pool.config.SUBMIT_MODE = "fetch"
 
 # Các test ở đây kiểm nhánh xử lý 710022002 SAU khi hết lượt thử lại (IP bẩn, tạm dừng proxy, xoay nick) → tắt thử lại
 # cùng nick và giãn nhịp chung; hai hành vi đó có test riêng ở test_rate_limit_retry.py.
@@ -523,9 +526,22 @@ class _proxy_env:
             (Path(self.tmp) / "accounts" / n / "proxy.txt").write_text(_LINK, encoding="utf-8")
         proxyxoay._cache[_LINK] = {"server": "http://1.1.1.1:80", "ip": "1.1.1.1:80", "message": f"proxy nay se die sau {self.life}s",
                                    "fetched_at": _t.time(), "ttl": max(self.life - 30, 0), "next_ok": 0, "network": "", "location": ""}
-        proxyxoay.rotate = lambda link: (self.rotations.append(link), proxyxoay._cache[link])[1]
+        proxyxoay.rotate = self._fake_rotate
         browser._proxy_leases.clear()
         return self
+
+    def _fake_rotate(self, link):
+        import proxyxoay
+        self.rotations.append(link)
+        # rotate THẬT = IP mới. Mô phỏng bằng cách tăng octet cuối để browser._rotate_raw thấy IP đổi
+        # (nhà bán còn cooldown mới trả lại IP cũ; ở đây coi như đổi được).
+        ent = proxyxoay._cache[link]
+        host, _, port = ent["ip"].partition(":")
+        parts = host.split(".")
+        parts[-1] = str((int(parts[-1]) + 1) % 256)
+        ent["ip"] = ".".join(parts) + (f":{port}" if port else "")
+        ent["server"] = "http://" + ent["ip"]
+        return ent
 
     def __exit__(self, *a):
         import browser
@@ -645,7 +661,8 @@ def test_nick_failing_on_many_ips_is_quarantined():
         with _proxy_env(tmp, life=1500):
             for i, ip in enumerate(["1.1.1.1:80", "2.2.2.2:80", "2.2.2.2:80", "3.3.3.3:80"]):
                 proxyxoay._cache[_LINK]["ip"] = ip
-                pool._rest_after_presubmit_fail("n1", RuntimeError("Khung soạn video không mở được"))
+                # _rest_after_presubmit_fail là async từ 00ca772 (per-proxy cooldown) — phải await, không gọi trơ.
+                _run(pool._rest_after_presubmit_fail("n1", RuntimeError("Khung soạn video không mở được")))
                 m = pool._meta("n1")
                 left = m["cooldown_until"] - _t.time()
                 if i < 3:   # 1.1 → 2.2 → 2.2 (trùng IP không tính) = mới 2 IP khác nhau → nghỉ ngắn
@@ -689,14 +706,15 @@ def test_dirty_ip_rotated_before_next_nick():
                 browser._dirty_ips.clear()
                 gen = _scripted({"n1": [("raise", RateLimitedError("710022002"))], "n2": [("ok",)]})
                 browser_pool.generate_video = gen
+                import proxy_status
                 r = _run(pool.generate_video("p", "9:16", 10, account="n1"))
                 assert r["account"] == "n2", r
+                # IP lúc 710022002 (1.1.1.1:80) vào sổ IP bẩn 24h — nick khác không nhận LẠI đúng IP đó.
                 assert "1.1.1.1:80" in browser._dirty_ips, browser._dirty_ips
-                # 1 lần đổi ngay sau 710022002 (n1) + 2 lần trước khi mở n2 (retry vì nhà bán cấp lại IP bẩn)
-                assert env.rotations == [_LINK, _LINK, _LINK], env.rotations
-                assert browser.rotating_status(_LINK)["dirty"] is True
-                browser._dirty_ips.clear()
-                assert browser.rotating_status(_LINK)["dirty"] is False
+                # 710022002 trên n1 → mark_dirty(key) + 1 lần xoay IP → IP mới sạch → mark_clean(key) → n2 chạy ngay.
+                assert env.rotations == [_LINK], env.rotations
+                # Xoay sang IP mới đã xoá cờ WAF theo key (đối thủ chỉ khoá IP, không khoá cả key mãi).
+                assert proxy_status.is_dirty(_LINK) is False, "xoay IP mới rồi thì key không còn WAF-flag"
     finally:
         browser_pool.config.NO_COOLDOWN = old_nc
         import browser as _b

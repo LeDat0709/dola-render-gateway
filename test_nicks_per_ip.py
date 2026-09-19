@@ -83,16 +83,38 @@ def _fakes(ghi, peak, doi_ip_that=True):
 async def _chay(tmp, nicks: dict, doi_ip_that=True):
     # ONE_NICK=True + PROXY rỗng: chứng minh N lượt/IP KHÔNG còn phụ thuộc hai biến này.
     # XOAY_THEO_LUOT là công tắc riêng (mặc định TẮT) vì xoay chủ động đổi giao kèo cũ "chỉ xoay khi cần".
+    # Lưu MỌI global sẽ đụng rồi khôi phục ở finally: _fakes vá browser.rotating_status/rotate_effective_proxy/_pace/
+    # generate_video, và ta ghim config — không hoàn thì rò sang file test sau (proxyxoay/dead_rotation đỏ oan khi
+    # chạy chung). Ghim SUBMIT_MODE="chrome" + MAX_JOBS_PER_IP=0 để không phụ thuộc .env.local của máy.
+    saved_cfg = (config.ONE_NICK, config.PROXY, config.NICKS_PER_IP, config.XOAY_THEO_LUOT,
+                 config.SUBMIT_MODE, config.MAX_JOBS_PER_IP)
+    saved_glob = (browser_pool.generate_video, browser_pool._pace, browser.rotate_effective_proxy,
+                  browser.rotating_status)
     config.ONE_NICK, config.PROXY, config.NICKS_PER_IP = True, "", 2
     config.XOAY_THEO_LUOT = True
-    pool = _pool(tmp, nicks)
-    ghi, peak = {"xoay": []}, []
-    _fakes(ghi, peak, doi_ip_that)
-    ket = await asyncio.wait_for(
-        asyncio.gather(*(pool.generate_video(f"p{i}", account=n) for i, n in enumerate(nicks)),
-                       return_exceptions=True),
-        timeout=30)   # serialize hoặc deadlock → treo → TimeoutError làm test đỏ thay vì treo mãi
-    return pool, ghi, max(peak), ket
+    config.SUBMIT_MODE, config.MAX_JOBS_PER_IP = "chrome", 0
+    # Dọn trạng thái proxy DÙNG CHUNG (module-global) để độc lập với file test chạy trước: sổ giữ chỗ, IP bẩn, WAF-key.
+    browser._proxy_leases.clear()
+    browser._dirty_ips.clear()
+    try:
+        import proxy_status
+        proxy_status._status.clear()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        pool = _pool(tmp, nicks)
+        ghi, peak = {"xoay": []}, []
+        _fakes(ghi, peak, doi_ip_that)
+        ket = await asyncio.wait_for(
+            asyncio.gather(*(pool.generate_video(f"p{i}", account=n) for i, n in enumerate(nicks)),
+                           return_exceptions=True),
+            timeout=30)   # serialize hoặc deadlock → treo → TimeoutError làm test đỏ thay vì treo mãi
+        return pool, ghi, max(peak), ket
+    finally:
+        (config.ONE_NICK, config.PROXY, config.NICKS_PER_IP, config.XOAY_THEO_LUOT,
+         config.SUBMIT_MODE, config.MAX_JOBS_PER_IP) = saved_cfg
+        (browser_pool.generate_video, browser_pool._pace, browser.rotate_effective_proxy,
+         browser.rotating_status) = saved_glob
 
 
 def test_dem_rieng_tung_khoa_proxy():
