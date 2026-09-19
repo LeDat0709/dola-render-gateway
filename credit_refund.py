@@ -177,6 +177,7 @@ class CreditLedger:
         HTTP engine (job_id!= ""): cần spent record tồn tại để xác nhận đã trừ rồi mới hoàn."""
         if not self.should_refund(failure_code):
             return None
+        reason = reason or f"refund:{failure_code}"
         with self._lock:
             conn = self._connect()
             try:
@@ -199,11 +200,13 @@ class CreditLedger:
                     if cur2.fetchone():
                         return None  # Đã hoàn rồi
                 else:
-                    # Chrome engine (job_id=""): idempotent theo grant_id + failure_code
+                    # Chrome engine (job_id=""): idempotent theo grant_id + failure_code + reason. Nơi gọi truyền
+                    # reason riêng cho mỗi lần chạy job (browser_pool: "chrome:<attempt>") → job sau cùng lỗi vẫn
+                    # được hoàn; không truyền reason thì reason mặc định giống nhau → như cũ (1 lần / nick / mã).
                     cur = conn.execute(
                         "SELECT id FROM credit_ledger "
-                        "WHERE grant_id=? AND kind='refund' AND failure_code=?",
-                        (grant_id, failure_code),
+                        "WHERE grant_id=? AND kind='refund' AND failure_code=? AND reason=?",
+                        (grant_id, failure_code, reason),
                     )
                     if cur.fetchone():
                         return None  # Đã hoàn rồi
@@ -216,7 +219,7 @@ class CreditLedger:
                         grant_id,
                         job_id,
                         amount,
-                        reason or f"refund:{failure_code}",
+                        reason,
                         failure_code,
                         time.time(),
                     ),

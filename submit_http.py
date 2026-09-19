@@ -14,7 +14,6 @@ import os
 import re
 import time
 import uuid
-from typing import Any, Optional
 
 import config
 import signer
@@ -161,16 +160,19 @@ def build_video_body(prompt: str, ratio: str | None, duration: int, model: str) 
 def build_query(cookies: dict[str, str]) -> dict[str, str]:
     """Query cho /chat/completion (no-Chrome): params cố định + msToken/fp từ cookie. device_id để trống —
     verify --send sẽ cho biết Dola có chấp nhận không có device_id của trình duyệt hay không."""
-    from a_bogus_web import fake_mstoken
-    return {
+    query = {
         "aid": str(signer.DEFAULT_AID), "real_aid": str(signer.DEFAULT_AID), "device_platform": "web",
         "language": "ja", "region": "JP", "sys_region": "JP", "samantha_web": "1", "web_platform": "browser",
         "use-olympus-account": "1", "version_code": "20800", "pkg_type": "release_version",
-        "pc_version": "3.32.62", "doubao_device_platform": "web", "doubao_pc_version": "3.32.62",
-        "msToken": cookies.get("msToken") or fake_mstoken(),
+        "pc_version": "3.36.11", "doubao_device_platform": "web", "doubao_pc_version": "3.36.11",
         "fp": cookies.get("s_v_web_id", ""), "tz_name": "Asia/Tokyo",
         "web_tab_id": str(uuid.uuid4()),
     }
+    # Chỉ gửi msToken THẬT (cookie msToken hoặc xmst); thiếu thì bỏ hẳn tham số như doubao2api — không tự bịa giá trị giả.
+    ms_token = cookies.get("msToken") or cookies.get("xmst")
+    if ms_token:
+        query["msToken"] = ms_token
+    return query
 
 
 def _extract_conversation_id(text: str) -> str:
@@ -190,18 +192,6 @@ def build_signed(cookies: dict[str, str], req_body: dict) -> tuple[str, str]:
 
 class SubmitHttpRejected(RuntimeError):
     """Dola CHẮC CHẮN chưa nhận lệnh (4xx / captcha / thiếu cookie) — an toàn thử lại đường khác, chưa trừ lượt."""
-
-
-# Mã lỗi libcurl xảy ra TRƯỚC khi byte đầu tiên rời máy → chắc chắn Dola chưa nhận, gửi lại không mất lượt.
-# Cố ý KHÔNG có 28 (hết giờ), 55/56 (đứt lúc gửi/nhận), 18/52 (nhận dở) — những cái đó Dola có thể đã nhận.
-_NEVER_SENT_CURL_CODES = frozenset({5, 6, 7, 35, 97})   # RESOLVE_PROXY, RESOLVE_HOST, CONNECT, SSL_CONNECT, PROXY
-
-
-def _never_left_machine(exc: Exception) -> bool:
-    code = getattr(exc, "code", None)
-    if isinstance(code, int):
-        return code in _NEVER_SENT_CURL_CODES
-    return False   # không rõ mã → coi như CÓ THỂ đã gửi (an toàn cho lượt)
 
 
 # Mã lỗi libcurl xảy ra TRƯỚC khi byte đầu tiên rời máy → chắc chắn Dola chưa nhận, gửi lại không mất lượt.
