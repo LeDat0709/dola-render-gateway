@@ -37,7 +37,19 @@ __pycache__/
 # (Nếu dev muốn commit binary, dùng `git add -f path/to/file.so`)
 *.so
 *.pyd
+/*.c
 !build_cython.py
+
+# --- venv thứ hai / bản sao lưu / file nén (accounts_backup_meta.zip chứa dữ liệu nick) ---
+venv/
+*.zip
+*.rar
+
+# --- nháp + bản phân tích đối thủ, chỉ để máy local ---
+scratch/
+_analysis/
+_seedance_extracted/
+Seedance-v1.1/
 
 # --- third-party binaries analysed locally (150MB) ---
 *.exe
