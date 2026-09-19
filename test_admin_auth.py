@@ -3,12 +3,17 @@
 Vì sao cần: README hướng dẫn chạy VPS bằng `uvicorn --host 0.0.0.0`, mà /api/admin/login trước đây cho thử
 VÔ HẠN lần → dò ra DOLA_ADMIN_KEY là gọi được /api/admin/accounts/export = lấy TOÀN BỘ cookie nick.
 """
+import asyncio
+import tempfile
+from pathlib import Path
+
 import config
 
 config.ADMIN_KEY = "secret-key-123"   # phải đặt TRƯỚC khi import server (module đọc lúc nạp)
 
 import server                                    # noqa: E402
 from fastapi import HTTPException                # noqa: E402
+from store import TaskStore                      # noqa: E402
 
 
 class _Req:
@@ -60,6 +65,41 @@ def test_key_compare_and_open_mode():
         assert _status(lambda: server._admin_auth(None, _Req("4.4.4.4"))) is None
     finally:
         config.ADMIN_KEY = saved
+
+
+def _call(coro):
+    """Gọi thẳng route async: None = qua được; số = mã lỗi HTTP."""
+    try:
+        asyncio.run(coro)
+        return None
+    except HTTPException as exc:
+        return exc.status_code
+
+
+def test_public_video_routes_count_admin_guesses_toward_lockout(monkeypatch):
+    """/v1/videos… nhận X-Admin-Key: dò khóa ở đây trước đây KHÔNG bị khoá → vòng qua được chống dò của /api/admin."""
+    monkeypatch.setattr(config, "ADMIN_KEY", "secret-key-123")
+    monkeypatch.setattr(config, "API_KEYS", ["bearer-only"])   # sai khóa admin → rơi về bearer → 401, không tạo job
+    server._admin_fails.clear()
+    ip = _Req("7.7.7.7")
+    for _ in range(server.ADMIN_MAX_FAILS):
+        assert _call(server.get_video("x", authorization=None, x_admin_key="sai", request=ip)) == 401
+    # Quá ngưỡng: khóa ĐÚNG cũng bị chặn, và route tạo video dùng chung bộ đếm
+    assert _call(server.get_video("x", authorization=None, x_admin_key="secret-key-123", request=ip)) == 429
+    req = server.VideoGenRequest(prompt="p")
+    assert _call(server.create_video(req, authorization=None, x_admin_key="sai", request=ip)) == 429
+
+
+def test_public_video_routes_without_admin_header_never_lock_out(monkeypatch):
+    """Khách API chỉ dùng bearer (và broker gọi thẳng hàm, tham số còn là Header(...)) không được bị khoá oan."""
+    monkeypatch.setattr(config, "ADMIN_KEY", "secret-key-123")
+    monkeypatch.setattr(config, "API_KEYS", ["bearer-only"])
+    monkeypatch.setattr(server, "store", TaskStore(str(Path(tempfile.mkdtemp()) / "t.db")))
+    server._admin_fails.clear()
+    for _ in range(server.ADMIN_MAX_FAILS * 2):
+        assert _call(server.get_video("x", authorization=None, x_admin_key=None, request=_Req("6.6.6.6"))) == 401
+        assert _call(server.get_video("x", "Bearer sai")) == 401   # kiểu broker.py: gọi thẳng, không request
+    assert not server._admin_fails
 
 
 if __name__ == "__main__":

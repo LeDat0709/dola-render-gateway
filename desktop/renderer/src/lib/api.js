@@ -282,6 +282,8 @@ export async function inflightTasks() {
 // clear-cookies còn đặt login_ok=False để pool ngừng xếp lịch nick vừa bị xoá cookie.
 export const deleteAccount = (n) => adminFetch(n, "", "DELETE");
 export const clearCookies = (n) => adminFetch(n, "/clear-cookies");
+// Mở dola.com/chat bằng profile nick cho trang tự ghi msToken thật → { ok, has_mstoken }. Mở Chrome ~10–20s/nick.
+export const refreshMstoken = (n) => adminFetch(n, "/refresh-mstoken");
 
 // ── Proxy & job (Tổng quan / Kho / tab Proxy) ─────────────────────
 const _isTmKey = (s) => /^tmproxy:\/\//i.test(s) || /^[a-f0-9]{32}$/i.test(s);
@@ -325,6 +327,23 @@ export async function setBurnNicks(on) {
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
   return j;
+}
+
+export async function setCdpLaunch(on) {
+  await ensureConfig();
+  const r = await fetch(cfg.base + "/api/admin/cdp-launch", { method: "POST", headers: { ...adminHeaders(), "Content-Type": "application/json" }, body: JSON.stringify({ cdp_launch: !!on }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
+  return { ok: true, ...j };
+}
+// Chạy ẩn (headless): TẮT = thấy cửa sổ Chrome từng nick, để xem tận mắt job hỏng ở bước nào.
+// Chỉ áp cho context mở SAU đó; job đang chạy không đổi.
+export async function setHeadless(on) {
+  await ensureConfig();
+  const r = await fetch(cfg.base + "/api/admin/headless", { method: "POST", headers: { ...adminHeaders(), "Content-Type": "application/json" }, body: JSON.stringify({ headless: !!on }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
+  return { ok: true, ...j };
 }
 // Check Video Nick: video đã dựng xong trên Dola của nick (server đọc lịch sử hội thoại, không tốn lượt).
 export async function scanNickVideos(name, limit = 30) {

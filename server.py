@@ -295,17 +295,31 @@ def _admin_locked(ip: str) -> float:
     return left if left > 0 else 0.0
 
 
-def _admin_auth(x_admin_key: str | None, request: Request | None = None):
-    if not config.ADMIN_KEY:
-        return
+def _admin_check(key: str | None, request: Request | None) -> bool:
+    """So khóa admin CÓ đếm lượt sai theo IP. Đang bị khoá thì ném 429 trước cả khi so (khóa đúng cũng phải chờ)."""
     ip = (request.client.host if request and request.client else "?")
     left = _admin_locked(ip)
     if left:
         raise HTTPException(429, f"Sai khóa admin quá nhiều lần — thử lại sau {int(left)}s")
-    ok = _admin_key_ok(x_admin_key)
+    ok = _admin_key_ok(key)
     _admin_throttle(ip, ok)
-    if not ok:
+    return ok
+
+
+def _admin_auth(x_admin_key: str | None, request: Request | None = None):
+    if not config.ADMIN_KEY:
+        return
+    if not _admin_check(x_admin_key, request):
         raise HTTPException(401, "invalid admin key")
+
+
+def _admin_header_ok(x_admin_key, request: Request | None) -> bool:
+    """X-Admin-Key trên route công khai (/v1/videos…): sai thì rơi về bearer như cũ nhưng VẪN đếm vào khoá chống dò
+    — nếu không, đây là cửa dò khóa vô hạn vòng qua /api/admin. Không có header (hoặc code gọi thẳng hàm, tham số
+    còn là Header(...) như broker.py) thì không đếm."""
+    if not isinstance(x_admin_key, str) or not x_admin_key or not config.ADMIN_KEY:
+        return False
+    return _admin_check(x_admin_key, request)
 
 
 def _normalize_allowed_durations(values) -> list[int]:
@@ -729,8 +743,22 @@ app.router.lifespan_context = lifespan
 
 
 @app.post("/v1/videos/generations", response_model=TaskResponse)
-async def create_video(req: VideoGenRequest, authorization: str | None = Header(default=None)):
-    client = _auth(authorization)
+async def create_video(
+    req: VideoGenRequest,
+    authorization: str | None = Header(default=None),
+    x_admin_key: str | None = Header(default=None),
+    request: Request = None,
+):
+    if _admin_header_ok(x_admin_key, request):
+        client = {
+            "api_key_hash": "admin_dashboard",
+            "api_key_name": "Admin Dashboard",
+            "daily_limit": 0,
+            "concurrency_limit": 0,
+            "allowed_durations": list(SUPPORTED_DURATIONS),
+        }
+    else:
+        client = _auth(authorization)
     duration = req.duration or 10
     if duration not in SUPPORTED_DURATIONS:
         raise HTTPException(422, "Currently supports durations of 10s, 15s, and 30s")
@@ -793,10 +821,24 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
     return TaskResponse(id=task_id, status="queued", model=req.model, prompt=req.prompt)
 
 
+@app.post("/api/admin/generate-video", response_model=TaskResponse)
+async def admin_generate_video(req: VideoGenRequest, request: Request, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key, request)   # có request: khoá theo IP thật, không phải một ô "?" chung cho mọi người
+    return await create_video(req, x_admin_key=x_admin_key, request=request)
+
+
 @app.get("/v1/videos/{task_id}", response_model=TaskResponse)
-async def get_video(task_id: str, authorization: str | None = Header(default=None)):
-    client = _auth(authorization)
-    row = store.get_for_client(task_id, client["api_key_hash"])
+async def get_video(
+    task_id: str,
+    authorization: str | None = Header(default=None),
+    x_admin_key: str | None = Header(default=None),
+    request: Request = None,
+):
+    if _admin_header_ok(x_admin_key, request):
+        row = store.get(task_id)
+    else:
+        client = _auth(authorization)
+        row = store.get_for_client(task_id, client["api_key_hash"])
     if not row:
         raise HTTPException(404, "task not found")
     px = _job_proxy(row.get("account"))
@@ -841,6 +883,8 @@ async def health():
         "auto_retry": config.AUTO_RETRY,
         "burn_nicks": config.BURN_NICKS,
         "submit_mode": config.SUBMIT_MODE,
+        "cdp_launch": getattr(config, "CDP_LAUNCH", False),   # getattr: config.so cũ chưa build lại thì coi như TẮT
+        "headless": config.HEADLESS,
         "one_nick": config.ONE_NICK,
         "nicks_per_ip": config.NICKS_PER_IP,
         "parallel_per_ip": config.PARALLEL_PER_IP,
@@ -943,13 +987,7 @@ class KeyPatch(BaseModel):
 async def admin_login(body: AdminLogin, request: Request):
     if not config.ADMIN_KEY:
         return {"ok": True, "auth_required": False}
-    ip = request.client.host if request.client else "?"
-    left = _admin_locked(ip)
-    if left:
-        raise HTTPException(429, f"Sai khóa admin quá nhiều lần — thử lại sau {int(left)}s")
-    ok = _admin_key_ok(body.key)
-    _admin_throttle(ip, ok)
-    if not ok:
+    if not _admin_check(body.key, request):
         raise HTTPException(401, "wrong admin key")
     return {"ok": True, "auth_required": True}
 
@@ -1179,6 +1217,43 @@ async def admin_account_verify(name: str, x_admin_key: str | None = Header(defau
     return {"ok": ok}
 
 
+async def _refresh_mstoken_if_missing(name: str) -> None:
+    """Sau import/đăng nhập: nick chưa có msToken THẬT → mở /chat cho trang Dola tự ghi rồi lưu lại. Chạy nền,
+    lỗi chỉ ghi log (không làm hỏng việc thêm nick). Bỏ qua nếu nick đang render (mở profile sẽ giết Chrome đó)."""
+    from browser import refresh_mstoken
+    from submit_http import has_real_mstoken
+    if has_real_mstoken(name):
+        return
+    try:
+        pool.assert_idle(name)
+        async with login_slots:
+            got = await refresh_mstoken(name)
+        print(f"[{name}] làm mới msToken: {'đã có msToken thật' if got else 'trang chưa ghi msToken — thử lại sau'}",
+              flush=True)
+    except Exception as e:  # noqa: BLE001 — việc phụ, không được làm hỏng luồng thêm nick
+        print(f"[{name}] làm mới msToken lỗi (bỏ qua): {str(e)[:160]}", flush=True)
+
+
+@app.post("/api/admin/accounts/{name}/refresh-mstoken")
+async def admin_account_refresh_mstoken(name: str, x_admin_key: str | None = Header(default=None)):
+    """Mở dola.com/chat bằng profile nick để trang tự ghi msToken thật, lưu vào cookies.json (nút Kho tài khoản)."""
+    _admin_auth(x_admin_key)
+    if name not in pool.accounts:
+        raise HTTPException(404, "account not found")
+    from browser import refresh_mstoken
+    try:
+        pool.assert_idle(name)   # đang render thì không mở profile (sẽ giết video đang chạy)
+        async with login_slots:
+            got = await refresh_mstoken(name)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Không mở được dola.com để lấy msToken: {str(e)[:260]}") from e
+    return {"ok": True, "has_mstoken": got}
+
+
 async def _run_add_job(name: str, email: str, password: str, totp: str):
     JOBS[name] = {"kind": "add", "status": "running", "step": "Đang chờ lượt mở trình duyệt…",
                   "error": "", "started_at": time.time()}
@@ -1189,6 +1264,7 @@ async def _run_add_job(name: str, email: str, password: str, totp: str):
         pool.set_email(name, email)
         pool.set_login_status(name, True)
         JOBS[name] = {**JOBS[name], "status": "success", "step": "Đăng nhập thành công!"}
+        await _refresh_mstoken_if_missing(name)
     except Exception as e:
         JOBS[name] = {**JOBS[name], "status": "failed", "step": "Thất bại", "error": str(e)[:300]}
 
@@ -1210,6 +1286,7 @@ async def _run_facebook_add_job(name: str, cookie_line: str, note: str | None = 
         pool.set_email(name, display_label)
         pool.set_login_status(name, True)
         JOBS[name] = {**JOBS[name], "status": "success", "step": "Đăng nhập Dola qua Facebook thành công!"}
+        await _refresh_mstoken_if_missing(name)
     except Exception as e:
         JOBS[name] = {**JOBS[name], "status": "failed", "step": "Thất bại", "error": str(e)[:300]}
 
@@ -1257,6 +1334,8 @@ async def admin_account_import_cookie(body: AccountCookieImport, x_admin_key: st
         if body.email:
             pool.set_email(name, body.email.strip())
         pool.set_login_status(name, res["ok"])
+        if res["ok"]:
+            _spawn(_refresh_mstoken_if_missing(name))   # import không mở trang → chưa có msToken; lấy nền, không chờ
         return res
     except Exception as e:
         raise HTTPException(400, f"Import cookie error: {str(e)}")
@@ -1306,6 +1385,37 @@ async def admin_burn_nicks(body: BurnNicksUpdate, x_admin_key: str | None = Head
     config.upsert_env_local("DOLA_BURN_NICKS", "1" if body.burn_nicks else "0")
     print(f"[gateway] đốt nick khi hết lượt/điểm: {'BẬT' if config.BURN_NICKS else 'TẮT'}", flush=True)
     return {"ok": True, "burn_nicks": config.BURN_NICKS}
+
+
+class CdpLaunchUpdate(BaseModel):
+    cdp_launch: bool
+
+
+@app.post("/api/admin/cdp-launch")
+async def admin_cdp_launch(body: CdpLaunchUpdate, x_admin_key: str | None = Header(default=None)):
+    """Bật/tắt CDP launch (mở Chrome thật bằng subprocess + connect_over_cdp, kiểu đối thủ) ngay lúc chạy, nhớ vào
+    .env.local. ĐÁNH ĐỔI: mất stealth patchright + lộ --remote-debugging-port. Chỉ có tác dụng ở đường mở Chrome."""
+    _admin_auth(x_admin_key)
+    setattr(config, "CDP_LAUNCH", body.cdp_launch)
+    config.upsert_env_local("DOLA_CDP_LAUNCH", "1" if body.cdp_launch else "0")
+    print(f"[gateway] CDP launch (Chrome thật qua CDP): {'BẬT' if body.cdp_launch else 'TẮT'}", flush=True)
+    return {"ok": True, "cdp_launch": body.cdp_launch}
+
+
+class HeadlessUpdate(BaseModel):
+    headless: bool
+
+
+@app.post("/api/admin/headless")
+async def admin_headless(body: HeadlessUpdate, x_admin_key: str | None = Header(default=None)):
+    """Bật/tắt chạy ẩn (headless) ngay lúc chạy, nhớ vào .env.local. TẮT = thấy cửa sổ Chrome của từng nick —
+    dùng để xem tận mắt job hỏng ở bước nào. Chỉ áp cho context mở SAU đó; job đang chạy không đổi.
+    Lưu ý: mỗi nick một cửa sổ, chạy 5 luồng là 5 cửa sổ bung ra."""
+    _admin_auth(x_admin_key)
+    config.HEADLESS = body.headless
+    config.upsert_env_local("DOLA_HEADLESS", "1" if body.headless else "0")
+    print(f"[gateway] chạy ẩn (headless): {'BẬT' if body.headless else 'TẮT — sẽ thấy cửa sổ Chrome'}", flush=True)
+    return {"ok": True, "headless": body.headless}
 
 
 class AutoRetryUpdate(BaseModel):

@@ -71,6 +71,39 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .video-wrap{display:flex;gap:8px;align-items:center}
 .tiny{font-size:12px;color:var(--sub)}
 .account-id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#52615d;font-weight:600}
+/* Studio Styles */
+.studio-container{display:grid;grid-template-columns:1.2fr 0.8fr;gap:20px;align-items:start}
+@media(max-width:960px){.studio-container{grid-template-columns:1fr}}
+.form-group{margin-bottom:16px}
+.form-group label{display:flex;align-items:center;justify-content:space-between;font-weight:600;font-size:13px;margin-bottom:6px;color:var(--text)}
+.studio-textarea{width:100%;min-height:130px;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:14px;font-family:inherit;line-height:1.5;resize:vertical;transition:border-color .2s;outline:none}
+.studio-textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,168,112,.1)}
+.preset-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.preset-btn{background:#eef1f0;border:none;border-radius:6px;padding:4px 10px;font-size:12px;color:var(--text);cursor:pointer;transition:.15s}
+.preset-btn:hover{background:#dfe5e3;color:var(--accent-d)}
+.ratio-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.ratio-card{border:1.5px solid var(--line);border-radius:8px;padding:10px 6px;text-align:center;cursor:pointer;transition:.2s;background:#fff;display:flex;flex-direction:column;align-items:center;gap:4px}
+.ratio-card:hover{border-color:var(--accent);background:#f6fcf9}
+.ratio-card.active{border-color:var(--accent);background:#e6f7f0;color:var(--accent-d);font-weight:600}
+.ratio-icon{border:1.5px solid currentColor;border-radius:3px;margin-bottom:2px}
+.duration-group{display:flex;gap:10px}
+.duration-btn{flex:1;border:1.5px solid var(--line);border-radius:8px;padding:9px;text-align:center;cursor:pointer;background:#fff;font-weight:500;transition:.2s}
+.duration-btn:hover{border-color:var(--accent)}
+.duration-btn.active{border-color:var(--accent);background:#e6f7f0;color:var(--accent-d);font-weight:700}
+.studio-select{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff;outline:none}
+.studio-submit{width:100%;padding:14px;font-size:15px;font-weight:600;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(0,168,112,.3)}
+.studio-monitor{display:flex;flex-direction:column;gap:14px}
+.live-player-box{position:relative;width:100%;border-radius:10px;overflow:hidden;background:#0d1413;min-height:260px;display:flex;align-items:center;justify-content:center}
+.live-player-box video{width:100%;max-height:460px;display:block;border-radius:10px}
+.live-player-empty{color:#7a8a86;text-align:center;padding:30px}
+.step-tracker{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.step-item{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--sub)}
+.step-item.active{color:var(--accent);font-weight:600}
+.step-item.done{color:var(--accent-d)}
+.step-icon{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#eef1f0;font-size:11px;font-weight:700}
+.step-item.active .step-icon{background:var(--accent);color:#fff;animation:pulse 1.5s infinite}
+.step-item.done .step-icon{background:#e6f7f0;color:var(--accent)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(0,168,112,.6)}70%{box-shadow:0 0 0 8px rgba(0,168,112,0)}100%{box-shadow:0 0 0 0 rgba(0,168,112,0)}}
 </style>
 </head>
 <body>
@@ -95,12 +128,175 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 
 <nav>
   <button class="on" data-tab="dash" onclick="switchTab('dash')">Dashboard</button>
+  <button data-tab="studio" onclick="switchTab('studio')" style="color:var(--accent);font-weight:700">🎬 Tạo Video (Studio)</button>
   <button data-tab="accounts" onclick="switchTab('accounts')">Accounts</button>
   <button data-tab="tasks" onclick="switchTab('tasks')">Task Queue</button>
   <button data-tab="keys" onclick="switchTab('keys')">API Keys</button>
 </nav>
 
 <main>
+  <section id="tab-studio" style="display:none">
+    <div class="studio-container">
+      <!-- Left Panel: Video Creation Form -->
+      <div class="card">
+        <h3 style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+          <span>🎬 Bảng Điều Khiển Tạo Video Seedance AI</span>
+          <span class="badge b-green">1080P Master No Watermark</span>
+        </h3>
+        
+        <div class="form-group">
+          <label>
+            <span>Model AI</span>
+          </label>
+          <div style="display:flex;gap:10px">
+            <label style="flex:1;display:flex;align-items:center;gap:6px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;cursor:pointer">
+              <input type="radio" name="st_model" value="seedance-2.0" checked>
+              <span>Seedance 2.0 (Ổn định, nhanh)</span>
+            </label>
+            <label style="flex:1;display:flex;align-items:center;gap:6px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;cursor:pointer">
+              <input type="radio" name="st_model" value="seedance-2.5">
+              <span>Seedance 2.5 (Chi tiết cao)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>
+            <span>Mô tả video (Prompt)</span>
+            <span id="promptCharCount" class="tiny">0 ký tự</span>
+          </label>
+          <textarea id="st_prompt" class="studio-textarea" placeholder="Nhập prompt chi tiết về nhân vật, bối cảnh, ánh sáng, góc quay (ví dụ: A cute small red panda drinking milk in the garden, cinematic 4k, smooth animation...)" oninput="updatePromptCount()"></textarea>
+          
+          <div class="preset-row">
+            <span style="font-size:11px;color:var(--sub);align-self:center">Gợi ý mẫu:</span>
+            <button class="preset-btn" onclick="applyPreset('A cute playful Shiba Inu running through a field of cherry blossoms, golden hour lighting, cinematic 4k, ultra realistic, smooth slow motion')">🐕 Shiba Inu hoa anh đào</button>
+            <button class="preset-btn" onclick="applyPreset('Futuristic cyberpunk girl with glowing neon jacket walking under rainy Tokyo street, reflections on wet asphalt, cinematic camera pan, 4k 60fps')">⚡ Cyberpunk Tokyo</button>
+            <button class="preset-btn" onclick="applyPreset('A breathtaking drone shot sweeping across dramatic emerald ocean cliffs at sunrise, misty atmosphere, national geographic style 4k')">🌊 Biển & Vách đá drone</button>
+            <button class="preset-btn" onclick="applyPreset('Delicious fresh coffee dripping from an espresso machine into a glass cup with creamy foam, extreme macro shot, warm cozy cafe vibe')">☕ Macro Espresso</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Tỉ lệ khung hình (Aspect Ratio)</label>
+          <div class="ratio-grid">
+            <div class="ratio-card active" data-ratio="16:9" onclick="setRatio('16:9')">
+              <div class="ratio-icon" style="width:24px;height:14px"></div>
+              <span style="font-size:12px">16:9</span>
+              <span class="tiny">Ngang Youtube</span>
+            </div>
+            <div class="ratio-card" data-ratio="9:16" onclick="setRatio('9:16')">
+              <div class="ratio-icon" style="width:14px;height:24px"></div>
+              <span style="font-size:12px">9:16</span>
+              <span class="tiny">Dọc TikTok/Reels</span>
+            </div>
+            <div class="ratio-card" data-ratio="1:1" onclick="setRatio('1:1')">
+              <div class="ratio-icon" style="width:18px;height:18px"></div>
+              <span style="font-size:12px">1:1</span>
+              <span class="tiny">Vuông</span>
+            </div>
+            <div class="ratio-card" data-ratio="4:3" onclick="setRatio('4:3')">
+              <div class="ratio-icon" style="width:20px;height:16px"></div>
+              <span style="font-size:12px">4:3</span>
+              <span class="tiny">Tiêu chuẩn</span>
+            </div>
+            <div class="ratio-card" data-ratio="3:4" onclick="setRatio('3:4')">
+              <div class="ratio-icon" style="width:16px;height:20px"></div>
+              <span style="font-size:12px">3:4</span>
+              <span class="tiny">Chân dung</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Thời lượng video</label>
+          <div class="duration-group">
+            <div class="duration-btn active" data-dur="10" onclick="setDur(10)">10 Giây</div>
+            <div class="duration-btn" data-dur="15" onclick="setDur(15)">15 Giây</div>
+            <div class="duration-btn" data-dur="30" onclick="setDur(30)">30 Giây</div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>
+            <span>Tài khoản Dola thực thi</span>
+            <span class="tiny">Tự động chọn nick tốt nhất hoặc chỉ định nick</span>
+          </label>
+          <select id="st_account" class="studio-select">
+            <option value="">🤖 Tự động chọn nick tốt nhất trong Pool (Khuyên dùng)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>
+            <span>Ảnh tham chiếu (Tùy chọn - Reference Images)</span>
+            <span class="tiny">Dán link ảnh online (mỗi link 1 dòng)</span>
+          </label>
+          <textarea id="st_images" class="studio-textarea" style="min-height:50px" placeholder="https://example.com/image1.jpg&#10;https://example.com/image2.png"></textarea>
+        </div>
+
+        <button id="btnGenerate" class="btn btn-p studio-submit" onclick="submitStudioTask()">
+          <span>⚡ BẮT ĐẦU TẠO VIDEO</span>
+        </button>
+        <div id="st_err" class="tiny" style="color:var(--red);margin-top:8px;display:none"></div>
+      </div>
+
+      <!-- Right Panel: Live Render Monitor & Player -->
+      <div class="studio-monitor">
+        <div class="card">
+          <h3 style="display:flex;align-items:center;justify-content:space-between">
+            <span>📺 Kết quả Video</span>
+            <span id="st_status_badge" class="badge b-gray">Sẵn sàng</span>
+          </h3>
+
+          <div class="live-player-box" id="playerBox">
+            <div class="live-player-empty" id="playerPlaceholder">
+              <div style="font-size:36px;margin-bottom:8px">🎬</div>
+              <div>Chưa có video nào đang chạy</div>
+              <div class="tiny" style="margin-top:4px">Bấm "Bắt đầu tạo video" để dựng video ngay</div>
+            </div>
+            <video id="st_video" controls autoplay loop style="display:none"></video>
+          </div>
+
+          <div id="downloadAction" style="margin-top:14px;display:none">
+            <a id="btnDownloadVideo" href="#" target="_blank" class="btn btn-p" style="display:block;text-align:center;text-decoration:none;font-weight:600">
+              📥 Tải Video 1080P Master (Không Watermark)
+            </a>
+          </div>
+
+          <!-- Step Progress Tracker -->
+          <div class="step-tracker" id="stepTracker" style="display:none">
+            <div class="step-item" id="step_queue">
+              <div class="step-icon">1</div>
+              <div>Xếp hàng trong Gateway Pool</div>
+            </div>
+            <div class="step-item" id="step_account">
+              <div class="step-icon">2</div>
+              <div>Kiểm tra Nick & gán Fresh Proxy</div>
+            </div>
+            <div class="step-item" id="step_submit">
+              <div class="step-icon">3</div>
+              <div>Ký chữ ký a_bogus & Nộp lệnh Dola</div>
+            </div>
+            <div class="step-item" id="step_render">
+              <div class="step-icon">4</div>
+              <div>Dola AI đang Render Video (<span id="renderTimer">0s</span>)</div>
+            </div>
+            <div class="step-item" id="step_done">
+              <div class="step-icon">5</div>
+              <div>Giải mã Token 1080P & Hoàn tất</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mini Recent Studio Jobs -->
+        <div class="card">
+          <h3 style="margin-bottom:10px">Lịch sử tạo gần nhất</h3>
+          <div id="studioRecentList" class="tiny" style="color:var(--sub)">Chưa có lịch sử trong phiên này.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="tab-dash">
     <div class="cards" id="statCards"></div>
     <div class="card"><h3>7-Day Video Generation Trend</h3><div class="chart" id="chart"></div></div>
@@ -180,7 +376,10 @@ function logout(){adminKey='';localStorage.removeItem(LS_KEY);showLogin();}
 function switchTab(t){
   curTab=t;
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
-  ['dash','accounts','tasks','keys'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
+  ['dash','studio','accounts','tasks','keys'].forEach(x=>{
+    const el = q('#tab-'+x);
+    if(el) el.style.display=x===t?'block':'none';
+  });
   refresh();
 }
 
@@ -189,6 +388,7 @@ async function refresh(){
   q('#lastUpdate').textContent='Updated at '+new Date().toLocaleTimeString();
   try{
     if(curTab==='dash')await loadDash();
+    else if(curTab==='studio')await loadStudio();
     else if(curTab==='accounts')await loadAccounts();
     else if(curTab==='tasks')await loadTasks();
     else if(curTab==='keys')await loadKeys();
@@ -571,6 +771,227 @@ async function copy(text){
 }
 
 function showDlg(html){q('#dlgBox').innerHTML=html;show('dlg');}
+
+/* ---- Studio Video Generation Controller ---- */
+let stRatio = '16:9';
+let stDur = 10;
+let stActiveTaskId = null;
+let stPollTimer = null;
+let stStartTime = 0;
+
+function updatePromptCount(){
+  const len = q('#st_prompt').value.length;
+  q('#promptCharCount').textContent = len + ' ký tự';
+}
+
+function applyPreset(text){
+  q('#st_prompt').value = text;
+  updatePromptCount();
+}
+
+function setRatio(r){
+  stRatio = r;
+  document.querySelectorAll('.ratio-card').forEach(c => {
+    c.classList.toggle('active', c.dataset.ratio === r);
+  });
+}
+
+function setDur(d){
+  stDur = d;
+  document.querySelectorAll('.duration-btn').forEach(b => {
+    b.classList.toggle('active', Number(b.dataset.dur) === d);
+  });
+}
+
+async function loadStudio(){
+  try {
+    const r = await api('/api/admin/accounts');
+    const sel = q('#st_account');
+    const curVal = sel.value;
+    sel.innerHTML = '<option value="">🤖 Tự động chọn nick tốt nhất trong Pool (Khuyên dùng)</option>';
+    (r.accounts || []).forEach(acc => {
+      const opt = document.createElement('option');
+      opt.value = acc.name;
+      const statusText = acc.remaining > 0 ? `${acc.remaining} lượt` : 'Hết lượt';
+      const proxyText = acc.proxy ? ' [Proxy riêng]' : '';
+      opt.textContent = `${acc.name} (${statusText})${proxyText}`;
+      sel.appendChild(opt);
+    });
+    if (curVal) sel.value = curVal;
+  } catch(e) {}
+  loadStudioRecent();
+}
+
+async function loadStudioRecent(){
+  try {
+    const r = await api('/api/admin/tasks?limit=10');
+    const tasks = (r.tasks || []).filter(t => t.prompt);
+    const box = q('#studioRecentList');
+    if (!tasks.length) {
+      box.innerHTML = '<div class="tiny" style="color:var(--sub)">Chưa có video nào được tạo.</div>';
+      return;
+    }
+    box.innerHTML = tasks.slice(0, 5).map(t => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)">
+        <div style="flex:1;overflow:hidden;margin-right:10px">
+          <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500">${esc(t.prompt)}</div>
+          <div class="tiny" style="color:var(--sub)">${t.id} · ${t.ratio||'16:9'} · ${t.duration||10}s</div>
+        </div>
+        <div>
+          ${t.status === 'completed' && t.video_url ? 
+            `<button class="btn btn-p" style="padding:4px 8px;font-size:11px" onclick="openStudioVideo('${t.video_url}')">Xem</button>` : 
+            `<span class="badge ${t.status==='failed'?'b-red':t.status==='processing'?'b-blue':'b-gray'}">${t.status}</span>`
+          }
+        </div>
+      </div>
+    `).join('');
+  } catch(e) {}
+}
+
+function openStudioVideo(url){
+  q('#playerPlaceholder').style.display = 'none';
+  const v = q('#st_video');
+  v.src = url;
+  v.style.display = 'block';
+  v.play().catch(()=>{});
+  const dl = q('#downloadAction');
+  dl.style.display = 'block';
+  q('#btnDownloadVideo').href = url;
+}
+
+function setStudioStep(step){
+  const steps = ['queue', 'account', 'submit', 'render', 'done'];
+  steps.forEach((name, idx) => {
+    const el = q('#step_' + name);
+    if (!el) return;
+    el.classList.remove('active', 'done');
+    if (idx + 1 < step) {
+      el.classList.add('done');
+    } else if (idx + 1 === step) {
+      el.classList.add('active');
+    }
+  });
+}
+
+async function submitStudioTask(){
+  const prompt = q('#st_prompt').value.trim();
+  const errEl = q('#st_err');
+  errEl.style.display = 'none';
+  
+  if (!prompt) {
+    errEl.textContent = 'Vui lòng nhập nội dung Prompt mô tả video.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const model = document.querySelector('input[name="st_model"]:checked')?.value || 'seedance-2.0';
+  const account = q('#st_account').value.trim() || undefined;
+  
+  const imgsRaw = q('#st_images').value.trim();
+  const reference_images = imgsRaw ? imgsRaw.split('\n').map(x=>x.trim()).filter(Boolean) : [];
+
+  const btn = q('#btnGenerate');
+  btn.disabled = true;
+  btn.innerHTML = '<span>⏳ Đang gửi lệnh...</span>';
+
+  q('#stepTracker').style.display = 'flex';
+  setStudioStep(1);
+  q('#st_status_badge').className = 'badge b-blue';
+  q('#st_status_badge').textContent = 'Đang xếp hàng...';
+
+  q('#playerPlaceholder').style.display = 'block';
+  q('#st_video').style.display = 'none';
+  q('#downloadAction').style.display = 'none';
+
+  stStartTime = Date.now();
+
+  try {
+    const res = await api('/api/admin/generate-video', {
+      method: 'POST',
+      body: {
+        prompt,
+        model,
+        ratio: stRatio,
+        duration: stDur,
+        account,
+        reference_images
+      }
+    });
+
+    stActiveTaskId = res.id;
+    q('#st_status_badge').textContent = 'Đang xử lý (' + res.id.slice(-8) + ')';
+    startStudioPolling();
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = '<span>⚡ BẮT ĐẦU TẠO VIDEO</span>';
+    errEl.textContent = 'Lỗi tạo task: ' + (e.message || e);
+    errEl.style.display = 'block';
+    q('#st_status_badge').className = 'badge b-red';
+    q('#st_status_badge').textContent = 'Thất bại';
+  }
+}
+
+function startStudioPolling(){
+  if (stPollTimer) clearInterval(stPollTimer);
+  stPollTimer = setInterval(pollStudioActiveTask, 2000);
+}
+
+async function pollStudioActiveTask(){
+  if (!stActiveTaskId) return;
+
+  const elapsed = Math.floor((Date.now() - stStartTime) / 1000);
+  q('#renderTimer').textContent = elapsed + 's';
+
+  try {
+    const t = await api('/v1/videos/' + stActiveTaskId);
+    const stage = t.stage || t.status;
+
+    if (stage === 'queued' || stage === 'waiting') {
+      setStudioStep(1);
+      q('#st_status_badge').className = 'badge b-blue';
+      q('#st_status_badge').textContent = 'Đang chờ slot...';
+    } else if (stage === 'opening') {
+      setStudioStep(2);
+      q('#st_status_badge').className = 'badge b-blue';
+      q('#st_status_badge').textContent = 'Đang mở & kiểm tra nick...';
+    } else if (stage === 'submitting') {
+      setStudioStep(3);
+      q('#st_status_badge').className = 'badge b-orange';
+      q('#st_status_badge').textContent = 'Đang nộp lệnh Dola...';
+    } else if (stage === 'rendering' || t.status === 'processing') {
+      setStudioStep(4);
+      q('#st_status_badge').className = 'badge b-orange';
+      q('#st_status_badge').textContent = 'Dola đang dựng video...';
+    }
+
+    if (t.status === 'completed') {
+      clearInterval(stPollTimer);
+      stPollTimer = null;
+      setStudioStep(5);
+      q('#st_status_badge').className = 'badge b-green';
+      q('#st_status_badge').textContent = 'Hoàn thành ✓';
+      q('#btnGenerate').disabled = false;
+      q('#btnGenerate').innerHTML = '<span>⚡ BẮT ĐẦU TẠO VIDEO TIẾP THEO</span>';
+      
+      if (t.video_url) {
+        openStudioVideo(t.video_url);
+      }
+      loadStudioRecent();
+    } else if (t.status === 'failed') {
+      clearInterval(stPollTimer);
+      stPollTimer = null;
+      q('#st_status_badge').className = 'badge b-red';
+      q('#st_status_badge').textContent = 'Thất bại ✗';
+      q('#btnGenerate').disabled = false;
+      q('#btnGenerate').innerHTML = '<span>⚡ THỬ LẠI</span>';
+      q('#st_err').textContent = 'Thất bại: ' + (t.error || 'Lỗi không xác định');
+      q('#st_err').style.display = 'block';
+      loadStudioRecent();
+    }
+  } catch(e) {
+    // silent
+  }
+}
 
 /* Init: auth check */
 (async function boot(){

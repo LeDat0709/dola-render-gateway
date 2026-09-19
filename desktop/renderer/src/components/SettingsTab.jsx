@@ -3,7 +3,7 @@ import { FolderOpen, Folder, Server, Network, SlidersHorizontal, HardDrive } fro
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api, cfg, loadConfig, adminConfig, health as fetchHealth, setBurnNicks } from "@/lib/api";
+import { api, cfg, loadConfig, adminConfig, health as fetchHealth, setBurnNicks, setCdpLaunch, setHeadless } from "@/lib/api";
 
 // Mỗi khối lưu riêng; mục nào cần Tắt rồi Bật server thì ghi ngay dưới nút Lưu.
 // Chỉ hiện những gì backend thật có: máy chủ từ xa, proxy chung, tự thử lại, thư mục (IPC main.js) và
@@ -32,6 +32,8 @@ export default function SettingsTab({ active = true }) {
   const [autoRetry, setAutoRetry] = useState(true); const [arMsg, setArMsg] = useState("");
   const [burn, setBurn] = useState(false); const [burnMsg, setBurnMsg] = useState("");
   const [httpEngine, setHttpEngine] = useState(false); const [engMsg, setEngMsg] = useState("");
+  const [cdp, setCdp] = useState(false); const [cdpMsg, setCdpMsg] = useState("");
+  const [showChrome, setShowChrome] = useState(false); const [showChromeMsg, setShowChromeMsg] = useState("");
   const [oneNick, setOneNick] = useState(false); const [onMsg, setOnMsg] = useState(""); const [nicksPerIp, setNicksPerIp] = useState(2); const [parallelPerIp, setParallelPerIp] = useState(1);
   const [srv, setSrv] = useState(null);     // cấu hình server đang chạy (/api/admin/config) hoặc null khi server tắt
   const [up, setUp] = useState(false);
@@ -49,7 +51,7 @@ export default function SettingsTab({ active = true }) {
     loadLane();
     api.getRemote?.().then((r) => { setRb(r?.base || ""); setRk(r?.apiKey || ""); setRa(r?.adminKey || ""); }).catch(() => {});
     api.getAutoRetry?.().then((r) => setAutoRetry(r?.on !== false)).catch(() => {});
-    fetchHealth().then((h) => { setBurn(h?.burn_nicks === true); setHttpEngine(h?.submit_mode === "http"); }).catch(() => {});
+    fetchHealth().then((h) => { setBurn(h?.burn_nicks === true); setHttpEngine(h?.submit_mode === "http"); setCdp(h?.cdp_launch === true); setShowChrome(h?.headless === false); }).catch(() => {});
     api.getOneNick?.().then((r) => { setOneNick(r?.on === true); if (r?.nicksPerIp) setNicksPerIp(r.nicksPerIp); if (r?.parallelPerIp) setParallelPerIp(r.parallelPerIp); }).catch(() => {});
     api.getVersion?.().then(setVer).catch(() => {});
     refreshHealth();
@@ -94,6 +96,22 @@ export default function SettingsTab({ active = true }) {
       await setBurnNicks(on);
       setBurnMsg(on ? "✓ Đã BẬT đốt nick — nick dùng hết lượt/điểm sẽ bị tắt lịch + ghi chú [ĐÃ ĐỐT]. Lọc 'Đã đốt' ở Kho tài khoản để xoá." : "✓ Đã TẮT đốt nick.");
     } catch (err) { setBurn(!on); setBurnMsg("✗ " + (err?.message || "Bật server rồi thử lại")); }
+  };
+  const toggleCdp = async (e) => {
+    const on = e.target.checked;
+    setCdp(on);
+    const r = await setCdpLaunch(on);
+    if (!r?.ok) { setCdp(!on); setCdpMsg("✗ " + (r?.error || "Bật server rồi thử lại")); return; }
+    setCdpMsg(on ? "⚠ BẬT CDP — mở Chrome thật bằng subprocess + connect_over_cdp (kiểu đối thủ). MẤT stealth patchright + lộ --remote-debugging-port, dễ bị Dola phát hiện hơn. Chỉ dùng khi cách mở Chrome cũ hỏng (ví dụ Chrome 137+ không nạp được extension). Cần build lại config.so mới có tác dụng."
+                : "✓ Đã TẮT CDP — về cách mở Chrome patchright (nhiều stealth hơn).");
+  };
+  const toggleShowChrome = async (e) => {
+    const on = e.target.checked;                  // on = HIỆN cửa sổ  →  headless = !on
+    setShowChrome(on);
+    const r = await setHeadless(!on);
+    if (!r?.ok) { setShowChrome(!on); setShowChromeMsg("✗ " + (r?.error || "Bật server rồi thử lại")); return; }
+    setShowChromeMsg(on ? "✓ Sẽ HIỆN cửa sổ Chrome của từng nick từ job kế tiếp — job đang chạy không đổi. Chạy 5 luồng là 5 cửa sổ bung ra; xem xong nhớ tắt lại."
+                       : "✓ Đã về chạy ẩn (headless) — không hiện cửa sổ nữa.");
   };
   const toggleOneNick = async (e) => {
     const on = e.target.checked;
@@ -246,6 +264,18 @@ export default function SettingsTab({ active = true }) {
               <span className="block text-[11px] leading-relaxed text-muted-foreground">Bật (mặc định): ký chữ ký bằng Python rồi gửi thẳng bằng cookie của nick — <b>không mở Chrome mỗi nick</b>, nhẹ RAM, mở nick nhanh, chạy được nhiều nick hơn, và <b>đăng nhập/nạp cookie không phải tắt cả mẻ đang chạy</b> (như đối thủ). Nếu Dola từ chối (cookie/captcha/đổi thuật toán ký) thì <b>tự mở Chrome ký lại</b>. Chữ ký ByteDance đổi theo quý nên có lúc phải cập nhật; video có ảnh tham chiếu vẫn dùng Chrome. Tắt: luôn mở Chrome ký (ổn định nhất, nhưng đăng nhập phải tạm dừng render).</span></span>
           </label>
           <Msg text={engMsg} />
+          <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">
+            <input type="checkbox" className="mt-1" checked={showChrome} onChange={toggleShowChrome} />
+            <span><span className="font-medium">Hiện cửa sổ Chrome khi chạy job <span className="rounded bg-tertiary/15 px-1 text-[10px] font-semibold text-tertiary">để soi lỗi</span></span>
+              <span className="block text-[11px] leading-relaxed text-muted-foreground">Tắt chế độ ẩn (<code className="font-mono">headless</code>) để <b>nhìn tận mắt</b> job hỏng ở bước nào: trang Dola có vào được không, nick còn đăng nhập không, Dola có hỏi lại hay chặn không. Chỉ áp cho nick mở <b>sau khi bật</b> — job đang chạy không đổi. <b>Mỗi nick một cửa sổ</b>: chạy 5 luồng là 5 cửa sổ bung ra, xem xong nên tắt lại. Muốn mở riêng một nick để đăng nhập thì dùng nút <b>Mở profile</b> bên Kho tài khoản (không cần bật cái này).</span></span>
+          </label>
+          <Msg text={showChromeMsg} />
+          <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">
+            <input type="checkbox" className="mt-1" checked={cdp} onChange={toggleCdp} />
+            <span><span className="font-medium">Mở Chrome thật qua CDP <span className="rounded bg-warn/15 px-1 text-[10px] font-semibold text-warn">rủi ro</span></span>
+              <span className="block text-[11px] leading-relaxed text-muted-foreground">Chỉ áp dụng ở <b>đường mở Chrome</b> (khi engine phải mở Chrome). Bật: mở Chrome thật bằng <code className="font-mono">subprocess + connect_over_cdp</code> như đối thủ, nạp extension qua CDP (chạy được cả Chrome 137+ đã bỏ <code className="font-mono">--load-extension</code>). <b>Đánh đổi: mất phần lớn stealth của patchright và lộ <code className="font-mono">--remote-debugging-port</code></b> — Dola dễ phát hiện automation hơn. Tắt (mặc định): dùng patchright (nhiều lớp chống phát hiện). Cần <b>build lại config.so</b> mới có tác dụng khi chạy thật.</span></span>
+          </label>
+          <Msg text={cdpMsg} />
           <label className="flex cursor-pointer items-start gap-2.5 border-t border-surface-high pt-3 text-[13px]">
             <input type="checkbox" className="mt-1" checked={oneNick} onChange={toggleOneNick} />
             <span><span className="font-medium">Xoay IP theo lô (1 key proxy xoay cho nhiều nick)</span>

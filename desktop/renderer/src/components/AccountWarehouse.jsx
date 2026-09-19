@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RotateCw, Settings, Trash2, FolderOpen, Stethoscope, RefreshCw, Eraser, Search, Cookie, Network, Facebook, Copy, Download, Upload, Square, Film } from "lucide-react";
+import { RotateCw, Settings, Trash2, FolderOpen, Stethoscope, RefreshCw, Eraser, Search, Cookie, Network, Facebook, Copy, Download, Upload, Square, Film, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -7,7 +7,7 @@ import { SelectNative } from "@/components/ui/select-native";
 import {
   api, cfg, adminAccounts, patchAccount, verifyAccount, openProfile,
   deleteAccount, clearCookies, timeAgo, accState, accChip, maskProxy, proxyHost,
-  exportAccounts, importAccounts,
+  exportAccounts, importAccounts, refreshMstoken,
 } from "@/lib/api";
 import { normalizeBundle } from "@/lib/bundle";
 import ProxyAssignDialog from "@/components/ProxyAssignDialog";
@@ -107,6 +107,8 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
   }, [all]);
   const credits = all.reduce((s, a) => s + (a.remaining || 0), 0);
   const noProxy = all.filter((a) => !a.proxy).length;
+  // Nick đăng nhập được mà thiếu msToken thật → gửi bằng msToken giả, Dola dễ trả 710022002.
+  const noMsToken = all.filter((a) => a.has_mstoken === false && a.login_ok !== 0).map((a) => a.name);
 
   const done = async () => { await load(); onRefresh?.(); };
   async function one(n, fn, label) {
@@ -186,6 +188,12 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
   const briefNames = (a, max = 10) => a.length <= max ? a.join(", ") : `${a.slice(0, max).join(", ")} …và ${a.length - max} nick khác`;
   const del = (n) => { if (window.confirm(`XOÁ HẲN nick ${n}?\nToàn bộ profile và phiên đăng nhập sẽ mất (không hoàn tác).`)) one(n, deleteAccount, "xoá"); };
   const bulkDel = () => { if (window.confirm(`XOÁ HẲN ${selNames.length} nick?\n${briefNames(selNames)}\nKhông hoàn tác.`)) each(selNames, deleteAccount, "Xoá nick", true); };
+  // Trang chưa kịp ghi msToken trong hạn chờ → coi là lỗi của nick đó để bảng tổng kết báo đúng.
+  const refreshOne = async (n) => {
+    const r = await refreshMstoken(n);
+    if (!r.has_mstoken) throw new Error("trang Dola chưa ghi msToken — thử lại sau");
+    return r;
+  };
   const bulkClear = () => { if (window.confirm(`Xoá cookie của ${selNames.length} nick?\n${briefNames(selNames)}\nCác nick này sẽ phải đăng nhập lại.`)) each(selNames, clearCookies, "Xoá cookie", true); };
 
   const emptyMsg = loadErr === "auth" ? "Sai admin key — kiểm tra DOLA_ADMIN_KEY (Cài đặt → Server từ xa, hoặc .env.local) rồi mở lại app."
@@ -214,6 +222,9 @@ export default function AccountWarehouse({ onRefresh, onAdd, active = true }) {
           <Button variant="secondary" size="sm" onClick={() => onAdd?.("cookie")}><Cookie className="h-3.5 w-3.5 text-primary" />Nhập cookie</Button>
           <Button variant="secondary" size="sm" onClick={() => setDlg(true)} disabled={!all.length}><Network className="h-3.5 w-3.5 text-tertiary" />Chia proxy tự động</Button>
           <Button variant="secondary" size="sm" disabled={busy || !all.length} onClick={() => each(all.map((a) => a.name), verifyAccount, "Kiểm tra phiên")}><Stethoscope className="h-3.5 w-3.5 text-info" />Kiểm tra phiên</Button>
+          <Button variant="secondary" size="sm" disabled={busy || !noMsToken.length}
+            title="Mở dola.com bằng từng nick thiếu msToken để trang tự ghi msToken thật (mỗi nick ~10–20s, bỏ qua nick đang render)"
+            onClick={() => each(noMsToken, refreshOne, "Làm mới msToken")}><KeyRound className="h-3.5 w-3.5 text-warn" />Làm mới msToken{noMsToken.length ? ` (${noMsToken.length})` : ""}</Button>
           <Button variant="secondary" size="sm" onClick={exportAll} disabled={busy || !all.length} title="Xuất cookie + proxy + ghi chú của mọi nick ra một file để nhập ở máy khác"><Download className="h-3.5 w-3.5" />Xuất kho</Button>
           <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()} disabled={busy} title="Nhập file đã xuất từ máy khác"><Upload className="h-3.5 w-3.5" />Nhập kho</Button>
           <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = ""; }} />
