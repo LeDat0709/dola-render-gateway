@@ -12,6 +12,7 @@ Box is expressed as fractions of width/height, calibrated on a 1280x720 render
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -41,12 +42,55 @@ def _ffmpeg_exe() -> str | None:
     return shutil.which("ffmpeg")
 
 
+def _mvhd_seconds(moov: bytes) -> float | None:
+    """Giây từ atom mvhd nằm trong nội dung moov (v0: 32-bit, v1: 64-bit)."""
+    i = moov.find(b"mvhd")
+    if i < 4 or i + 5 > len(moov):
+        return None
+    try:
+        if moov[i + 4] == 1:
+            timescale, duration = struct.unpack(">IQ", moov[i + 24:i + 36])
+        else:
+            timescale, duration = struct.unpack(">II", moov[i + 16:i + 24])
+    except struct.error:
+        return None
+    return duration / timescale if timescale else None
+
+
+def _mp4_duration(path) -> float | None:
+    """Thời lượng từ atom mvhd, chỉ stdlib: nhảy qua các box cấp cao nhất, KHÔNG nạp mdat (vài chục MB) vào RAM."""
+    try:
+        with open(path, "rb") as f:
+            end = f.seek(0, 2)
+            pos = 0
+            while pos + 8 <= end:
+                f.seek(pos)
+                size, kind = struct.unpack(">I4s", f.read(8))
+                header = 8
+                if size == 1:                      # kích thước thật nằm ở 8 byte kế tiếp
+                    size, header = struct.unpack(">Q", f.read(8))[0], 16
+                elif size == 0:                    # box cuối, kéo tới hết file
+                    size = end - pos
+                if size < header:
+                    return None
+                if kind == b"moov":
+                    return _mvhd_seconds(f.read(size - header))
+                pos += size
+    except (OSError, struct.error):
+        return None
+    return None
+
+
 def probe_duration(path) -> float | None:
     """Thời lượng THẬT của file (giây), None nếu không đọc được.
 
     Dola có lúc trừ đủ credit của 30s nhưng trả clip ngắn hơn (10/15s). Không đo thì tool báo "Hoàn tất"
-    và người dùng chỉ phát hiện khi mở file — lượt đã mất. Dùng cv2 sẵn có, không thêm phụ thuộc.
+    và người dùng chỉ phát hiện khi mở file — lượt đã mất. Đọc mvhd trước (stdlib, chính xác, không phụ thuộc
+    gì); cv2 chỉ là dự phòng cho file lạ — cv2 hay hỏng trên Windows nên không thể là đường duy nhất.
     """
+    seconds = _mp4_duration(path)
+    if seconds and seconds > 0:
+        return seconds
     try:
         import cv2
         cap = cv2.VideoCapture(str(path))
