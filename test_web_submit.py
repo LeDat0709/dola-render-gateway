@@ -66,7 +66,7 @@ def web_params(ck: dict) -> dict:
         "aid": DOLA_AID, "real_aid": DOLA_AID, "device_platform": "web", "language": "ja",
         "region": "JP", "sys_region": "JP", "samantha_web": "1", "web_platform": "browser",
         "use-olympus-account": "1", "version_code": "20800", "pkg_type": "release_version",
-        "pc_version": "3.32.62", "doubao_device_platform": "web", "doubao_pc_version": "3.32.62",
+        "pc_version": "3.36.11", "doubao_device_platform": "web", "doubao_pc_version": "3.36.11",
         "msToken": ck.get("msToken") or fake_mstoken(),
         "fp": ck.get("s_v_web_id", ""),
         "web_tab_id": str(uuid.uuid4()),

@@ -184,7 +184,7 @@ async ({conversationId, msToken, fp}) => {
   const params = new URLSearchParams({
     version_code: "20800", language: "ja", device_platform: "web",
     doubao_device_platform: "web", aid: "495671", real_aid: "495671",
-    pkg_type: "release_version", pc_version: "3.32.62", doubao_pc_version: "3.32.62",
+    pkg_type: "release_version", pc_version: "3.36.11", doubao_pc_version: "3.36.11",
     region: "JP", sys_region: "JP", samantha_web: "1", web_platform: "browser",
     "use-olympus-account": "1", web_tab_id: crypto.randomUUID(),
   });

@@ -675,7 +675,7 @@ async ({msToken, fp}) => {
   const params = new URLSearchParams({
     version_code: "20800", language: "ja", device_platform: "web",
     doubao_device_platform: "web", aid: "495671", real_aid: "495671",
-    pkg_type: "release_version", pc_version: "3.32.62", doubao_pc_version: "3.32.62",
+    pkg_type: "release_version", pc_version: "3.36.11", doubao_pc_version: "3.36.11",
     region: "JP", sys_region: "JP", samantha_web: "1", web_platform: "browser",
     "use-olympus-account": "1", web_tab_id: crypto.randomUUID(),
   });
@@ -1065,7 +1065,7 @@ RECENT_CONV_IDS_JS = r"""
 async ({msToken, fp}) => {
   const params = new URLSearchParams({version_code: "20800", language: "ja", device_platform: "web",
     doubao_device_platform: "web", aid: "495671", real_aid: "495671", pkg_type: "release_version",
-    pc_version: "3.32.62", doubao_pc_version: "3.32.62", region: "JP", sys_region: "JP",
+    pc_version: "3.36.11", doubao_pc_version: "3.36.11", region: "JP", sys_region: "JP",
     samantha_web: "1", web_platform: "browser", "use-olympus-account": "1", web_tab_id: crypto.randomUUID()});
   if (msToken) params.set("msToken", msToken);
   if (fp) params.set("fp", fp);
@@ -1349,8 +1349,9 @@ async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, dura
             captured = _query_capture(page)
             await _goto_dola(page, "https://www.dola.com/chat", account=account)
             # Chờ trang tự gọi API để bắt device_id/web_id (nền ký fetch). Trang/proxy chậm có thể
-            # cần hơn 5s → chờ tới ~20s thay vì cứng 5s (giảm _FetchSubmitFailed "device_id missing").
-            for _ in range(20):
+            # cần hơn 5s → chờ tới ~30s (19/09: nick SỐNG vẫn trượt ở 20s rồi retry đập Dola ăn
+            # 710022002 — nới cửa sổ chờ = ít _FetchSubmitFailed hơn = ít retry = ít rate limit hơn).
+            for _ in range(30):
                 await page.wait_for_timeout(1000)
                 if "device_id" in captured:
                     break
@@ -1425,8 +1426,8 @@ async def _strip_logo(result: dict, model_key: str, account: str) -> dict:
 _SINGLE_URL = "https://www.dola.com/im/chain/single"
 _SINGLE_PARAMS = {
     "version_code": "20800", "language": "ja", "device_platform": "web", "doubao_device_platform": "web",
-    "aid": "495671", "real_aid": "495671", "pkg_type": "release_version", "pc_version": "3.32.62",
-    "doubao_pc_version": "3.32.62", "region": "JP", "sys_region": "JP", "samantha_web": "1",
+    "aid": "495671", "real_aid": "495671", "pkg_type": "release_version", "pc_version": "3.36.11",
+    "doubao_pc_version": "3.36.11", "region": "JP", "sys_region": "JP", "samantha_web": "1",
     "web_platform": "browser", "use-olympus-account": "1",
 }
 

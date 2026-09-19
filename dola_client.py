@@ -396,7 +396,7 @@ class DolaClient:
         prep_url = f"{self.api_base}/alice/resource/prepare_upload"
         prep_params = build_query_params(self.cookie, {
             "device_id": "7655726059970627125",
-            "pc_version": "3.23.10",
+            "pc_version": "3.36.11",
             "pkg_type": "release_version",
             "real_aid": DOLA_AID,
             "tea_uuid": "7655726485928068629",
