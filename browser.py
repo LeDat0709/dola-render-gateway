@@ -1029,16 +1029,19 @@ def _extension_dirs(use_extension: bool, want_extra: bool = False) -> list[str]:
     return dirs
 
 
-def _extension_launch(ext_dirs: list[str], args: list[str], headless: bool) -> tuple[list[str], bool]:
+def _extension_launch(ext_dirs: list[str], args: list[str]) -> list[str]:
     """Cờ + chế độ mở cho profile có extension. KHÔNG dùng --load-extension: Chrome 137+ chính hãng bỏ qua lặng lẽ
     (chrome://extensions trống) → nạp bằng CDP sau khi mở (_load_unpacked_extensions).
 
-    GIỮ NGUYÊN chế độ ẩn của người gọi: đo 20/09 trên Chrome 153, extension MV3 nạp và chạy bình thường khi
+    KHÔNG đụng tới chế độ ẩn: đo 20/09 trên Chrome 153, extension MV3 nạp và chạy bình thường khi
     headless=True (service worker lên), và vân tay (userAgentData.brands, webdriver, plugins, WebGL) không khác
     bản hiện cửa sổ — với điều kiện vẫn gỡ chữ "Headless" khỏi UA như launch_account_context đang làm."""
     if not ext_dirs:
-        return args, headless
-    return [*args, "--enable-unsafe-extension-debugging"], headless
+        return args
+    return [*args, "--enable-unsafe-extension-debugging"]
+
+
+_EXT_LOADED: "weakref.WeakSet" = weakref.WeakSet()   # context đã nạp được ≥1 extension thật
 
 
 async def _load_unpacked_extensions(context, ext_dirs: list[str]) -> None:
@@ -1058,9 +1061,6 @@ async def _load_unpacked_extensions(context, ext_dirs: list[str]) -> None:
             _EXT_LOADED.add(context)
         except Exception as e:  # noqa: BLE001
             print(f"[browser] nạp extension '{d}' lỗi: {str(e)[:120]}", flush=True)
-
-
-_EXT_LOADED: "weakref.WeakSet" = weakref.WeakSet()   # context đã nạp được ≥1 extension thật
 
 
 def extension_loaded(context) -> bool:
@@ -1095,7 +1095,7 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
         args.append("--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
     hijack_30s = use_extension and config.SKILLPACK_HIJACK
     ext_dirs = _extension_dirs(use_extension, want_extra=want_khan)
-    args, launch_headless = _extension_launch(ext_dirs, args, launch_headless)
+    args = _extension_launch(ext_dirs, args)
     kwargs = {
         "headless": launch_headless,
         "args": args,

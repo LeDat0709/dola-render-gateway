@@ -98,21 +98,22 @@ def test_skip_30s_chip_only_when_khan_really_loaded(monkeypatch):
     monkeypatch.setattr(config, "EXTRA_EXTENSION_DIR", "/khan", raising=False)
     loaded, bare = _FakeContext(_FakeBrowser(_FakeCdp())), _FakeContext(None)
     asyncio.run(browser._load_unpacked_extensions(loaded, ["/khan"]))
-    assert video_worker_ui._khan_replaces_duration_chip(loaded, "9:16", 30, "seedance_v2.5") is True
-    assert video_worker_ui._khan_replaces_duration_chip(bare, "9:16", 30, "seedance_v2.5") is False   # nạp lỗi → chọn chip như cũ
-    assert video_worker_ui._khan_replaces_duration_chip(loaded, "9:16", 15, "seedance_v2.5") is False
-    assert video_worker_ui._khan_replaces_duration_chip(loaded, "9:16", 30, "seedance_v2.0") is False
+    msg_30s_25 = video_worker_ui._khan_settings_msg("9:16", 30, "seedance_v2.5")
+    assert video_worker_ui._khan_replaces_duration_chip(loaded, msg_30s_25) is True
+    assert video_worker_ui._khan_replaces_duration_chip(bare, msg_30s_25) is False   # nạp lỗi → chọn chip như cũ
+    for ratio, dur, model in [("9:16", 15, "seedance_v2.5"), ("9:16", 30, "seedance_v2.0")]:
+        msg = video_worker_ui._khan_settings_msg(ratio, dur, model)
+        assert video_worker_ui._khan_replaces_duration_chip(loaded, msg) is False
 
 
-def test_extension_keeps_headless_choice_of_caller():
+def test_extension_only_adds_a_flag_and_never_touches_headless():
     """Đo 20/09 trên Chrome 153: extension MV3 nạp và chạy BÌNH THƯỜNG ở chế độ ẩn (service worker lên,
-    vân tay không khác bản hiện cửa sổ). Nên đừng ép hiện cửa sổ — công tắc "chạy ẩn" phải có hiệu lực."""
-    args, headless = browser._extension_launch(["/a"], ["--x"], True)
+    vân tay không khác bản hiện cửa sổ). Nên hàm này chỉ thêm cờ, KHÔNG đụng tới chế độ ẩn — công tắc
+    "chạy ẩn" của người dùng phải có hiệu lực cả với job 30s."""
+    args = browser._extension_launch(["/a"], ["--x"])
     assert "--enable-unsafe-extension-debugging" in args and "--x" in args
-    assert headless is True                                   # tôn trọng lựa chọn của người gọi
-    assert browser._extension_launch(["/a"], [], False)[1] is False
-    args2, headless2 = browser._extension_launch([], ["--x"], True)
-    assert args2 == ["--x"] and headless2 is True
+    args2 = browser._extension_launch([], ["--x"])
+    assert args2 == ["--x"]                                   # không có extension → không thêm cờ nào
     assert not any(a.startswith("--load-extension") for a in args + args2)   # cờ này Chrome 153 bỏ qua
 
 

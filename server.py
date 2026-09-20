@@ -1385,7 +1385,7 @@ async def admin_submit_mode(body: SubmitModeUpdate, x_admin_key: str | None = He
     _admin_auth(x_admin_key)
     mode = (body.mode or "").strip().lower()
     if mode not in ("fetch", "http", "ui", "chrome"):
-        raise HTTPException(422, "mode phải là 'fetch', 'http', hoặc 'ui'")
+        raise HTTPException(422, "mode phải là 'fetch', 'http', 'ui' hoặc 'chrome'")
     config.SUBMIT_MODE = mode
     config.upsert_env_local("DOLA_SUBMIT_MODE", mode)
     print(f"[gateway] cách gửi lệnh: {mode}", flush=True)

@@ -667,6 +667,7 @@ async def _click_first_visible(page, labels, exact: bool = True, timeout: int = 
 # "video-model"). Chỉ có trong composer video → không nhầm với nút chế độ chat "⚡高速" (data-valid-btn=mode-select-action-btn).
 VIDEO_MODEL_BTN = "button[data-input-engine-actionbar-control-key='video-model']"
 VIDEO_DURATION_BTN = "button[data-input-engine-actionbar-control-key='video-duration']"
+VIDEO_RATIO_BTN = "button[data-input-engine-actionbar-control-key='video-ratio']"
 VIDEO_SKILL_CHIP = "button[data-component-type='skill-item']:has-text('動画')"   # chip "動画を作成" ở chat trống
 
 
@@ -2374,7 +2375,6 @@ async def _select_duration_chip(page, duration: int) -> bool:
     return False
 
 
-VIDEO_RATIO_BTN = "button[data-input-engine-actionbar-control-key='video-ratio']"
 
 
 async def _set_ratio(page, ratio: str) -> None:
@@ -2554,14 +2554,13 @@ def _khan_settings_msg(ratio: str | None, duration: int | None, model_key: str) 
     return {"type": "PURZA_UPDATE_SETTINGS", "ratio": ratio or "9:16", "duration": 30}
 
 
-def _khan_replaces_duration_chip(context, ratio: str | None, duration: int | None, model_key: str) -> bool:
+def _khan_replaces_duration_chip(context, khan_msg: dict | None) -> bool:
     """Extension Khan đã CHẠY thật và job là 30s × 2.5 → không cần (và không thể tin) chip 30s trên giao diện:
     extension tự đặt độ dài, giao diện để mặc định. Nạp lỗi thì False → chọn chip như cũ, không âm thầm ra video 10s."""
-    return _khan_settings_msg(ratio, duration, model_key) is not None and extension_loaded(context)
+    return khan_msg is not None and extension_loaded(context)
 
 
-async def _arm_khan_extension(page, ratio: str | None, duration: int | None, model_key: str, account: str) -> None:
-    msg = _khan_settings_msg(ratio, duration, model_key)
+async def _arm_khan_extension(page, msg: dict | None, account: str) -> None:
     if not msg:
         return
     try:
@@ -2582,10 +2581,11 @@ async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duratio
         # only the legacy debugger extension forces a headed window.
         ui_headless = None if (config.SKILLPACK_HIJACK or not use_extension) else False
         # Khan ghi đè độ dài của MỌI lệnh gửi từ trang → chỉ nạp cho đúng job 30s × 2.5, không nạp vào job 10s/15s/2.0.
-        want_khan = _khan_settings_msg(ratio, duration, model_key) is not None
+        khan_msg = _khan_settings_msg(ratio, duration, model_key)   # None = job này không dùng Khan
+        want_khan = khan_msg is not None
         context = await launch_account_context(
             p, account, headless=ui_headless, use_extension=use_extension, want_khan=want_khan)
-        closed_flag = {"v": False}   # _poll_then_handoff có thể đã đóng context → finally đừng đóng lần nữa
+        closed = False   # _poll_then_handoff có thể đã đóng context → finally đừng đóng lần nữa
         try:
             page = context.pages[0] if context.pages else await context.new_page()
             await _goto_dola(page, "https://www.dola.com/chat", account=account)
@@ -2607,7 +2607,7 @@ async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duratio
             await _choose_model_ui(page, account, model_key == "seedance_v2.5")
             if ratio:
                 await _set_ratio(page, ratio)
-            khan_30s = _khan_replaces_duration_chip(context, ratio, duration, model_key)
+            khan_30s = _khan_replaces_duration_chip(context, khan_msg)
             if khan_30s:
                 print(f"[{account}] extension Khan đã nạp → bỏ qua bước chọn 30s trên giao diện", flush=True)
             elif want_khan:   # đã xin Khan mà nạp không được → nói rõ, đừng im lặng bỏ bước chọn 30s
@@ -2645,7 +2645,7 @@ async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duratio
                     await box.focus()
                 await page.keyboard.insert_text(prompt)   # dán nguyên khối (prompt dài không còn mất ~1 phút gõ)
                 await page.wait_for_timeout(600)
-                await _arm_khan_extension(page, ratio, duration, model_key, account)
+                await _arm_khan_extension(page, khan_msg, account)
                 await _global_submit_gate(account)   # giãn nhịp chung, ngay trước Enter
                 if on_submitted:
                     # TRƯỚC Enter (như đường fetch): Enter lỗi/bị hủy vẫn có thể đã phát đi → không xoay/gửi lại
@@ -2702,13 +2702,16 @@ async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duratio
                 on_conversation_id(account, conv_id, deadline)
             # Gửi xong thì KHÔNG cần giữ Chrome nữa: ở lại ~60s phòng Dola hỏi lại, rồi đóng và theo dõi
             # bằng cookie (giống đường fetch). Trước 20/09 đường UI giữ Chrome suốt cả lượt dựng.
+            def _mark():
+                nonlocal closed
+                closed = True
             return await _poll_then_handoff(account, page, context, conv_id, timeout, deadline,
                                             ms_token, fp, on_poll, on_balance, ratio, duration, prompt,
                                             on_browser_free=on_browser_free,
                                             on_browser_hold=on_browser_hold,
-                                            mark_closed=lambda: closed_flag.__setitem__("v", True))
+                                            mark_closed=_mark)
         finally:
-            if not closed_flag["v"]:
+            if not closed:
                 await _persist_before_close(context, account)
                 await context.close()
 
