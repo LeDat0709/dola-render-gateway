@@ -15,7 +15,8 @@ from pathlib import Path
 
 from patchright.async_api import async_playwright
 
-from browser import cookie_value, force_ui_language, launch_account_context, pin_session_cookies
+from browser import (cookie_value, force_ui_language, launch_account_context, persist_dola_cookies,
+                     pin_session_cookies)
 import config
 
 LOGIN_URL = "https://www.dola.com/chat"
@@ -31,7 +32,16 @@ async def login_profile(account: str, ui_lang: str = "ja") -> bool:
     # profile (launch_account_context refuses a missing folder, meant for the worker).
     (config.ACCOUNTS_DIR / account).mkdir(parents=True, exist_ok=True)
     async with async_playwright() as p:
-        context = await launch_account_context(p, account, headless=False)
+        # use_extension=True: nạp extension Dola30 + vá skill-pack in-page để chip 30s hiện ra.
+        # Không có nó, giao diện Dola chỉ cho chọn tới 15s → mở profile xong vẫn không tạo tay được 30s.
+        # NHƯNG đăng nhập là đường KHÔI PHỤC nick, phải luôn mở được: extension bị tắt/thiếu thư mục thì
+        # launch_account_context ném lỗi → rơi về mở không extension thay vì chết, chỉ mất chip 30s.
+        try:
+            context = await launch_account_context(p, account, headless=False, use_extension=True)
+        except (RuntimeError, FileNotFoundError) as exc:
+            print(f"[{account}] (không nạp được extension 30s: {str(exc)[:80]} — mở cửa sổ đăng nhập bình thường)",
+                  flush=True)
+            context = await launch_account_context(p, account, headless=False)
         try:
             page = context.pages[0] if context.pages else await context.new_page()
             await page.goto(LOGIN_URL, timeout=60000, wait_until="domcontentloaded")
@@ -54,6 +64,9 @@ async def login_profile(account: str, ui_lang: str = "ja") -> bool:
                     # pin the fresh session cookie so it survives the context close below.
                     await force_ui_language(context, ui_lang)
                     await pin_session_cookies(context)
+                    # cookies.json là nguồn của verify HTTP + gửi không-Chrome: không ghi thì nó giữ cookie chết cũ
+                    # và nick bị báo "đã đăng xuất" mãi dù vừa đăng nhập xong.
+                    persist_dola_cookies(account, await context.cookies("https://www.dola.com"))
                     print(f"[{account}] OK: đăng nhập mới thành công, đã lưu vào accounts/{account}.",
                           flush=True)
                     return True

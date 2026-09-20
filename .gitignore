@@ -75,3 +75,7 @@ broker_secret
 .claude/
 *.mp4
 tasks.lock
+
+# Thư mục phụ trợ, không thuộc sản phẩm
+.agent/
+Xteink_X4_FBI_Badges/

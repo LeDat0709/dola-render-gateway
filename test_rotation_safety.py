@@ -134,6 +134,44 @@ def test_preflight_proxy_error_rotates():
         assert r["account"] == "n2", r
 
 
+# ---------- R2b: IP bị rate-limit (nick CHƯA gửi gì) ----------
+# Log 19/09 23:13–23:21: một lần 710022002 trên IP máy → mỗi nick xếp hàng sau đó chờ 30s rồi bị "nghỉ 10 phút".
+# Log 20/09: 10 lần DirtyIpWaitTimeout liên tiếp vì xoay nick trong khi MỌI nick đi chung một IP.
+def _run_ip_rate_limit(tmp, own_proxy: str):
+    pool = _pool(tmp)
+    wait = browser_pool.IpRateLimitWait("Proxy rate-limit + slot IP đầy — chờ 30s vượt grace")
+    gen = _scripted({"n1": [("raise", wait)], "n2": [("ok",)]})
+    browser_pool.generate_video = gen
+    goc = browser_pool.account_proxy_raw
+    browser_pool.account_proxy_raw = lambda a: own_proxy
+    try:
+        return pool, gen, _run(pool.generate_video("p", "9:16", 10, account="n1"))
+    finally:
+        browser_pool.account_proxy_raw = goc
+
+
+def test_ip_rate_limit_nick_co_proxy_rieng_thi_xoay_va_khong_bi_nghi():
+    """Nick có proxy RIÊNG: nick khác đi IP khác nên xoay là có ích; nhưng chưa gửi gì → không được cho nghỉ."""
+    import time
+    with tempfile.TemporaryDirectory() as tmp:
+        pool, gen, r = _run_ip_rate_limit(tmp, "1.2.3.4:8080")
+        assert gen.calls == ["n1", "n2"], gen.calls
+        assert r["account"] == "n2", r
+        assert (pool._meta("n1")["cooldown_until"] or 0) <= time.time(), "n1 chưa gửi gì mà bị cho nghỉ"
+
+
+def test_ip_rate_limit_khi_moi_nick_chung_mot_ip_thi_dung_ngay():
+    """Không nick nào có proxy riêng → mọi nick cùng một đường ra, xoay chỉ nhân số lần chờ grace lên.
+    Dừng ngay như nhánh RegionBlockedError, và vẫn không cho nick nghỉ."""
+    import time
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            pool, gen, _ = _run_ip_rate_limit(tmp, "")
+        except browser_pool.IpRateLimitWait:
+            return
+        raise AssertionError(f"phải nổi lỗi thay vì xoay hết nick, thực tế gọi {gen.calls}")
+
+
 # ---------- R3: lỗi SAU khi đã gửi → không bao giờ xoay ----------
 def _assert_post_submit_never_rotates(exc):
     with tempfile.TemporaryDirectory() as tmp:

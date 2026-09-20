@@ -146,6 +146,20 @@ app.add_middleware(
 store = TaskStore(config.DB_PATH)
 pool = BrowserPool(max_concurrency=config.MAX_CONCURRENCY, accounts_dir=str(config.ACCOUNTS_DIR))
 
+
+def _sync_ip_gate(max_concurrency: int) -> int:
+    """Nới trần job-trên-một-IP cho bằng ô "Nick gửi cùng lúc". Thiếu nó thì giao diện ghi 5 mà
+    DOLA_MAX_JOBS_PER_IP=1 vẫn xếp hàng từng job một (đo 20/09: ~6,5 phút/video, job thứ 5 chờ ~26 phút và
+    thời gian chờ đó còn bị tính vào hạn treo job). 0 = đã tự tắt giới hạn theo IP → giữ nguyên.
+    Gọi cả lúc khởi động: .env.local chỉ nhớ DOLA_MAX_CONCURRENCY, nên không đồng bộ ở đây thì bật lại
+    server là trần tụt về số cũ."""
+    if config.MAX_JOBS_PER_IP:
+        config.MAX_JOBS_PER_IP = max(1, int(max_concurrency))
+    return config.MAX_JOBS_PER_IP
+
+
+_sync_ip_gate(config.MAX_CONCURRENCY)
+
 app.mount("/videos", StaticFiles(directory=config.DOWNLOAD_DIR), name="videos")
 
 # Background jobs (add/verify), in-memory
@@ -1153,6 +1167,11 @@ async def admin_account_check_proxy(name: str, x_admin_key: str | None = Header(
         out["ok"] = True
     except Exception as e:
         out["error"] = str(e)[:120]
+        # "Connection reset by peer" một mình không nói lên gì; nếu đúng là whitelist gặp IP xoay thì nói thẳng.
+        from browser import rotating_whitelist_hint
+        hint = await asyncio.to_thread(rotating_whitelist_hint, name)
+        if hint:
+            out["error"] = f"{out['error']} — {hint}"
     out["ms"] = int((time.time() - t0) * 1000)
     return out
 
@@ -1365,8 +1384,8 @@ async def admin_submit_mode(body: SubmitModeUpdate, x_admin_key: str | None = He
     (nhẹ RAM, mở nick nhanh; Dola từ chối thì tự rơi về fetch). Nhớ vào .env.local."""
     _admin_auth(x_admin_key)
     mode = (body.mode or "").strip().lower()
-    if mode not in ("fetch", "http"):
-        raise HTTPException(422, "mode phải là 'fetch' hoặc 'http'")
+    if mode not in ("fetch", "http", "ui", "chrome"):
+        raise HTTPException(422, "mode phải là 'fetch', 'http', hoặc 'ui'")
     config.SUBMIT_MODE = mode
     config.upsert_env_local("DOLA_SUBMIT_MODE", mode)
     print(f"[gateway] cách gửi lệnh: {mode}", flush=True)
@@ -1544,6 +1563,7 @@ async def admin_set_concurrency(body: ConcurrencyUpdate, x_admin_key: str | None
     global login_concurrency
     if body.max_concurrency is not None:
         pool.set_max_concurrency(body.max_concurrency)
+        _sync_ip_gate(pool.max_concurrency)
     if body.login_concurrency is not None:
         limit = max(1, min(body.login_concurrency, MAX_LOGIN_SLOTS))
         resize_semaphore(login_slots, limit - login_concurrency)

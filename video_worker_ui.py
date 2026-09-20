@@ -17,8 +17,8 @@ from patchright.async_api import async_playwright
 from gap import find_gap_x
 
 import config
-from browser import (PASSPORT_INFO_PATH, RegionBlockedError, cookie_value, passport_dead, launch_account_context, page_region_blocked,
-                     pin_session_cookies, region_blocked_message)
+from browser import (PASSPORT_INFO_PATH, RegionBlockedError, cookie_value, extension_loaded, passport_dead,
+                     launch_account_context, page_region_blocked, pin_session_cookies, region_blocked_message)
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
 from video_worker import (POLL_JS, SUBMIT_JS, DownloadError, RateLimitedError, RiskControlError, SubmitDelivered,
                           SubmitRejected, _check_submit, _download, extract_unwatermarked_url)
@@ -35,6 +35,14 @@ def _fmt_sec(v: float) -> str:
     return str(int(round(v))) if abs(v - round(v)) < 0.05 else f"{v:.1f}"
 
 
+# "early 30s", "in his 40s" là TUỔI, không phải 30 giây (20/09: "early 30s" bị co thành "early 22.5s" trong prompt gửi đi).
+_AGE_CONTEXT = re.compile(r"\b(?:early|mid|late|his|her|their|my|your)[- ]?$", re.IGNORECASE)
+
+
+def _is_age_mark(prompt: str, m: "re.Match") -> bool:
+    return not m.group(3) and m.group(4).lower() == "s" and bool(_AGE_CONTEXT.search(prompt[:m.start()]))
+
+
 def fit_prompt_to_duration(prompt: str, duration, account: str = "") -> str:
     """Prompt mô tả dài hơn thời lượng chọn (mốc "25–30秒" mà chọn 10s) → co mọi mốc về thang 0..duration.
 
@@ -43,7 +51,7 @@ def fit_prompt_to_duration(prompt: str, duration, account: str = "") -> str:
     """
     if not prompt or not duration:
         return prompt
-    marks = list(_TIME_MARK.finditer(prompt))
+    marks = [m for m in _TIME_MARK.finditer(prompt) if not _is_age_mark(prompt, m)]
     if not marks:
         return prompt
     top = max(float((m.group(3) or m.group(1)).replace(",", ".")) for m in marks)
@@ -52,6 +60,8 @@ def fit_prompt_to_duration(prompt: str, duration, account: str = "") -> str:
     f = float(duration) / top
 
     def repl(m):
+        if _is_age_mark(prompt, m):
+            return m.group(0)
         a = _fmt_sec(float(m.group(1).replace(",", ".")) * f)
         if m.group(3):
             return f"{a}{m.group(2)}{_fmt_sec(float(m.group(3).replace(',', '.')) * f)}{m.group(4)}"
@@ -493,7 +503,14 @@ def _is_spec_menu(text: str) -> bool:
 
 # Phương án menu KHÔNG được chọn: "9:16 ではなく別のアスペクト比" (KHÔNG phải 9:16 — chứa chữ 9:16 nên từng bị chọn nhầm,
 # ảnh 17/9 "D、15秒" → Dola hỏi lại mãi), "フック部分のみ" (chỉ một đoạn), "前半…後半…2 回に分けて" (2 lần dựng = 2 lượt).
-_BAD_OPTION = re.compile(r"ではなく|以外|instead|\bnot\b|のみ|only|分けて|[2２二]\s*回|split|前半|後半|two (?:parts|videos)", re.IGNORECASE)
+# Phương án KHÔNG được tự chọn. Ngoài các kiểu cũ (phủ định, "chỉ một đoạn", 2 lần), nay chặn cả họ "chia thành
+# NHIỀU video": mỗi video là MỘT lần trừ lượt, Dola từng khuyến nghị "12 cảnh + thẻ kết" = 13 lượt (ảnh 20/09).
+# Lưu ý ranh giới: "1本" (một video) là phương án TỐT nên chỉ chặn từ 2 本 trở lên; "each" phải có biên từ kẻo
+# dính reach/teach.
+_BAD_OPTION = re.compile(
+    r"ではなく|以外|instead|\bnot\b|のみ|only|分けて|分割|複数|それぞれ|[2２二]\s*回|"
+    r"(?:[2-9２-９]|[0-9０-９]{2,})\s*本|split|separate|\beach\b|multiple (?:videos|clips)|"
+    r"前半|後半|two (?:parts|videos)", re.IGNORECASE)
 # Phương án nên chọn khi Dola chặn thời lượng: nén/rút gọn TOÀN BỘ nội dung về N giây.
 _GOOD_OPTION = re.compile(r"圧縮|短縮|まとめ|凝縮|compress|condens|shorten", re.IGNORECASE)
 
@@ -522,6 +539,12 @@ def _pick_duration_option(ht: str, duration: int) -> tuple[str, int] | None:
     return None
 
 
+_MENU_CHIA_NHO_MSG = (
+    "Dola không dựng một mạch prompt này và chỉ đề nghị CHIA thành nhiều video — mỗi video là một lần trừ lượt "
+    "(lần gặp 20/09 Dola khuyến nghị 12 cảnh + thẻ kết = 13 lượt). Tool KHÔNG tự đặt nhiều video. "
+    "Hãy tự tách prompt ở máy rồi chạy từng phần: .venv/bin/python split_prompt.py <file> > parts.txt")
+
+
 def _spec_menu_answer(text: str, ratio, duration) -> str:
     """Reply satisfying the menu. Dola thường đòi cả hai (ví dụ đáp "B、10秒" = chữ cái tỉ lệ + số giây)."""
     ht = _zen2han(text or "")
@@ -545,10 +568,17 @@ def _spec_menu_answer(text: str, ratio, duration) -> str:
     # chữ cái cho phương án THỜI LƯỢNG: "- A. 15秒版 / - B. 10秒版" → gọi đúng chữ cái,
     # nói vòng ("15秒に変更して…") thì Dola hay hỏi lại menu đó lần nữa.
     if duration and not ratio_letter:
-        for m in re.finditer(r"([A-G])\s*[.\)、]\s*[^\n]{0,14}?(\d{1,2})\s*秒", ht):
-            if int(m.group(2)) == int(duration):
+        for L, body in _menu_options(ht):
+            if _BAD_OPTION.search(body):
+                continue   # thiếu phép kiểm này thì phương án "chia 12 video" vẫn trúng chỉ vì có chữ "15秒"
+            if any(int(x) == int(duration) for x in re.findall(r"(\d{1,2})\s*秒", body)):
                 tail = f"、{want}{('（'+orient+'）') if orient else ''}" if want else ""
-                return f"{m.group(1)}、{duration}秒{tail}でお願いします。"
+                return f"{L}、{duration}秒{tail}でお願いします。"
+    # Mọi phương án đều là "chia thành nhiều video" → im lặng ("") thay vì chọn bừa hay xin lại 30s (Dola vừa nói
+    # không làm được, hỏi lại chỉ vòng vo). Nơi gọi sẽ dừng job và bảo người dùng tự tách prompt.
+    tuy_chon = _menu_options(ht)
+    if tuy_chon and all(_BAD_OPTION.search(body) for _, body in tuy_chon):
+        return ""
     parts = []
     if ratio_letter:
         parts.append(ratio_letter)
@@ -582,7 +612,10 @@ def _capped_reply(text: str, ratio, want: int | None) -> str:
     """
     capped = _capped_seconds(text)
     if capped and want and want < capped:
-        return _spec_menu_answer(text, ratio, want)
+        ans = _spec_menu_answer(text, ratio, want)
+        if not ans:
+            raise PromptUnclearError(_MENU_CHIA_NHO_MSG)
+        return ans
     return "はい"
 
 
@@ -630,6 +663,54 @@ async def _click_first_visible(page, labels, exact: bool = True, timeout: int = 
     return False
 
 
+# Nút của thanh soạn video mang data-input-engine-actionbar-control-key (đo 20/09; đối thủ dùng khoá cũ "model", nay là
+# "video-model"). Chỉ có trong composer video → không nhầm với nút chế độ chat "⚡高速" (data-valid-btn=mode-select-action-btn).
+VIDEO_MODEL_BTN = "button[data-input-engine-actionbar-control-key='video-model']"
+VIDEO_DURATION_BTN = "button[data-input-engine-actionbar-control-key='video-duration']"
+VIDEO_SKILL_CHIP = "button[data-component-type='skill-item']:has-text('動画')"   # chip "動画を作成" ở chat trống
+
+
+# Chữ/nút CHỈ có trong thanh soạn video. KHÔNG dùng "[class*='ratio']": Tailwind "duration-200" chứa "ratio" → khớp mọi
+# trang, _is_composer_open luôn True và composer không bao giờ được mở (log 20/09 12:56). Nút thời lượng có thuộc tính
+# dữ liệu ổn định (đo 20/09) nên đứng đầu.
+_COMPOSER_MARKS = (VIDEO_DURATION_BTN, "text=比率", "text=10s", "text=15s",
+                   "button:has-text('比率')", "button:has-text('10s')")
+
+# Các cách vào khung tạo video, thử theo thứ tự chắc chắn giảm dần.
+_VIDEO_ENTRY_SELECTORS = (VIDEO_SKILL_CHIP, "button:has-text('動画を作成')",
+                          "[role='button']:has-text('動画を作成')", "button:has-text('動画')")
+
+
+async def _visible(loc) -> bool:
+    """True khi locator có phần tử và đang hiện. Mọi lỗi (detach, timeout, trang đang vẽ lại) → False."""
+    try:
+        return bool(await loc.count()) and await loc.is_visible()
+    except Exception:   # noqa: BLE001 — chỉ là phép dò, không được làm hỏng luồng
+        return False
+
+
+async def _click_first_selector(page, selectors, timeout: int = 3000) -> bool:
+    """Bấm phần tử đầu tiên thấy được trong danh sách bộ chọn CSS (nhãn chữ thì dùng _click_first_visible)."""
+    for sel in selectors:
+        loc = page.locator(sel).first
+        if not await _visible(loc):
+            continue
+        try:
+            await loc.click(timeout=timeout)
+            return True
+        except Exception:   # noqa: BLE001 — bấm trượt thì thử bộ chọn kế
+            continue
+    return False
+
+
+async def _is_composer_open(page) -> bool:
+    """True khi thanh soạn video đang mở (thấy một dấu hiệu chỉ composer mới có)."""
+    for sel in _COMPOSER_MARKS:
+        if await _visible(page.locator(sel).first):
+            return True
+    return False
+
+
 async def _open_video_composer(page) -> None:
     """Dismisses the cookie banner, starts a fresh chat and opens the video card.
 
@@ -640,14 +721,24 @@ async def _open_video_composer(page) -> None:
         await page.wait_for_timeout(500)
     if await _click_first_visible(page, _NEW_CHAT_LABELS, exact=False):
         await page.wait_for_timeout(1200)
+
     for i in range(ENTRY_ATTEMPTS):
-        if await _click_first_visible(page, VIDEO_BTN_ALTS, exact=False, timeout=4000):
-            await page.wait_for_timeout(1500)
+        if await _is_composer_open(page):
             return
+
+        if not await _click_first_selector(page, _VIDEO_ENTRY_SELECTORS):
+            await _click_first_visible(page, VIDEO_BTN_ALTS, exact=False, timeout=4000)
+        await page.wait_for_timeout(1500)
+        if await _is_composer_open(page):
+            return
+
         # Action bar chỉ hiện trên chat trống — thử mở cuộc trò chuyện mới lại giữa chừng nếu bị kẹt.
         if i in (4, 9):
             await _click_first_visible(page, _NEW_CHAT_LABELS, exact=False)
-        await page.wait_for_timeout(1500)
+            await page.wait_for_timeout(1500)
+
+    if await _is_composer_open(page):
+        return
     try:
         await page.screenshot(path="no_entry_btn.png")
     except Exception:
@@ -1284,12 +1375,10 @@ async def _generate_via_http(account: str, prompt: str, ratio: str | None, durat
             proxy = account_proxy_url(account) or None
             why = await _browser.probe_proxy_tunnel(proxy)
         if why:
-            import proxyxoay
-            if _browser._effective_rotating(account) and await asyncio.to_thread(proxyxoay.machine_ip_unstable):
+            hint = await asyncio.to_thread(_browser.rotating_whitelist_hint, account)
+            if hint:
                 raise RuntimeError(
-                    f"Proxy của nick {account} từ chối kết nối ({why}) — CHƯA gửi lệnh, không mất lượt. IP máy đang ĐỔI THEO "
-                    "TỪNG KẾT NỐI (thường do VPN) nên proxy xác thực theo whitelist IP máy (proxyxoay/proxy.vn/topproxy) không "
-                    "dùng được. Tắt VPN, hoặc dùng proxy có user:pass / tmproxy.")
+                    f"Proxy của nick {account} từ chối kết nối ({why}) — CHƯA gửi lệnh, không mất lượt. {hint}")
             raise RuntimeError(
                 f"Proxy của nick {account} không mở được đường tới Dola ({why}) — CHƯA gửi lệnh, không mất lượt. Hay gặp "
                 "khi IP máy vừa đổi (bật/tắt VPN, đổi mạng) mà nhà bán proxy chưa whitelist IP mới, hoặc proxy đã chết.")
@@ -1367,44 +1456,14 @@ async def _generate_via_fetch(account: str, prompt: str, ratio: str | None, dura
             deadline = time.time() + timeout
             if on_conversation_id:
                 on_conversation_id(account, conv_id, deadline)
-            if config.HTTP_POLL:
-                # Ở trong trang đủ lâu để trả lời các câu Dola hỏi lại (xác nhận 30s, menu thông
-                # số) — chỉ trang web ký được tin nhắn trả lời. Hết hỏi thì đóng trình duyệt và
-                # theo dõi bằng HTTP thuần: mỗi nick giữ Chrome ~1 phút thay vì suốt 3–15 phút.
-                answered: set = set()   # nhớ câu đã trả lời, dùng lại khi phải mở nick lần nữa
-                early = await poll_conversation(account, page, context, conv_id, timeout, on_poll,
-                                                on_balance, ratio, duration,
-                                                handoff_after=config.HTTP_POLL_AFTER_SEC,
-                                                answered=answered, prompt=prompt)
-                if not early.get("handoff"):
-                    return early                     # video xong ngay trong lúc còn trình duyệt
-                remaining = max(30, int(deadline - time.time()))
-                fresh = await context.cookies("https://www.dola.com")
-                cookie_header = "; ".join(f"{c['name']}={c['value']}" for c in fresh
-                                          if c.get("name") and c.get("value"))
-                await _persist_before_close(context, account)
-                await context.close()
+            # Cùng một đường bàn giao với đường UI (_poll_then_handoff): ở lại trả lời Dola, rồi nhả Chrome.
+            def _mark():
+                nonlocal closed
                 closed = True
-                if on_browser_free:
-                    on_browser_free()
-                try:
-                    return await poll_conversation_http(account, cookie_header, ms_token, fp, conv_id,
-                                                        remaining, on_poll, on_balance, answered=answered, prompt=prompt)
-                except _NeedsBrowser as ask:
-                    if _answer_key(ask.full) in answered:
-                        # Đã trả lời câu này rồi mà Dola vẫn lặp lại → mở nick nữa cũng vô ích.
-                        raise RuntimeError(
-                            "Dola hỏi đi hỏi lại cùng một câu (thường vì prompt mô tả video dài hơn "
-                            "mức Dola cho phép) — rút ngắn kịch bản cho khớp số giây."
-                            f"\n↳ Dola: {ask}") from ask
-                    print(f"[{account}] Dola hỏi lại muộn → mở lại nick để trả lời: {ask}", flush=True)
-                    if on_browser_hold:
-                        await on_browser_hold()      # xin lại slot Chrome trước khi mở
-                    left = max(60, int(deadline - time.time()))
-                    return await resume_video(account, conv_id, left, on_poll=on_poll,
-                                              on_balance=on_balance, ratio=ratio, duration=duration,
-                                              answered=answered, prompt=prompt)
-            return await poll_conversation(account, page, context, conv_id, timeout, on_poll, on_balance, ratio, duration, prompt=prompt)
+            return await _poll_then_handoff(account, page, context, conv_id, timeout, deadline,
+                                            ms_token, fp, on_poll, on_balance, ratio, duration, prompt,
+                                            on_browser_free=on_browser_free,
+                                            on_browser_hold=on_browser_hold, mark_closed=_mark)
         finally:
             if not closed:
                 await _persist_before_close(context, account)
@@ -2042,6 +2101,8 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                     continue
                 if _is_spec_menu(text) and key not in answered_specs and len(answered_specs) < 3:
                     ans = _spec_menu_answer(text, ratio, want_duration)
+                    if not ans:   # mọi phương án đều tốn thêm lượt → dừng, đừng chọn bừa
+                        raise PromptUnclearError(_MENU_CHIA_NHO_MSG)
                     if await _reply_text(page, ans):
                         answered_specs.add(key)
                         stale_msg, stale_n = "", 0
@@ -2221,7 +2282,8 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
         raise ValueError("30s generation requires Dola30 extension enabled")
     result = await _generate_via_ui(account, prompt, ratio, duration, timeout, model_key, use_extension,
                                     on_conversation_id, on_poll, on_balance, reference_image_paths,
-                                    on_submitted)
+                                    on_submitted, on_browser_free=on_browser_free,
+                                    on_browser_hold=on_browser_hold)
     return await _strip_logo(result, model_key, account)
 
 
@@ -2232,27 +2294,28 @@ async def _find_model_chip(page):
     small composer button whose text starts with モデル/Model or names a Seedance model.
     """
     candidates = [
+        page.locator(VIDEO_MODEL_BTN),   # chắc nhất: thuộc tính dữ liệu, không phụ thuộc chữ/ngôn ngữ
         page.get_by_text(re.compile(r"^\s*(モデル|Model)\b"), exact=False),
+        # KHÔNG thêm "高速": nút chế độ chat "⚡高速" cũng có mặt trên trang → bị nhận nhầm là nút model, menu của nó
+        # không có Seedance (log 20/09 12:56). Nút model của composer video luôn có chữ "モデル" ("モデル 2.0高速").
         page.locator("button, [role='button']").filter(has_text=re.compile(r"モデル|Model|Seedance")),
     ]
     for loc in candidates:
-        try:
-            first = loc.first
-            if await first.count() and await first.is_visible():
-                return first
-        except Exception:
-            continue
+        first = loc.first
+        if await _visible(first):
+            return first
     return None
 
 
 async def _pick_model_option(page, options) -> bool:
     for option_text in options:
+        loc = page.get_by_text(option_text, exact=False).first
+        if not await _visible(loc):
+            continue
         try:
-            loc = page.get_by_text(option_text, exact=False).first
-            if await loc.count() and await loc.is_visible():
-                await loc.click(timeout=5000)
-                return True
-        except Exception:
+            await loc.click(timeout=5000)
+            return True
+        except Exception:   # noqa: BLE001 — bấm trượt thì thử tên gọi khác của cùng model
             continue
     return False
 
@@ -2311,17 +2374,218 @@ async def _select_duration_chip(page, duration: int) -> bool:
     return False
 
 
+VIDEO_RATIO_BTN = "button[data-input-engine-actionbar-control-key='video-ratio']"
+
+
+async def _set_ratio(page, ratio: str) -> None:
+    try:
+        await page.click("text=比率", timeout=3000)
+        await page.wait_for_timeout(500)
+        await page.click(f"text={ratio}", timeout=3000)
+    except Exception as e:
+        print(f"  (Failed to set ratio, using default: {str(e)[:80]})", flush=True)
+
+
+async def _chip_text(page, selector: str) -> str | None:
+    """Chữ đang hiện trên một nút của composer. None = KHÔNG có nút đó (giao diện Dola khác → khỏi kiểm).
+
+    Đọc trượt (trang đang vẽ lại) thì thử lại rồi mới NÉM LỖI — tuyệt đối không trả None, vì nơi gọi hiểu
+    None là "khỏi kiểm": lá chắn cấu hình sẽ tự tắt đúng lúc trang chập chờn, tức đúng lúc cần nó nhất."""
+    loc = page.locator(selector).first
+    if not await loc.count():
+        return None
+    for lan in (1, 2):
+        try:
+            return (await loc.inner_text(timeout=2000)).replace("\n", " ")
+        except Exception as e:
+            if lan == 2:
+                raise RuntimeError(f"Không đọc được ô cấu hình composer ({selector}): {str(e)[:70]} "
+                                   "— chạy lại nick này.") from e
+            await page.wait_for_timeout(400)
+
+
+def _shows(text: str, want: str) -> bool:
+    return bool(re.search(rf"(?<![\d:]){re.escape(want)}(?![\d:])", text or ""))
+
+
+async def _verify_chip(page, selector: str, want: str, ten: str, chon_lai) -> None:
+    """Nút `selector` phải HIỆN `want`; lệch thì chọn lại ĐÚNG MỘT LẦN rồi mới dừng job.
+
+    Radix vẽ menu chậm nên một cú bấm trượt nhịp là chuyện thường — thử lại rẻ hơn nhiều so với để job
+    chết và tốn cả vòng mở Chrome. Nút không tồn tại (None) = giao diện Dola khác → bỏ qua kiểm."""
+    shown = await _chip_text(page, selector)
+    if shown is None or _shows(shown, want):
+        return
+    await chon_lai()
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(300)
+    shown = await _chip_text(page, selector)
+    if shown is not None and not _shows(shown, want):
+        raise RuntimeError(f"Ô {ten} đang hiện '{shown}' chứ không phải {want} — chọn không ăn, chạy lại nick này.")
+
+
+async def _verify_composer_settings(page, ratio: str | None, duration: int | None) -> None:
+    """Ngay TRƯỚC khi gõ: nút tỉ lệ/thời lượng phải HIỆN đúng giá trị đã chọn. Log 20/09 13:33: một lượt gửi đi thiếu khoá
+    "ratio" dù Studio đặt 9:16 — chọn trượt mà không lỗi thì video ra sai tỉ lệ/độ dài và vẫn trừ lượt. Chưa gửi thì dừng
+    an toàn (không tốn lượt)."""
+    if ratio:
+        await _verify_chip(page, VIDEO_RATIO_BTN, ratio, "tỉ lệ", lambda: _set_ratio(page, ratio))
+    if duration:
+        await _verify_chip(page, VIDEO_DURATION_BTN, f"{duration}s", "thời lượng",
+                           lambda: _select_duration_chip(page, duration))
+
+
+MODEL_CHIP_WAIT_SEC = 15   # nút model vẽ chậm sau khi mở composer (20/09: trang tải lại/lỗi chứng chỉ mạng)
+MODEL_MENU_WAIT_SEC = 6    # menu model mở chậm; 600ms cố định từng trượt → báo oan "nick không có 2.5"
+
+
+async def _wait_model_chip(page, seconds: float = MODEL_CHIP_WAIT_SEC, clock=time.monotonic):
+    """Chờ nút model hiện (trang Dola vẽ nó muộn, không phải lúc nào cũng có ngay khi composer mở). None nếu hết hạn."""
+    deadline = clock() + seconds
+    while True:
+        chip = await _find_model_chip(page)
+        if chip is not None or clock() >= deadline:
+            return chip
+        await page.wait_for_timeout(500)
+
+
+async def _open_model_menu(page, chip) -> bool:
+    """Bấm nút model rồi chờ menu CÓ MỤC thật sự (Radix vẽ menu chậm). Thử 2 lần; True khi thấy tên model."""
+    for _ in range(2):
+        await chip.click(timeout=5000)
+        try:
+            await page.locator(':text("Seedance"):visible').first.wait_for(state="visible", timeout=MODEL_MENU_WAIT_SEC * 1000)
+            return True
+        except Exception:
+            await page.keyboard.press("Escape")   # menu không mở / mở rỗng → đóng rồi bấm lại
+            await page.wait_for_timeout(500)
+    return False
+
+
+# Tên model trong menu Dola, đủ mọi cách viết đã gặp (khớp GẦN ĐÚNG nên thứ tự dài → ngắn).
+_MODEL_OPTS_25 = ("Dreamina Seedance 2.5", "Seedance 2.5", "Seedance2.5")
+_MODEL_OPTS_20 = ("Dreamina Seedance 2.0高速", "Dreamina Seedance 2.0",
+                  "Seedance 2.0 Fast", "Seedance2.0Fast", "Seedance 2.0")
+
+
+async def _choose_model_ui(page, account: str, want_25: bool) -> None:
+    """Chọn Seedance 2.5 (hoặc 2.0 nhanh) trên nút model. 2.5 thiếu → ném lỗi RÕ nguyên nhân; 2.0 là mặc định nên bỏ qua được."""
+    chip = await _wait_model_chip(page)
+    if chip is None:
+        if want_25:
+            raise RuntimeError(f"Ô chọn model chưa hiện sau {MODEL_CHIP_WAIT_SEC}s (trang Dola tải chậm/chập chờn) — chạy lại nick này.")
+        print(f"[{account}] (không thấy ô model, dùng mặc định 2.0)", flush=True)
+        return
+    try:
+        if not await _open_model_menu(page, chip):
+            if want_25:
+                raise RuntimeError("Menu chọn model không mở ra/không tải được (trang Dola chập chờn) — chạy lại nick này.")
+            print(f"[{account}] (menu model không mở, dùng mặc định 2.0)", flush=True)
+            return
+        if not await _pick_model_option(page, _MODEL_OPTS_25 if want_25 else _MODEL_OPTS_20):
+            avail = await _list_model_options(page)   # menu ĐÃ có mục (kiểm ở trên) → thiếu thật, không phải chưa tải
+            await page.keyboard.press("Escape")
+            if want_25:
+                raise RuntimeError("Tài khoản này không có Seedance 2.5 (thường chỉ tài khoản trả phí mới có). "
+                                   f"Model đang có: {avail or 'không đọc được'}. Hãy chọn Seedance 2.0.")
+            print(f"[{account}] (không thấy option 2.0 trong menu, dùng mặc định)", flush=True)
+        await page.wait_for_timeout(500)
+        if want_25:   # nút đổi thành "モデル 2.5" khi chọn ăn; còn 2.0高速 nghĩa là bấm trượt → dừng, không gửi nhầm model
+            now = await _find_model_chip(page)
+            label = (await now.inner_text()).replace("\n", " ") if now is not None else ""
+            if "2.5" not in label:
+                raise RuntimeError(f"Đã bấm Seedance 2.5 nhưng ô model vẫn hiện '{label or '?'}' — chọn không ăn, chạy lại nick này.")
+    except RuntimeError:
+        raise
+    except Exception as e:
+        if want_25:
+            raise RuntimeError(f"Không chọn được Seedance 2.5: {str(e)[:120]}") from e
+        print(f"[{account}] (bỏ qua chọn model, dùng mặc định 2.0: {str(e)[:80]})", flush=True)
+
+
+async def _poll_then_handoff(account: str, page, context, conv_id: str, timeout: int, deadline: float,
+                             ms_token: str, fp: str, on_poll, on_balance, ratio: str | None,
+                             duration: int | None, prompt: str, on_browser_free=None,
+                             on_browser_hold=None, mark_closed=None) -> dict:
+    """Ở lại trong trang đủ lâu để trả lời các câu Dola hỏi lại (chỉ trang mới ký được tin trả lời), rồi ĐÓNG
+    Chrome và theo dõi tiếp bằng cookie qua HTTP. Mỗi nick giữ Chrome ~1 phút thay vì suốt cả lượt dựng
+    (đo 20/09: 370s). Dùng chung cho đường fetch và đường UI — trước đây chỉ fetch có, UI giữ Chrome cả lượt."""
+    answered: set = set()   # nhớ câu đã trả lời, dùng lại khi phải mở nick lần nữa
+    handoff_after = config.HTTP_POLL_AFTER_SEC if config.HTTP_POLL else None
+    early = await poll_conversation(account, page, context, conv_id, timeout, on_poll, on_balance,
+                                    ratio, duration, handoff_after=handoff_after, answered=answered,
+                                    prompt=prompt)
+    if not early.get("handoff"):
+        return early                       # video xong ngay trong lúc còn trình duyệt
+    remaining = max(30, int(deadline - time.time()))
+    fresh = await context.cookies("https://www.dola.com")
+    cookie_header = "; ".join(f"{c['name']}={c['value']}" for c in fresh
+                              if c.get("name") and c.get("value"))
+    await _persist_before_close(context, account)
+    await context.close()
+    if mark_closed:
+        mark_closed()                      # để finally của người gọi không đóng lần nữa
+    if on_browser_free:
+        on_browser_free()
+    try:
+        return await poll_conversation_http(account, cookie_header, ms_token, fp, conv_id, remaining,
+                                            on_poll, on_balance, answered=answered, prompt=prompt)
+    except _NeedsBrowser as ask:
+        if _answer_key(ask.full) in answered:
+            # Đã trả lời câu này rồi mà Dola vẫn lặp lại → mở nick nữa cũng vô ích.
+            raise RuntimeError(
+                "Dola hỏi đi hỏi lại cùng một câu (thường vì prompt mô tả video dài hơn mức Dola cho phép) "
+                f"— rút ngắn kịch bản cho khớp số giây.\n↳ Dola: {ask}") from ask
+        print(f"[{account}] Dola hỏi lại muộn → mở lại nick để trả lời: {ask}", flush=True)
+        if on_browser_hold:
+            await on_browser_hold()        # xin lại slot Chrome trước khi mở
+        left = max(60, int(deadline - time.time()))
+        return await resume_video(account, conv_id, left, on_poll=on_poll, on_balance=on_balance,
+                                  ratio=ratio, duration=duration, answered=answered, prompt=prompt)
+
+
+def _khan_settings_msg(ratio: str | None, duration: int | None, model_key: str) -> dict | None:
+    """Tin nhắn popup của Khan gửi cho inject.js trước khi bấm gửi. ĐỌC KỸ (giải mã inject.js 20/09): handler chỉ
+    lấy `ratio`/`ratioOverride` — khoá `duration` ở đây KHÔNG ai đọc. Độ dài 30s do inject.js tự ghi đè
+    `"duration":N` của mọi lệnh gửi từ trang, không phụ thuộc tin này. Giữ tin để ghim đúng tỉ lệ của job.
+    Trả None (= không dùng Khan) cho mọi job khác 30s × 2.5, vì ghi đè đó không có điều kiện."""
+    if not config.EXTRA_EXTENSION_DIR or duration != 30 or "2.5" not in str(model_key):
+        return None
+    return {"type": "PURZA_UPDATE_SETTINGS", "ratio": ratio or "9:16", "duration": 30}
+
+
+def _khan_replaces_duration_chip(context, ratio: str | None, duration: int | None, model_key: str) -> bool:
+    """Extension Khan đã CHẠY thật và job là 30s × 2.5 → không cần (và không thể tin) chip 30s trên giao diện:
+    extension tự đặt độ dài, giao diện để mặc định. Nạp lỗi thì False → chọn chip như cũ, không âm thầm ra video 10s."""
+    return _khan_settings_msg(ratio, duration, model_key) is not None and extension_loaded(context)
+
+
+async def _arm_khan_extension(page, ratio: str | None, duration: int | None, model_key: str, account: str) -> None:
+    msg = _khan_settings_msg(ratio, duration, model_key)
+    if not msg:
+        return
+    try:
+        await page.evaluate("(m) => window.postMessage(m, '*')", msg)
+        print(f"[{account}] extension Khan: đã bật 30s ({msg['ratio']})", flush=True)
+    except Exception as e:  # noqa: BLE001 — extension không bật được thì vẫn gửi tiếp như thường
+        print(f"[{account}] extension Khan: không gửi được tin bật ({str(e)[:80]})", flush=True)
+
+
 async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duration: int | None,
                            timeout: int, model_key: str, use_extension: bool,
                            on_conversation_id, on_poll, on_balance,
-                           reference_image_paths: list[str] | None, on_submitted=None) -> dict:
+                           reference_image_paths: list[str] | None, on_submitted=None,
+                           on_browser_free=None, on_browser_hold=None) -> dict:
     """Drives the composer with clicks and keystrokes (reference images, extension durations)."""
     async with async_playwright() as p:
         # With the fetch hijack (config.SKILLPACK_HIJACK) the composer's 30s unlock works headless;
         # only the legacy debugger extension forces a headed window.
         ui_headless = None if (config.SKILLPACK_HIJACK or not use_extension) else False
+        # Khan ghi đè độ dài của MỌI lệnh gửi từ trang → chỉ nạp cho đúng job 30s × 2.5, không nạp vào job 10s/15s/2.0.
+        want_khan = _khan_settings_msg(ratio, duration, model_key) is not None
         context = await launch_account_context(
-            p, account, headless=ui_headless, use_extension=use_extension)
+            p, account, headless=ui_headless, use_extension=use_extension, want_khan=want_khan)
+        closed_flag = {"v": False}   # _poll_then_handoff có thể đã đóng context → finally đừng đóng lần nữa
         try:
             page = context.pages[0] if context.pages else await context.new_page()
             await _goto_dola(page, "https://www.dola.com/chat", account=account)
@@ -2340,44 +2604,15 @@ async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duratio
             # Select model. The composer shows a "モデル 2.0高速" (Model) chip; click it, then pick
             # the requested model from the dropdown. The chip already shows the CURRENT model, so
             # when the default (2.0) is what we want and the chip can't be opened, we just proceed.
-            model_chip = await _find_model_chip(page)
-            want_25 = model_key == "seedance_v2.5"
-            if model_chip is None:
-                if want_25:
-                    raise RuntimeError("Không mở được ô chọn model trên Dola — thử lại, hoặc dùng Seedance 2.0.")
-                print(f"[{account}] (không thấy ô model, dùng mặc định 2.0)", flush=True)
-            else:
-                try:
-                    await model_chip.click(timeout=5000)
-                    await page.wait_for_timeout(600)
-                    options = (("Dreamina Seedance 2.5", "Seedance 2.5", "Seedance2.5")
-                               if want_25
-                               else ("Dreamina Seedance 2.0高速", "Dreamina Seedance 2.0",
-                                     "Seedance 2.0 Fast", "Seedance2.0Fast", "Seedance 2.0"))
-                    if not await _pick_model_option(page, options):
-                        avail = await _list_model_options(page)
-                        await page.keyboard.press("Escape")
-                        if want_25:
-                            raise RuntimeError(
-                                "Tài khoản này không có Seedance 2.5 (thường chỉ tài khoản trả phí mới có). "
-                                f"Model đang có: {avail or 'chỉ Seedance 2.0 / 1.0'}. Hãy chọn Seedance 2.0.")
-                        # 2.0 default already selected: proceed instead of failing
-                        print(f"[{account}] (không thấy option 2.0 trong menu, dùng mặc định)", flush=True)
-                    await page.wait_for_timeout(500)
-                except RuntimeError:
-                    raise
-                except Exception as e:
-                    if want_25:
-                        raise RuntimeError(f"Không chọn được Seedance 2.5: {str(e)[:120]}") from e
-                    print(f"[{account}] (bỏ qua chọn model, dùng mặc định 2.0: {str(e)[:80]})", flush=True)
+            await _choose_model_ui(page, account, model_key == "seedance_v2.5")
             if ratio:
-                try:
-                    await page.click("text=比率", timeout=3000)
-                    await page.wait_for_timeout(500)
-                    await page.click(f"text={ratio}", timeout=3000)
-                except Exception as e:
-                    print(f"  (Failed to set ratio, using default: {str(e)[:80]})", flush=True)
-            if duration and duration != 10:
+                await _set_ratio(page, ratio)
+            khan_30s = _khan_replaces_duration_chip(context, ratio, duration, model_key)
+            if khan_30s:
+                print(f"[{account}] extension Khan đã nạp → bỏ qua bước chọn 30s trên giao diện", flush=True)
+            elif want_khan:   # đã xin Khan mà nạp không được → nói rõ, đừng im lặng bỏ bước chọn 30s
+                print(f"[{account}] extension Khan chưa chạy được → chọn chip 30s như cũ", flush=True)
+            if duration and duration != 10 and not khan_30s:
                 # 10s is Dola's default; only 15/30 need an explicit chip. Verify the chip is
                 # actually SELECTED — silently falling back to 10s produced wrong-length videos.
                 selected = await _select_duration_chip(page, duration)
@@ -2391,6 +2626,7 @@ async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duratio
             if await page.locator('[data-slot="dropdown-menu-item"]').count():
                 await page.keyboard.press("Escape")
                 await page.wait_for_timeout(300)
+            await _verify_composer_settings(page, ratio, None if khan_30s else duration)
 
             # Session can die while we prepare the composer; surface it as a login problem
             # so the pool disables the nick instead of logging a generic error.
@@ -2409,6 +2645,7 @@ async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duratio
                     await box.focus()
                 await page.keyboard.insert_text(prompt)   # dán nguyên khối (prompt dài không còn mất ~1 phút gõ)
                 await page.wait_for_timeout(600)
+                await _arm_khan_extension(page, ratio, duration, model_key, account)
                 await _global_submit_gate(account)   # giãn nhịp chung, ngay trước Enter
                 if on_submitted:
                     # TRƯỚC Enter (như đường fetch): Enter lỗi/bị hủy vẫn có thể đã phát đi → không xoay/gửi lại
@@ -2463,10 +2700,17 @@ async def _generate_via_ui(account: str, prompt: str, ratio: str | None, duratio
             deadline = time.time() + timeout
             if on_conversation_id:
                 on_conversation_id(account, conv_id, deadline)
-            return await poll_conversation(account, page, context, conv_id, timeout, on_poll, on_balance, ratio, duration, prompt=prompt)
+            # Gửi xong thì KHÔNG cần giữ Chrome nữa: ở lại ~60s phòng Dola hỏi lại, rồi đóng và theo dõi
+            # bằng cookie (giống đường fetch). Trước 20/09 đường UI giữ Chrome suốt cả lượt dựng.
+            return await _poll_then_handoff(account, page, context, conv_id, timeout, deadline,
+                                            ms_token, fp, on_poll, on_balance, ratio, duration, prompt,
+                                            on_browser_free=on_browser_free,
+                                            on_browser_hold=on_browser_hold,
+                                            mark_closed=lambda: closed_flag.__setitem__("v", True))
         finally:
-            await _persist_before_close(context, account)
-            await context.close()
+            if not closed_flag["v"]:
+                await _persist_before_close(context, account)
+                await context.close()
 
 
 async def _main():

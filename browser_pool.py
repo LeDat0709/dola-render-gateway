@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import time
 import uuid
+import weakref
 from datetime import date, datetime, time as dt_time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -133,6 +134,25 @@ COOLDOWN_SEC = 1800  # 30-minute cooldown on risk control (captcha)
 # Trần thời gian KIỂM PHIÊN mỗi nick: proxy chết làm bước mở Chrome/HTTP kiểm treo 10+ phút (ảnh 15/09,
 # 8 nick kẹt "đang kiểm tra nick"). Hết giờ → bỏ qua nick đó (coi như chưa kiểm), KHÔNG treo cả đợt.
 VERIFY_TIMEOUT_SEC = int(os.getenv("DOLA_VERIFY_TIMEOUT", "30"))
+# MỌI đường verify (passport HTTP lẫn mở Chrome) đều gõ cửa Dola. Không có cổng chung thì một lần "Kiểm tra tất cả"
+# 50 nick bắn 50 request cùng lúc từ một IP → đúng nhóm lỗi 710022002 lớn nhất trong log 20/09.
+# Cổng RIÊNG, KHÔNG dùng _global_submit_gate: khe đó dành cho lệnh gửi video — 35 nick từng giữ 35 khe (~9 phút)
+# khiến video thật phải chờ 242s (log 19/09). Xếp hàng ở đây KHÔNG tính vào đồng hồ chờ mạng (xem verify_account_http).
+VERIFY_CONCURRENCY = max(1, int(os.getenv("DOLA_VERIFY_CONCURRENCY", "4")))
+_verify_semas: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def _verify_gate() -> asyncio.Semaphore:
+    """Cổng verify của ĐÚNG vòng lặp đang chạy.
+
+    Một semaphore cấp module bị trói vào vòng lặp đầu tiên chạm nó; vòng lặp thứ hai trong cùng tiến trình
+    (script CLI dùng asyncio.run, test) ném "bound to a different event loop" — mà chỗ gọi lại nuốt lỗi nên
+    cổng coi như biến mất trong im lặng."""
+    loop = asyncio.get_running_loop()
+    sema = _verify_semas.get(loop)
+    if sema is None:
+        sema = _verify_semas[loop] = asyncio.Semaphore(VERIFY_CONCURRENCY)
+    return sema
 
 # Dola 710022002 "gửi quá dày" tính theo IP trong ngắn hạn: nhiều nick chung IP thì dính cả loạt. Trước đây
 # mỗi nick dính là nghỉ 30 phút rồi xoay ngay sang nick khác → cùng IP lại dính → vài phút là bench cả kho.
@@ -316,6 +336,25 @@ class DirtyIpWaitTimeout(RuntimeError):
     """Chờ hết DIRTY_IP_WAIT_SEC mà IP proxy vẫn bẩn + chưa đổi được. Lệnh CHƯA gửi → không mất lượt."""
 
 
+_LOI_PROXY = ("err_proxy", "err_tunnel", "connection reset", "proxy", "econnreset")
+
+
+async def _kem_ly_do_proxy(account: str, e: Exception) -> Exception:
+    """Lỗi trông như proxy chết → kèm câu giải thích nếu thật ra là whitelist gặp IP máy xoay (VPN).
+
+    Chrome chỉ ném "ERR_PROXY_CONNECTION_FAILED"/"connection reset", người dùng không thể tự suy ra nguyên nhân
+    (20/09: nhà bán VẪN trả proxy nên mọi bước kiểm đều xanh, chỉ cổng proxy là cắt)."""
+    if not any(k in str(e).lower() for k in _LOI_PROXY):
+        return e
+    from browser import rotating_whitelist_hint
+    hint = await asyncio.to_thread(rotating_whitelist_hint, account)
+    return RuntimeError(f"{e} — {hint}") if hint else e
+
+
+class IpRateLimitWait(DirtyIpWaitTimeout):
+    """Slot IP đầy + IP đang bị Dola rate-limit, chờ quá grace. Lỗi của IP chứ không phải của nick → xoay nhưng không cho nghỉ."""
+
+
 async def _wait_clean_ip(account: str, sleep=asyncio.sleep, clock=time.time) -> None:
     """TRƯỚC khi mở nick: IP proxy xoay của nick vừa bị Dola chặn (bẩn) mà còn job khác đang dựng trên key (không đổi IP
     được, đổi sẽ cắt job đó) → CHỜ, không gửi trên IP bẩn. Hết job trên key → rotate_if_expiring ngay sau đổi IP mới.
@@ -398,7 +437,7 @@ async def _egress_slot(account: str, on_wait=None, early_release=None):
                       f"({s['until'] - now:.0f}s) — chờ tối đa {EGRESS_RATE_LIMIT_GRACE_SEC:.0f}s rồi nhường "
                       f"(tránh kẹt cứng log 17/09)", flush=True)
             if now >= rl_deadline:
-                raise DirtyIpWaitTimeout(
+                raise IpRateLimitWait(
                     f"Proxy {mask_proxy(key) or 'IP máy'} rate-limit + slot IP đầy — chờ {EGRESS_RATE_LIMIT_GRACE_SEC:.0f}s "
                     f"vượt grace. Nick {account} nhường slot, xoay nick/proxy khác."
                 )
@@ -527,6 +566,9 @@ class BrowserPool:
         # cho 37 nick). Một số đếm CHUNG như self._ip_used chỉ đúng khi cả kho dùng MỘT proxy chung; với proxy
         # riêng nó cộng lẫn các khoá vào nhau nên xoay sai khoá, sai lúc. Khoá dict = browser._effective_rotating.
         self._ip_used_by_key: dict[str, int] = {}
+        # nick → mtime cookies.json đã kiểm lại sau đăng nhập. Không có nó, nick có cookies.json mới nhưng thiếu
+        # sessionid (verify_account_http trả None, không đụng login_checked_at) bị quét lại ở MỌI job.
+        self._relogin_seen: dict[str, float] = {}
         # Khoá THEO KHOÁ proxy (khuôn _PACE_LOCKS): job trên khoá A không chặn quyết định của khoá B. Một lock
         # chung giữ qua lời gọi nhà bán (proxyxoay tới ~17s) là cả kho đứng im.
         self._ip_locks: dict[str, asyncio.Lock] = {}
@@ -929,14 +971,14 @@ class BrowserPool:
         """Verifies login state in headless mode and updates cache."""
         if name not in self.accounts:
             raise FileNotFoundError(f"Profile does not exist: {name}")
-        # Chống rate-limit: mọi đường tới Dola phải qua gate (cả gửi video lẫn login/verify).
-        import video_worker_ui as _vw
-        await _vw._global_submit_gate(name)
+        # Qua _verify_sema (KHÔNG phải _global_submit_gate — xem chú thích ở VERIFY_CONCURRENCY): mọi đường verify
+        # dùng chung một cổng để không bao giờ có 50 nick cùng gõ cửa Dola.
         lock = self._locks.setdefault(name, asyncio.Lock())
         if lock.locked():
             raise RuntimeError("Account is generating video, please verify later")
         from browser import check_login_state
-        ok = await check_login_state(name)   # RegionBlockedError nổi lên nguyên: không ghi "cookie chết" oan
+        async with _verify_gate():
+            ok = await check_login_state(name)   # RegionBlockedError nổi lên nguyên: không ghi "cookie chết" oan
         self._conn.execute(
             "UPDATE accounts_meta SET login_ok=?, login_checked_at=? WHERE name=?",
             (1 if ok else 0, time.time(), name),
@@ -1101,9 +1143,41 @@ class BrowserPool:
         # Kiểm qua ĐÚNG proxy của nick (giải cả proxy xoay). Trước đây luôn dùng proxy chung → nick có proxy
         # riêng bị trả None rồi phải mở Chrome để kiểm (3 luồng, tới 30s/nick) = bước "kiểm tra nick" ì ạch.
         via = await asyncio.to_thread(account_proxy_url, name)
-        ok, _ = await verify_cookie_http(cookie_str, proxy=via or None)
+        # Xếp hàng ở ngoài, đồng hồ ở trong: thời gian chờ khe KHÔNG bị tính là "mạng chậm" (log 19/09 từng bắt
+        # cả loạt quá giờ chỉ vì xếp hàng), nhưng vẫn có trần cho chính cuộc gọi mạng.
+        async with _verify_gate():
+            ok, _ = await asyncio.wait_for(
+                verify_cookie_http(cookie_str, proxy=via or None), timeout=VERIFY_TIMEOUT_SEC)
         self.set_login_status(name, ok)
         return ok
+
+    async def _reverify_relogged(self, accounts: list) -> list:
+        """Nick cờ "đã đăng xuất" (login_ok=0) mà cookies.json MỚI HƠN lúc bị đánh dấu = vừa đăng nhập lại / nhập cookie.
+        Đường CLI + app desktop (import_cookies.py) không đi qua server nên không ai reset cờ, mà _schedulable bỏ qua
+        nick login_ok=0 → nick không bao giờ được thử lại (log 20/09 12:14: cookie sống, passport OK, cờ vẫn 0).
+        Kiểm passport HTTP (~1s/nick, không mở Chrome); lỗi kiểm giữ nguyên cờ cũ, không làm job nổ."""
+        names = []
+        for a in accounts:
+            if a["login_ok"] != 0:
+                continue
+            try:
+                mtime = (self.accounts_dir / a["name"] / "cookies.json").stat().st_mtime
+            except OSError:
+                continue   # chưa có bản sao cookie → không có gì mới để kiểm
+            if mtime > (a["login_checked_at"] or 0) and self._relogin_seen.get(a["name"]) != mtime:
+                self._relogin_seen[a["name"]] = mtime
+                names.append(a["name"])
+        if not names:
+            return accounts
+
+        async def check(name: str) -> None:
+            try:
+                await asyncio.wait_for(self.verify_account_http(name), timeout=VERIFY_TIMEOUT_SEC)
+            except Exception as e:  # noqa: BLE001 — kiểm hụt không được chặn job; nick giữ cờ cũ
+                print(f"[pool] {name}: kiểm lại sau đăng nhập lỗi (giữ cờ cũ): {e!r}", flush=True)
+
+        await asyncio.gather(*(check(n) for n in names))
+        return self.list_accounts()
 
     def set_max_concurrency(self, limit: int) -> int:
         """Đổi số nick được gửi cùng lúc mà không cần khởi động lại server."""
@@ -1119,25 +1193,26 @@ class BrowserPool:
         """
         browser_slots = asyncio.Semaphore(config.LOGIN_CONCURRENCY)
 
-        async def _check_one(name: str) -> dict:
-            r = None
-            try:
-                r = await self.verify_account_http(name)      # HTTP thuần: chạy song song thoải mái
-                if r is None:
-                    async with browser_slots:                 # phải mở Chrome: giới hạn cho khỏi nghẽn
-                        r = await self.verify_account(name)
-            except Exception as e:
-                print(f"[verify] {name} lỗi: {e}", flush=True)
-            return {"name": name, "ok": bool(r), "checked": r is not None}
-
         async def check(name: str) -> dict:
             # Proxy chết → mở Chrome/HTTP kiểm phiên treo rất lâu. Cắt ở VERIFY_TIMEOUT_SEC: hết giờ coi như
             # "chưa kiểm" (checked=False) để không treo cả đợt; wait_for hủy task → Chrome tự đóng (async with).
+            # Giờ chỉ tính lúc đang kiểm thật — thời gian xếp hàng chờ slot Chrome không tính.
+            r = None
             try:
-                return await asyncio.wait_for(_check_one(name), timeout=VERIFY_TIMEOUT_SEC)
+                r = await self.verify_account_http(name)      # đã tự có cổng + trần mạng bên trong
+                if r is None:
+                    # Phải mở Chrome. Có TRẦN cho cả lượt (xếp hàng + chạy): thiếu nó thì endpoint admin treo vô hạn
+                    # khi nhiều nick cùng phải mở Chrome.
+                    async def _bang_chrome():
+                        async with browser_slots:
+                            return await asyncio.wait_for(self.verify_account(name), timeout=VERIFY_TIMEOUT_SEC)
+                    r = await asyncio.wait_for(_bang_chrome(), timeout=VERIFY_TIMEOUT_SEC * 4)
             except asyncio.TimeoutError:
                 print(f"[verify] {name} quá {VERIFY_TIMEOUT_SEC}s (proxy chết/mạng chậm?) → bỏ qua, không treo", flush=True)
                 return {"name": name, "ok": False, "checked": False}
+            except Exception as e:
+                print(f"[verify] {name} lỗi: {e}", flush=True)
+            return {"name": name, "ok": bool(r), "checked": r is not None}
 
         wanted = list(self.accounts) if names is None else [n for n in self.accounts if n in set(names)]
         return list(await asyncio.gather(*(check(n) for n in wanted)))
@@ -1378,6 +1453,9 @@ class BrowserPool:
             early_release = {"released": False}
             return await _run_worker(acc, on_balance, seen, early_release=early_release)
 
+        # Kiểm lại nick vừa đăng nhập TRƯỚC khi giữ slot: hàm này gọi mạng (tới VERIFY_TIMEOUT_SEC/nick), giữ
+        # cổng one-nick trong lúc chờ sẽ chặn mọi job khác (DOLA_ONE_NICK=1).
+        all_accts = await self._reverify_relogged(self.list_accounts())
         try:
             # MỖI LẦN MỘT NICK: giữ cổng SUỐT job (submit + render) → 1 nick/lần. Acquire TRƯỚC
             # browser-sema để thứ tự khoá luôn one_nick→browser. NẰM TRONG try...finally để
@@ -1398,7 +1476,6 @@ class BrowserPool:
             soft_pin = False   # ghim MỀM: vẫn ưu tiên + báo lý do thật của nick thẻ, nhưng cho xoay sang nick khác
             tried: set[str] = set()
             need = self._cost_for(model, duration) or self._default_cost(model, duration)
-            all_accts = self.list_accounts()   # 1 lần/job; trong khoá nick sẽ đọc lại riêng nick đó cho tươi
             if account is not None:
                 match = next((a for a in all_accts if a["name"] == account), None)
                 if match is None:
@@ -1706,10 +1783,24 @@ class BrowserPool:
                         _raise_if_delivered(account, e)   # stat/mkdir file video sau khi xong
                         last_err = e
                         continue
+                    except IpRateLimitWait as e:
+                        # IP đang bị Dola rate-limit, nick CHƯA gửi gì → xoay, KHÔNG cho nghỉ 10 phút. Rơi xuống nhánh
+                        # chung thì 1 lần 710022002 trên IP máy làm mọi nick xếp hàng sau bị nghỉ oan (log 19/09 23:13–23:21).
+                        _raise_if_delivered(account, e)
+                        # Đây là lỗi của ĐƯỜNG RA chứ không phải của nick: nick không có proxy riêng thì mọi nick
+                        # cùng đi một IP, xoay nick chỉ nhân số lần chờ grace lên theo số nick (log 20/09: 10 lần
+                        # liên tiếp cùng một lỗi). Dừng ngay, y như nhánh RegionBlockedError ở trên.
+                        if not account_proxy_raw(account):
+                            raise
+                        _refund_if_safe(account, "submit_rate_limited")   # chắc chắn chưa gửi → hoàn như các nhánh anh em
+                        print(f"[pool] {account} chưa gửi, IP đang bị Dola chặn tạm → xoay, nick không phải nghỉ: {e}", flush=True)
+                        last_err = e
+                        continue
                     except Exception as e:
                         # Lỗi chưa phân loại (proxy riêng không lấy được IP, Chrome không mở, treo trước khi gửi…):
                         # chỉ xoay khi lệnh CHƯA tới Dola. Sau khi gửi các lỗi này vẫn nổ được (poll/tải/resume) → nổi lỗi.
                         _raise_if_delivered(account, e)
+                        e = await _kem_ly_do_proxy(account, e)   # "ERR_PROXY_CONNECTION_FAILED" một mình không nói lên gì
                         # Hoàn credit nếu CHƯA gửi (delivery["maybe"]=False) — refund an toàn, không chặn rotate
                         _refund_if_safe(account, "submit_4xx_no_conv_id")
                         print(f"[pool] {account} lỗi trước khi gửi lệnh{'' if pinned and not soft_pin else ', xoay nick'}: {e!r}", flush=True)

@@ -206,12 +206,17 @@ ADMIN_KEY = os.getenv("DOLA_ADMIN_KEY", "")
 _PKG_DIR = Path(__file__).resolve().parent
 EXTENSION_DIR = os.getenv("DOLA_EXTENSION_DIR", "") or str(_PKG_DIR / "extensions" / "dola30")
 EXTENSION_ENABLED = os.getenv("DOLA_EXTENSION_ENABLED", "1") == "1"
-# Extension nạp vào MỌI profile nick (mặc định extensions/khan). Đặt DOLA_EXTRA_EXTENSION_DIR="" để tắt.
-# LƯU Ý: nạp extension buộc Chrome chạy CÓ CỬA SỔ (MV3 không chạy headless) → mỗi nick một Chrome hiện hình.
-# MẶC ĐỊNH TẮT ("") vì đã kiểm 13/09: patchright KHÔNG nạp extension chưa đóng gói (fetch không bị bọc,
-# content-script không chạy) — bật lên chỉ tổ buộc Chrome headed (tốn RAM, dễ timeout) mà extension vẫn im.
-# Đặt DOLA_EXTRA_EXTENSION_DIR=/đường/dẫn nếu sau này dùng trình duyệt nạp được extension.
-EXTRA_EXTENSION_DIR = os.getenv("DOLA_EXTRA_EXTENSION_DIR", "")
+# Extension nạp vào profile TẠO VIDEO / đăng nhập (browser._extension_dirs, use_extension=True); các lần mở
+# headless để kiểm cookie không nạp. Mặc định TẮT (""); bật: DOLA_EXTRA_EXTENSION_DIR=<...>/extensions/khan.
+# Chạy ẩn vẫn OK: đo 20/09 trên Chrome 153, extension MV3 nạp và chạy bình thường ở headless.
+# Cách nạp: Chrome 137+ chính hãng bỏ lặng lẽ --load-extension (chrome://extensions trống) → browser.py nạp bằng
+# CDP Extensions.loadUnpacked (cờ --enable-unsafe-extension-debugging), vẫn dùng Chrome thật + đúng jar cookie.
+# ĐỪNG đổi DOLA_BROWSER_CHANNEL="" để "nạp được": Chromium kèm patchright (151) cũ hơn profile (Chrome 153).
+# BẬT SẴN, trỏ vào extension đóng kèm: gói .exe/.dmg không có .env.local, để mặc định "" thì người dùng
+# bản đóng gói không bao giờ có 30s dù thư mục extension nằm ngay trong gói. Tắt hẳn: DOLA_EXTRA_EXTENSION_DIR=0.
+_EXTRA_EXT_RAW = os.getenv("DOLA_EXTRA_EXTENSION_DIR", "").strip()
+EXTRA_EXTENSION_DIR = ("" if _EXTRA_EXT_RAW.lower() in ("0", "off", "no", "false")
+                       else _EXTRA_EXT_RAW or str(_PKG_DIR / "extensions" / "khan"))
 
 # Unlock 30s by hijacking fetch in-page (Playwright init-script) instead of the chrome.debugger
 # extension. This runs HEADLESS and shows no "debugging this browser" bar. Set to "0" to fall

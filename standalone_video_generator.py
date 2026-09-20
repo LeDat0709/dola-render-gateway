@@ -257,6 +257,9 @@ async ({conversationId, msToken, fp}) => {
 # 5. WORKER TẠO VIDEO BẰNG PYTHON (PLAYWRIGHT / PATCHRIGHT)
 # ==============================================================================
 
+CAPTCHA_PROBE_ATTEMPTS = 15   # x 800ms = ~12s chờ iframe captcha hiện
+
+
 class DolaVideoGenerator:
     """
     Bộ tạo video Dola Seedance 2.0 / 2.5 hoàn chỉnh
@@ -277,13 +280,17 @@ class DolaVideoGenerator:
 
     async def _solve_slider_if_present(self, page) -> bool:
         """Kiểm tra và giải captcha trượt nếu xuất hiện."""
-        for _ in range(15):
+        # Chờ đủ lâu cho iframe captcha kịp hiện: cắt xuống ~1.6s thì captcha xuất hiện muộn sẽ bị coi là
+        # "không có", luồng đi tiếp rồi kẹt ở tường captcha mà không ai báo (20/09).
+        for attempt in range(CAPTCHA_PROBE_ATTEMPTS):
             captcha_frame = None
             for f in page.frames:
                 if "verify" in f.url or "captcha" in f.url:
                     captcha_frame = f
                     break
             if not captcha_frame:
+                if attempt >= CAPTCHA_PROBE_ATTEMPTS - 1:
+                    return True  # dò hết cửa sổ vẫn không thấy → thật sự không có captcha
                 await page.wait_for_timeout(800)
                 continue
 
@@ -364,6 +371,8 @@ class DolaVideoGenerator:
             ])
 
         kwargs = {
+            # MV3 không nạp được ở headless: có extension mà vẫn headless thì --load-extension bị bỏ lặng lẽ,
+            # chip 30s không hiện và video ra 10s mà log không báo gì (cùng quy tắc browser.py:971).
             "headless": False if ext_path.exists() else self.headless,
             "args": launch_args,
             "locale": "ja-JP",

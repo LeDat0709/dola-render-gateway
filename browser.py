@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import time
 import tempfile
+import weakref
 from pathlib import Path
 
 import config
@@ -72,6 +73,41 @@ _THIRTYSEC_HIJACK_JS = r"""
     }
     return v;
   };
+
+  // Dola (20/09) tải action-bar + skill-pack bằng XMLHttpRequest, không còn fetch → chỉ vá fetch thì chip 30s
+  // không bao giờ hiện. Vá cả responseText/response (dạng text) của XHR tới đúng các địa chỉ đó.
+  const patchText = (url, text) => {
+    try {
+      const j = JSON.parse(text);
+      return JSON.stringify(m(url, 'skill/pack') ? patchSkillPack(j) : patchAB(j));
+    } catch (e) { return text; }
+  };
+  const isCfgUrl = (u) => m(u, 'skill/pack') || m(u, 'get_item_conf') || m(u, 'slot/action_bar');
+  // Giữ dấu vết ở mức thấp nhất có thể (browser.py: "JS tamper dễ lộ"): trạng thái để trong WeakMap chứ KHÔNG
+  // gắn thuộc tính riêng lên từng đối tượng XHR (Object.keys(xhr) là phép soi rẻ nhất), và hàm vá báo mã nguồn
+  // gốc khi bị .toString(). Vẫn chưa vô hình: so sánh sâu descriptor thì phát hiện được.
+  const nativeLike = (fn, goc) => {
+    try { Object.defineProperty(fn, 'toString', { value: () => goc.toString(), writable: true, configurable: true }); }
+    catch (e) {}
+    return fn;
+  };
+  const xs = new WeakMap();
+  const XP = XMLHttpRequest.prototype;
+  const xOpen = XP.open;
+  XP.open = nativeLike(function (method, url) { xs.set(this, { url: String(url) }); return xOpen.apply(this, arguments); }, xOpen);
+  for (const name of ['responseText', 'response']) {
+    const d = Object.getOwnPropertyDescriptor(XP, name);
+    if (!d || !d.get) continue;
+    const get = nativeLike(function () {
+      const v = d.get.call(this);
+      const st = xs.get(this);
+      if (this.readyState !== 4 || typeof v !== 'string' || (this.responseType && this.responseType !== 'text')
+          || !st || !isCfgUrl(st.url)) return v;
+      if (st.src !== v) { st.src = v; st.out = patchText(st.url, v); }   // vá 1 lần/phản hồi
+      return st.out;
+    }, d.get);
+    Object.defineProperty(XP, name, { configurable: true, enumerable: d.enumerable, get });
+  }
 
   window.fetch = async function (input, init) {
     const r = await of.apply(this, arguments);
@@ -637,9 +673,10 @@ def account_proxy(account: str, prefer_cached: bool = False) -> dict | None:
             # rơi về proxy chung/IP máy — nick sẽ lộ IP thật và bị Dola gom chung. Báo lỗi rõ để sửa.
             reason = rotating_last_error(raw)
             detail = f": {reason}" if reason else ""   # lý do thật (whitelist/hết hạn/không tới được) → team khỏi đoán
+            hint = rotating_whitelist_hint(account)    # whitelist gặp IP xoay → nói thẳng, khỏi đoán
             raise RuntimeError(
-                f"Proxy xoay riêng của nick {account} không lấy được IP ({mask_proxy(raw)}){detail} — kiểm tra "
-                "key/link, hạn dùng và whitelist IP trên trang nhà bán.")
+                f"Proxy xoay riêng của nick {account} không lấy được IP ({mask_proxy(raw)}){detail} — "
+                + (hint or "kiểm tra key/link, hạn dùng và whitelist IP trên trang nhà bán."))
         # proxy.txt CÓ nội dung mà đọc không ra proxy (sai định dạng, kiểu tool khác xuất ra như host:port@user:pass,
         # file sửa tay). Trước đây rơi xuống proxy chung/IP máy: đo thật 16/09 thì bước kiểm cookie gọi Dola THẲNG từ
         # IP máy bằng cookie của nick, nút "Kiểm tra proxy" báo ổn với IP máy. Nick đã khai proxy riêng → không đi thẳng.
@@ -789,6 +826,42 @@ _proxy_probe_cache: dict[str, float] = {}
 _PROXY_PROBE_TTL = 300   # 5 phút
 
 
+# Đo IP máy tốn 2 request ipify → cache, đừng đo lại ở mọi job.
+_ip_unstable_cache: dict[str, float] = {}   # "" → lần đo gần nhất (giá trị lưu ở _ip_unstable_val)
+_ip_unstable_val = {"unstable": False}
+_IP_UNSTABLE_TTL = 300
+
+
+def _ip_doi_theo_ket_noi() -> bool:
+    import proxyxoay
+    now = time.time()
+    if now - _ip_unstable_cache.get("", 0.0) < _IP_UNSTABLE_TTL:
+        return _ip_unstable_val["unstable"]
+    _ip_unstable_val["unstable"] = bool(proxyxoay.machine_ip_unstable())
+    _ip_unstable_cache[""] = now
+    return _ip_unstable_val["unstable"]
+
+
+def rotating_whitelist_hint(account: str) -> str:
+    """Câu giải thích khi nick dùng proxy xoay xác thực bằng WHITELIST IP máy mà IP máy lại đổi theo từng kết nối.
+
+    Trả "" nếu không phải tình huống đó. Gom về một chỗ để mọi đường (kiểm proxy, pre-flight, gửi http) nói
+    CÙNG một câu — trước đây chỉ đường gửi http có câu này nên người dùng ở chế độ 'ui' chỉ thấy
+    "Connection reset by peer" (20/09: ExpressVPN đổi IP 5 lần trong 6 request)."""
+    import proxyxoay
+    raw = _effective_rotating(account)
+    # tmproxy://KEY xác thực bằng CHÍNH KEY → IP máy xoay vẫn dùng được; chỉ nhà bán kiểu link get.php
+    # (proxyxoay / proxy.vn / topproxy) mới xác thực bằng whitelist IP máy.
+    if not raw or not proxyxoay.is_key_link(raw):
+        return ""
+    if not _ip_doi_theo_ket_noi():
+        return ""
+    return ("IP máy đang ĐỔI THEO TỪNG KẾT NỐI (thường do VPN) nên proxy xác thực bằng whitelist IP máy "
+            "(proxyxoay / proxy.vn / topproxy) không bao giờ dùng được: khai whitelist xong thì kết nối kế tiếp "
+            "đã đi bằng IP khác. Cho tool ra thẳng không qua VPN (chia luồng), hoặc dùng tmproxy://KEY "
+            "(xác thực bằng key, không cần whitelist).")
+
+
 async def ensure_proxy_alive(account: str) -> None:
     """Kiểm tra nhanh proxy của nick cò sống (TCP connect) TRƯỚC khi mở Chrome — phát hiện proxy chết sớm,
     tránh tốn Chrome slot. Cache 5 phút để không spam kiểm."""
@@ -929,7 +1002,75 @@ async def _headless_ua(p) -> str:
     return _HEADLESS_UA
 
 
-async def launch_account_context(p, account: str, headless: bool = None, use_extension: bool = False):
+def _extension_dirs(use_extension: bool, want_extra: bool = False) -> list[str]:
+    """Thư mục extension nạp cho lần mở profile này. Chỉ profile TẠO VIDEO/đăng nhập (use_extension=True) mới nạp —
+    các lần mở headless để kiểm cookie không bị buộc hiện cửa sổ. Thiếu thư mục extra → bỏ qua, không làm chết job.
+
+    want_extra: người gọi CHỦ ĐỘNG xin extension Khan. Mặc định False vì Khan ghi đè `"duration":N` của MỌI lệnh
+    gửi đi từ trang (regex vô điều kiện trong inject.js) → nạp nhầm vào job 10s/15s/2.0 là ra video sai độ dài và
+    sai giá credit. Chỉ job 30s × Seedance 2.5 mới nên xin."""
+    if not use_extension:
+        return []
+    dirs: list[str] = []
+    if not config.SKILLPACK_HIJACK:
+        # Legacy path: chrome.debugger extension (needs a headed window, shows the debug bar).
+        if not config.EXTENSION_ENABLED:
+            raise RuntimeError("Dola extension is disabled (DOLA_EXTENSION_ENABLED=0)")
+        extension_dir = Path(config.EXTENSION_DIR).resolve()
+        if not extension_dir.exists():
+            raise FileNotFoundError(f"Dola extension directory does not exist: {extension_dir}")
+        dirs.append(str(extension_dir))
+    if want_extra and config.EXTRA_EXTENSION_DIR:
+        extra = Path(config.EXTRA_EXTENSION_DIR).resolve()
+        if extra.exists():
+            dirs.append(str(extra))
+        else:
+            print(f"[browser] DOLA_EXTRA_EXTENSION_DIR không tồn tại, bỏ qua: {extra}", flush=True)
+    return dirs
+
+
+def _extension_launch(ext_dirs: list[str], args: list[str], headless: bool) -> tuple[list[str], bool]:
+    """Cờ + chế độ mở cho profile có extension. KHÔNG dùng --load-extension: Chrome 137+ chính hãng bỏ qua lặng lẽ
+    (chrome://extensions trống) → nạp bằng CDP sau khi mở (_load_unpacked_extensions).
+
+    GIỮ NGUYÊN chế độ ẩn của người gọi: đo 20/09 trên Chrome 153, extension MV3 nạp và chạy bình thường khi
+    headless=True (service worker lên), và vân tay (userAgentData.brands, webdriver, plugins, WebGL) không khác
+    bản hiện cửa sổ — với điều kiện vẫn gỡ chữ "Headless" khỏi UA như launch_account_context đang làm."""
+    if not ext_dirs:
+        return args, headless
+    return [*args, "--enable-unsafe-extension-debugging"], headless
+
+
+async def _load_unpacked_extensions(context, ext_dirs: list[str]) -> None:
+    """Extensions.loadUnpacked qua phiên CDP cấp trình duyệt (chỉ có khi mở bằng pipe + cờ unsafe-extension-debugging).
+    Giữ nguyên Chrome 153 thật và jar cookie (đổi sang Chromium 151 kèm patchright sẽ hạ phiên bản profile).
+    Extension lỗi/không nạp được chỉ ghi log — không được chặn cả job."""
+    if not ext_dirs:
+        return
+    try:
+        cdp = await context.browser.new_browser_cdp_session()
+    except Exception as e:  # noqa: BLE001 — context.browser có thể None
+        print(f"[browser] không mở được phiên CDP để nạp extension: {str(e)[:120]}", flush=True)
+        return
+    for d in ext_dirs:
+        try:
+            await cdp.send("Extensions.loadUnpacked", {"path": d})
+            _EXT_LOADED.add(context)
+        except Exception as e:  # noqa: BLE001
+            print(f"[browser] nạp extension '{d}' lỗi: {str(e)[:120]}", flush=True)
+
+
+_EXT_LOADED: "weakref.WeakSet" = weakref.WeakSet()   # context đã nạp được ≥1 extension thật
+
+
+def extension_loaded(context) -> bool:
+    """True nếu lần mở này nạp extension THẬT sự thành công (không phải chỉ được cấu hình). Nơi gọi dựa vào đây để
+    bỏ bước chọn 30s trên giao diện — extension chưa chạy mà bỏ thì ra video 10s và vẫn trừ lượt."""
+    return context in _EXT_LOADED
+
+
+async def launch_account_context(p, account: str, headless: bool = None, use_extension: bool = False,
+                                 want_khan: bool = False):
     """Launches accounts/<account> profile, returns BrowserContext. Caller must close.
 
     p: async_playwright() instance
@@ -943,7 +1084,8 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     # getattr: config.so biên dịch cũ (chưa build lại) không có CDP_LAUNCH → mặc định TẮT, KHÔNG ném AttributeError
     # làm hỏng đường Chrome mặc định. Cờ chỉ có hiệu lực sau khi build lại/xoá config.so.
     if getattr(config, "CDP_LAUNCH", False):   # kiểu đối thủ: Chrome thật + connect_over_cdp (mất stealth patchright)
-        return await _launch_account_context_cdp(p, account, headless=headless, use_extension=use_extension)
+        return await _launch_account_context_cdp(p, account, headless=headless, use_extension=use_extension,
+                                                want_khan=want_khan)
     # Hàm này gọi `ps` và ngủ 0.6s đồng bộ; chạy thẳng trong coroutine là đứng cả vòng lặp sự kiện
     # (mọi nick khác, /health) tới ~4.6s cho mỗi profile có Chrome mồ côi sau crash.
     await asyncio.to_thread(assert_profile_free, profile_dir)
@@ -951,27 +1093,9 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     args = list(LAUNCH_ARGS)
     if config.BLOCK_WEBRTC:   # #1: ép WebRTC đi qua proxy → không lộ IP thật của máy
         args.append("--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
-    ext_dirs = []
     hijack_30s = use_extension and config.SKILLPACK_HIJACK
-    if use_extension and not hijack_30s:
-        # Legacy path: chrome.debugger extension (needs a headed window, shows the debug bar).
-        if not config.EXTENSION_ENABLED:
-            raise RuntimeError("Dola extension is disabled (DOLA_EXTENSION_ENABLED=0)")
-        extension_dir = Path(config.EXTENSION_DIR).resolve()
-        if not extension_dir.exists():
-            raise FileNotFoundError(f"Dola extension directory does not exist: {extension_dir}")
-        ext_dirs.append(str(extension_dir))
-    # Extension nạp vào MỌI profile nick (config.EXTRA_EXTENSION_DIR). MV3 không chạy headless → buộc có cửa sổ.
-    if config.EXTRA_EXTENSION_DIR:
-        extra = Path(config.EXTRA_EXTENSION_DIR).resolve()
-        if extra.exists():
-            ext_dirs.append(str(extra))
-        else:
-            print(f"[browser] DOLA_EXTRA_EXTENSION_DIR không tồn tại, bỏ qua: {extra}", flush=True)
-    if ext_dirs:
-        launch_headless = False
-        args.append(f"--disable-extensions-except={','.join(ext_dirs)}")
-        args.extend(f"--load-extension={d}" for d in ext_dirs)
+    ext_dirs = _extension_dirs(use_extension, want_extra=want_khan)
+    args, launch_headless = _extension_launch(ext_dirs, args, launch_headless)
     kwargs = {
         "headless": launch_headless,
         "args": args,
@@ -992,6 +1116,7 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     if proxy_cfg:
         kwargs["proxy"] = proxy_cfg
     context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+    await _load_unpacked_extensions(context, ext_dirs)
     # #1 WebRTC: chỉ dùng CỜ LAUNCH native (ở trên) — KHÔNG chèn JS override iceServers, vì mọi JS tampering
     # đều dễ bị bắt hơn là để native (bài học antidetect: không có nhân vá thì đừng động vào JS).
     if config.FINGERPRINT_PER_NICK:               # #3: JS fingerprint per-nick (MẶC ĐỊNH TẮT — xem config)
@@ -1046,7 +1171,8 @@ def _cdp_chrome_cmd(exe: str, profile_dir: Path, port: int, args: list[str],
     return cmd
 
 
-async def _launch_account_context_cdp(p, account: str, headless: bool = None, use_extension: bool = False):
+async def _launch_account_context_cdp(p, account: str, headless: bool = None, use_extension: bool = False,
+                                      want_khan: bool = False):
     """launch_account_context phiên bản CDP: Popen Chrome thật + connect_over_cdp. Trả BrowserContext như bản
     patchright; context.close() cũng giết tiến trình Chrome. Extension nạp qua CDP (Chrome 137+ bỏ --load-extension)."""
     profile_dir = config.ACCOUNTS_DIR / account
@@ -1056,19 +1182,8 @@ async def _launch_account_context_cdp(p, account: str, headless: bool = None, us
     args = list(LAUNCH_ARGS)
     if config.BLOCK_WEBRTC:
         args.append("--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
-    ext_dirs: list[str] = []
     hijack_30s = use_extension and config.SKILLPACK_HIJACK
-    if use_extension and not hijack_30s:
-        if not config.EXTENSION_ENABLED:
-            raise RuntimeError("Dola extension is disabled (DOLA_EXTENSION_ENABLED=0)")
-        d = Path(config.EXTENSION_DIR).resolve()
-        if not d.exists():
-            raise FileNotFoundError(f"Dola extension directory does not exist: {d}")
-        ext_dirs.append(str(d))
-    if config.EXTRA_EXTENSION_DIR:
-        extra = Path(config.EXTRA_EXTENSION_DIR).resolve()
-        if extra.exists():
-            ext_dirs.append(str(extra))
+    ext_dirs = _extension_dirs(use_extension, want_extra=want_khan)
     if ext_dirs:
         launch_headless = False   # MV3 không chạy headless
 
@@ -1101,12 +1216,7 @@ async def _launch_account_context_cdp(p, account: str, headless: bool = None, us
     if proxy_cfg and proxy_cfg.get("username"):
         await _cdp_proxy_auth(context, proxy_cfg["username"], proxy_cfg.get("password", ""))
     await _cdp_region(context, config.BROWSER_TIMEZONE, config.BROWSER_LOCALE)
-    for d in ext_dirs:
-        try:
-            b_cdp = await browser.new_browser_cdp_session()
-            await b_cdp.send("Extensions.loadUnpacked", {"path": str(Path(d).resolve())})
-        except Exception as e:  # noqa: BLE001 — extension lỗi không được chặn cả job
-            print(f"[browser] CDP load extension '{d}' lỗi: {str(e)[:120]}", flush=True)
+    await _load_unpacked_extensions(context, ext_dirs)   # lỗi extension không được chặn cả job
 
     if config.FINGERPRINT_PER_NICK:
         await context.add_init_script(_fingerprint_js(account))
