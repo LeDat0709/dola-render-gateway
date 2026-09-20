@@ -1122,6 +1122,8 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     if config.FINGERPRINT_PER_NICK:               # #3: JS fingerprint per-nick (MẶC ĐỊNH TẮT — xem config)
         await context.add_init_script(_fingerprint_js(account))
     # Every flow (worker, verify, cookie import) must see the same Dola UI language.
+    # Jar mất phiên mà cookies.json còn → cứu TRƯỚC khi mở trang, không thì nick bị coi là đăng xuất.
+    await restore_session_cookies(context, account)
     await force_ui_language(context)
     if hijack_30s:
         # Unlock 30s by patching the skill-pack / action-bar in-page (headless, no debugger).
@@ -1220,6 +1222,8 @@ async def _launch_account_context_cdp(p, account: str, headless: bool = None, us
 
     if config.FINGERPRINT_PER_NICK:
         await context.add_init_script(_fingerprint_js(account))
+    # Jar mất phiên mà cookies.json còn → cứu TRƯỚC khi mở trang, không thì nick bị coi là đăng xuất.
+    await restore_session_cookies(context, account)
     await force_ui_language(context)
     if hijack_30s:
         await context.add_init_script(_THIRTYSEC_HIJACK_JS)
@@ -1386,7 +1390,12 @@ async def refresh_mstoken(account: str, wait_sec: float = MSTOKEN_WAIT_SEC) -> b
                 await context.close()
 
 
-_FAR_FUTURE = 1800000000  # 2027-01-15: far-future cookie expiry so profiles keep sessions across restarts
+# Hạn cookie khi ghim phiên vào profile. TRƯỚC 20/09 là mốc CỐ ĐỊNH 1800000000 (2027-01-15) — viết năm 2025
+# thì xa, nhưng đo ngày 20/09/2026 chỉ còn 116 ngày: tới hôm đó cookie đã ghim của MỌI nick hết hạn cùng
+# lúc, cả kho đăng xuất một lượt. Đổi sang hạn trượt tính từ lúc chạy nên không còn ngày tận thế cố định.
+# Xin 5 năm; Chromium 104+ tự cắt còn tối đa 400 ngày (đo 20/09: xin 2031 → jar ghi 2027-10-25). Không sao:
+# pin_session_cookies chạy mỗi lần đóng nick nên hạn được đẩy tới liên tục, miễn nick còn được dùng.
+_FAR_FUTURE = int(time.time()) + 5 * 365 * 86400
 
 
 async def force_ui_language(context_or_page, lang: str | None = None):
@@ -1408,6 +1417,57 @@ async def force_ui_language(context_or_page, lang: str | None = None):
         await ctx.add_cookies(cookies)
     except Exception as exc:
         print(f"  (force_ui_language skipped: {str(exc)[:80]})", flush=True)
+
+
+_SESSION_COOKIE_NAMES = ("sessionid", "sessionid_ss", "sid_tt", "sid_guard", "uid_tt", "uid_tt_ss",
+                         "ssid_ucp_v1", "passport_csrf_token")
+
+
+def _session_cookies_to_restore(jar: list, saved: list) -> list:
+    """Cookie phiên cần nạp lại từ cookies.json vào jar Chrome. Rỗng = không cần làm gì.
+
+    Chỉ cứu khi jar ĐÃ MẤT sessionid: jar còn phiên nghĩa là bản trong jar mới hơn file (Dola xoay
+    sessionid liên tục), dội file cũ đè lên là tự đăng xuất mình. Chỉ lấy cookie phiên, không dội lại cả
+    file (i18next, theme… không liên quan). Gắn expires xa để Chromium không bỏ khi đóng context."""
+    if cookie_value(jar, "sessionid"):
+        return []
+    out = []
+    for c in saved:
+        if not isinstance(c, dict) or c.get("name") not in _SESSION_COOKIE_NAMES or not c.get("value"):
+            continue
+        same_site = c.get("sameSite")
+        out.append({
+            "name": c["name"], "value": c["value"],
+            "domain": c.get("domain") or ".dola.com", "path": c.get("path") or "/",
+            "secure": bool(c.get("secure", True)), "httpOnly": bool(c.get("httpOnly", False)),
+            "sameSite": same_site if same_site in ("Strict", "Lax", "None") else "Lax",
+            "expires": _FAR_FUTURE,
+        })
+    return out if any(c["name"] == "sessionid" for c in out) else []
+
+
+async def restore_session_cookies(context, account: str) -> bool:
+    """Jar Chrome mất phiên mà accounts/<nick>/cookies.json còn → nạp lại. True = đã cứu.
+
+    Vì sao cần: pin_session_cookies chỉ ghim lại cookie ĐANG CÓ trong jar, nên một khi jar mất sessionid
+    (Chromium dọn, profile bị reset, đổi cách mở trình duyệt) thì nick coi như chết dù file vẫn còn phiên.
+    Log 20/09 mất cả cụm nick vì đúng chỗ này. Best-effort: mọi lỗi chỉ ghi log, không chặn việc mở nick."""
+    import json
+    saved_file = config.ACCOUNTS_DIR / account / "cookies.json"
+    if not saved_file.exists():
+        return False
+    try:
+        jar = await context.cookies("https://www.dola.com")
+        saved = json.loads(saved_file.read_text(encoding="utf-8"))
+        restore = _session_cookies_to_restore(jar, saved if isinstance(saved, list) else [])
+        if not restore:
+            return False
+        await context.add_cookies(restore)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[{account}] (nạp lại cookie phiên bỏ qua: {str(exc)[:80]})", flush=True)
+        return False
+    print(f"[{account}] jar Chrome mất phiên → đã nạp lại {len(restore)} cookie từ cookies.json", flush=True)
+    return True
 
 
 async def pin_session_cookies(context) -> None:
