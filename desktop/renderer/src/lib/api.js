@@ -1,5 +1,28 @@
 // Cầu nối gateway HTTP + IPC (window.api). Giữ nguyên logic bản cũ.
 import { normalizeBundle, runPool } from "./bundle.js";
+
+// FastAPI trả `detail` là CHUỖI khi mình tự raise, nhưng là MẢNG OBJECT khi pydantic chặn dữ liệu (422).
+// Nối thẳng mảng đó vào chuỗi ra "Lỗi: [object Object]" — người dùng không biết sai ở đâu (gặp 21/09 khi
+// ô "Số nick mỗi IP" để trống lúc bấm chia proxy). Gom về MỘT chỗ cho mọi lời gọi.
+export function errText(j, r) {
+  const d = j?.detail ?? j?.error;
+  if (typeof d === "string" && d) return d;
+  if (Array.isArray(d)) {
+    const msg = d
+      .map((x) => {
+        const loc = Array.isArray(x?.loc) ? x.loc[x.loc.length - 1] : "";
+        return (loc ? `${loc}: ` : "") + (x?.msg || "");
+      })
+      .filter(Boolean)
+      .join("; ");
+    if (msg) return msg;
+  }
+  if (d && typeof d === "object") {
+    try { return JSON.stringify(d).slice(0, 200); } catch { /* không tuần tự hoá được thì rơi xuống dưới */ }
+  }
+  return r?.status === 401 ? "sai admin key" : "HTTP " + (r?.status ?? "?");
+}
+
 export const api = window.api || {};
 export let cfg = { base: "http://127.0.0.1:8000", apiKey: "" };
 export async function loadConfig() {
@@ -50,7 +73,7 @@ export async function submitJob(prompt, body, signal = null) {
         body: JSON.stringify({ ...body, prompt }),
       }, SUBMIT_TIMEOUT_MS, signal);
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.detail || "HTTP " + r.status);   // server ĐÃ trả lời (hết điểm, nick lỗi…) → ném luôn, không gửi lại
+      if (!r.ok) throw new Error(errText(j, r));   // server ĐÃ trả lời (hết điểm, nick lỗi…) → ném luôn, không gửi lại
       return j;   // cả prompt/status/charged — client nhận ra khi server trả job CŨ (trùng khóa) thay vì tạo mới
     } catch (e) {
       if (signal?.aborted) throw e;   // người dùng Dừng / chạy lại nick → thôi, không gửi lại
@@ -68,7 +91,7 @@ export async function submitJob(prompt, body, signal = null) {
 export async function pollJob(id, signal = null) {
   const r = await fetchT(cfg.base + "/v1/videos/" + id, { headers: authHeaders(), cache: "no-store" }, 15000, signal);
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) { const e = new Error(j.detail || "HTTP " + r.status); e.status = r.status; throw e; }
+  if (!r.ok) { const e = new Error(errText(j, r)); e.status = r.status; throw e; }
   return j;
 }
 
@@ -325,7 +348,7 @@ export async function setBurnNicks(on) {
   await ensureConfig();
   const r = await fetch(cfg.base + "/api/admin/burn-nicks", { method: "POST", headers: { ...adminHeaders(), "Content-Type": "application/json" }, body: JSON.stringify({ burn_nicks: !!on }) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
+  if (!r.ok) throw new Error(errText(j, r));
   return j;
 }
 
@@ -333,7 +356,7 @@ export async function setCdpLaunch(on) {
   await ensureConfig();
   const r = await fetch(cfg.base + "/api/admin/cdp-launch", { method: "POST", headers: { ...adminHeaders(), "Content-Type": "application/json" }, body: JSON.stringify({ cdp_launch: !!on }) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
+  if (!r.ok) return { ok: false, error: errText(j, r) };
   return { ok: true, ...j };
 }
 // Chạy ẩn (headless): TẮT = thấy cửa sổ Chrome từng nick, để xem tận mắt job hỏng ở bước nào.
@@ -342,7 +365,7 @@ export async function setHeadless(on) {
   await ensureConfig();
   const r = await fetch(cfg.base + "/api/admin/headless", { method: "POST", headers: { ...adminHeaders(), "Content-Type": "application/json" }, body: JSON.stringify({ headless: !!on }) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) return { ok: false, error: j.detail || ("HTTP " + r.status) };
+  if (!r.ok) return { ok: false, error: errText(j, r) };
   return { ok: true, ...j };
 }
 // Check Video Nick: video đã dựng xong trên Dola của nick (server đọc lịch sử hội thoại, không tốn lượt).
@@ -350,7 +373,7 @@ export async function scanNickVideos(name, limit = 30) {
   await ensureConfig();
   const r = await fetch(cfg.base + `/api/admin/accounts/${encodeURIComponent(name)}/videos?limit=${limit}`, { headers: adminHeaders(), cache: "no-store" });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.detail || (r.status === 401 ? "sai admin key" : "HTTP " + r.status));
+  if (!r.ok) throw new Error(errText(j, r));
   return j;
 }
 // Quét video trên Dola của NHIỀU nick (gọi lần lượt để không đánh sập gateway; mỗi nick server tự bung
@@ -373,7 +396,7 @@ export async function redownloadVideo(taskId, url, account = "", prompt = "") {
     body: JSON.stringify({ task_id: taskId, url, account, prompt }),
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
+  if (!r.ok) throw new Error(errText(j, r));
   return j;
 }
 // Cấu hình ĐANG chạy trên server (proxy chung đã che mật khẩu, luồng, giãn nhịp…): ở chế độ từ xa
@@ -392,7 +415,7 @@ async function poolFetch(path, method = "GET", body) {
   if (body) opt.body = JSON.stringify(body);
   const r = await fetch(cfg.base + "/api/admin/proxies" + path, opt);
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.detail || (r.status === 401 ? "sai admin key" : "HTTP " + r.status));
+  if (!r.ok) throw new Error(errText(j, r));
   return j;
 }
 export const proxyPoolList = () => poolFetch("");
@@ -432,7 +455,7 @@ export async function importAccounts(bundle, onStep, isStopped) {
         body: JSON.stringify({ name: a.name, cookies: JSON.stringify(a.cookies || []), proxy: a.proxy || "", email: a.email || "" }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.detail || "HTTP " + r.status);
+      if (!r.ok) throw new Error(errText(j, r));
       if (a.note || a.scheduling === false) await patchAccount(a.name, { note: a.note || "", scheduling: a.scheduling !== false }).catch(() => {});
       st.ok++;
       if (a.scheduling === false) st.paused++;
