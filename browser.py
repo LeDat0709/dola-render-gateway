@@ -848,8 +848,15 @@ def rotating_whitelist_hint(account: str) -> str:
     Trả "" nếu không phải tình huống đó. Gom về một chỗ để mọi đường (kiểm proxy, pre-flight, gửi http) nói
     CÙNG một câu — trước đây chỉ đường gửi http có câu này nên người dùng ở chế độ 'ui' chỉ thấy
     "Connection reset by peer" (20/09: ExpressVPN đổi IP 5 lần trong 6 request)."""
+    return whitelist_hint_for_raw(_effective_rotating(account))
+
+
+def whitelist_hint_for_raw(raw: str) -> str:
+    """Như trên nhưng nhận THẲNG chuỗi proxy — kho proxy (proxy_pool) không có nick để tra.
+
+    Thiếu bản này, kho chỉ hiện lỗi thô "[Errno 54] Connection reset by peer" (đo 21/09: 10 proxy
+    proxyxoay chết cùng lúc vì IP máy đổi mỗi kết nối, 6 lần gọi ra 5 IP)."""
     import proxyxoay
-    raw = _effective_rotating(account)
     # tmproxy://KEY xác thực bằng CHÍNH KEY → IP máy xoay vẫn dùng được; chỉ nhà bán kiểu link get.php
     # (proxyxoay / proxy.vn / topproxy) mới xác thực bằng whitelist IP máy.
     if not raw or not proxyxoay.is_key_link(raw):

@@ -99,3 +99,38 @@ if __name__ == "__main__":
     test_tmproxy_khong_bi_do_oan()
     test_loi_chrome_kieu_proxy_duoc_kem_ly_do()
     print("OK: whitelist hint")
+
+
+# --- Kho proxy cũng phải nói được lý do, không chỉ đường theo-nick (thêm 21/09) ---
+# Đo thật 21/09: 10 proxy proxyxoay trong kho báo "[Errno 54] Connection reset by peer", mỗi cái khai
+# whitelist một IP khác (194.5.83.8/.51/.31/…) vì IP máy đổi mỗi kết nối (6 lần gọi ra 5 IP). Lỗi thô đó
+# không nói lên điều gì; kho proxy cần CÙNG câu giải thích mà đường theo-nick đã có.
+
+def test_hint_cho_chuoi_proxy_khong_can_nick(monkeypatch):
+    import browser
+    monkeypatch.setattr(browser, "_ip_doi_theo_ket_noi", lambda: True)
+    hint = browser.whitelist_hint_for_raw("https://proxyxoay.shop/api/get.php?key=abc")
+    assert "whitelist" in hint.lower() and "tmproxy" in hint.lower()
+
+
+def test_hint_im_lang_voi_tmproxy(monkeypatch):
+    """tmproxy xác thực bằng key → IP máy xoay vẫn chạy, đừng đổ oan."""
+    import browser
+    monkeypatch.setattr(browser, "_ip_doi_theo_ket_noi", lambda: True)
+    assert browser.whitelist_hint_for_raw("tmproxy://" + "a" * 32) == ""
+
+
+def test_hint_im_lang_khi_ip_on_dinh(monkeypatch):
+    import browser
+    monkeypatch.setattr(browser, "_ip_doi_theo_ket_noi", lambda: False)
+    assert browser.whitelist_hint_for_raw("https://proxyxoay.shop/api/get.php?key=abc") == ""
+
+
+def test_ham_theo_nick_van_chay_nhu_cu(monkeypatch):
+    """rotating_whitelist_hint(account) phải dùng chung thân với bản theo-chuỗi, không nhân đôi câu chữ."""
+    import browser
+    monkeypatch.setattr(browser, "_ip_doi_theo_ket_noi", lambda: True)
+    monkeypatch.setattr(browser, "_effective_rotating",
+                        lambda a: "https://proxyxoay.shop/api/get.php?key=abc")
+    assert browser.rotating_whitelist_hint("nick1") == browser.whitelist_hint_for_raw(
+        "https://proxyxoay.shop/api/get.php?key=abc")

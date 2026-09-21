@@ -233,6 +233,13 @@ class PoolStore:
             except Exception as exc:  # noqa: BLE001
                 msg = str(exc) or type(exc).__name__
                 info["error"] = re.sub(r"//[^@/\s]+@", "//***@", msg)[:140]   # không lộ user:pass trong lỗi
+                # Nhà bán xác thực bằng whitelist IP máy + IP máy đổi mỗi kết nối = chết chắc, nhưng lỗi
+                # thô chỉ nói "Connection reset by peer" (đo 21/09: 10 proxy proxyxoay chết cùng lúc vì
+                # đúng chuyện này). Nói thẳng lý do, đừng bắt người dùng đoán.
+                from browser import whitelist_hint_for_raw
+                hint = whitelist_hint_for_raw(raw)
+                if hint:
+                    info["error"] = f"{info['error']} — {hint}"
         if pid in self.items:
             self.items[pid].update(info)
 
