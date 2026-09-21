@@ -96,6 +96,65 @@ trình duyệt; nhưng vì nạp lại mỗi lần nên không thành vấn đ�
 coi như nick chết — không có đường phục hồi từ `accounts/<nick>/cookies.json`. Đây chính là chùm lỗi
 `Bị đăng xuất khỏi Dola giữa chừng` tối 20/09.
 
+## 6b. Proxy (`proxy/manager.py`, 24 KB) — mình hơn ở chỗ quan trọng nhất
+
+Cấu trúc của họ: `ProxyItem` (pydantic) + `ProxyDB` (SQLite) + `ProxyManager`, gán proxy cho profile theo
+`proxy_id`. Hỗ trợ 2 kiểu: `static` (host/port/user/pass) và `rotating_api` (key nhà bán).
+
+### ⚠ Họ FAIL-OPEN — proxy chết thì chạy bằng IP thật
+
+```python
+async def get_effective_proxy_config(self, proxy_id):
+    """Xác định cấu hình proxy cho Chrome / Playwright. Tự động fallback IP gốc nếu Proxy chết."""
+    ...
+    else:
+        logger.warning("Rotating Proxy API Key %s unresolved, fallback to Direct IP", proxy.id[:8])
+        return None          # ← None = Chrome mở KHÔNG proxy = IP nhà của người dùng
+```
+
+Docstring của chính họ nói thẳng. Proxy hết hạn / API lỗi / mạng chập → nick vẫn chạy, nhưng bằng **IP thật**,
+mang theo cookie của nick đó. Dola gom nick theo IP, nên một lần fail-open là lộ cả cụm.
+
+**Mình fail-closed** (`browser.account_proxy`): nick khai proxy riêng mà lấy không ra IP thì **ném lỗi**, pool
+xoay nick khác, không bao giờ rơi về IP máy. Giữ nguyên, đừng bắt chước.
+
+### `LocalProxyRelay` — thứ duy nhất đáng để ý (`:131`)
+
+Một HTTP relay asyncio chạy tại `127.0.0.1:<port ngẫu nhiên>`: đọc khối header của Chrome, chèn
+`Proxy-Authorization: Basic <base64>`, nối lên upstream rồi bơm byte hai chiều. Chrome chỉ thấy
+`--proxy-server=127.0.0.1:<port>`, không cần biết user/pass.
+
+Mình **đã có hai đường giải quyết việc này** và đều tốt hơn: patchright nhận thẳng
+`proxy={"server","username","password"}`; đường CDP dùng `_cdp_proxy_auth` (`Fetch.continueWithAuth`).
+→ Không cần port. (Relay của họ còn một lỗ: chỉ chèn auth cho khối header ĐẦU TIÊN mỗi kết nối — với
+keep-alive HTTP thường thì request thứ hai mất auth. Chạy được vì Dola toàn https nên đi qua CONNECT.)
+
+### Lấy IP từ nhà bán — họ làm ẩu hơn mình (`:381`)
+
+```python
+urls = [f"https://api.topproxy.vn/get-proxy?key={key}",
+        f"https://proxyxoay.shop/api/get-proxy?key={key}",
+        f"https://tmproxy.com/api/get-current-proxy?key={key}"]
+for u in urls:  # thử lần lượt tới khi có cái trả lời
+```
+
+- **Rải cùng một key cho cả ba nhà bán** — key của mình gửi sang hai nhà không liên quan.
+- Gọi tmproxy bằng **GET query**, trong khi API thật là **POST JSON** → nhánh tmproxy của họ nhiều khả năng
+  không bao giờ chạy.
+- **Không phân biệt "lấy IP mới" với "lấy IP đang dùng"**. Mình có `prefer_cached=True` đúng để tránh xoay IP
+  giữa lúc đang dựng video (đổi IP = cắt cổng, mất lượt).
+- **Không xử lý whitelist IP**. Mình có `rotating_whitelist_hint` cho nhà bán xác thực bằng whitelist
+  (proxyxoay / proxy.vn / topproxy) — nói thẳng khi IP máy đổi theo từng kết nối vì VPN.
+
+### Kiểm tra proxy sống (`:425`)
+
+Họ: `urllib` qua `api.ipify.org` → đo độ trễ + tra quốc gia. Một lần một proxy, không nhớ kết quả.
+Mình: `ensure_proxy_alive` (TCP connect, cache 5 phút, không tốn HTTP) + `proxy_status` đánh dấu IP bẩn
+(WAF-flag, nghỉ 24h) + `DirtyIpWaitTimeout`. Mình đầy đủ hơn.
+
+**Tóm lại phần proxy: không có gì đáng port.** Điểm khác biệt lớn nhất — fail-open vs fail-closed — mình
+đang đúng, họ đang sai.
+
 ## 7. Nên port gì (xếp theo giá trị)
 
 | # | Việc | Vì sao | Sức |

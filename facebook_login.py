@@ -201,6 +201,45 @@ async def _warm_facebook_session(page, timeout: int = 15000) -> str:
     return "ok"
 
 
+# Toạ độ TÂM icon Facebook trong hộp thoại đăng nhập Dola. Trả None nếu không thấy.
+# Đo thật 21/09/2026 trên dola.com: ba icon mạng xã hội là <div class="button-…">, KHÔNG phải <button>,
+# không có aria-label, và màu là currentColor (đen) chứ không phải #1877F2 — nên mọi selector theo
+# button/role/aria/màu đều trượt. Nhận diện bằng path glyph "f" của Facebook, dự phòng là icon GIỮA
+# trong hàng 3 cái (điện thoại · Facebook · Apple).
+# QUAN TRỌNG: chỉ TRẢ TOẠ ĐỘ, không .click() — đo được là element.click() bằng JS KHÔNG kích hoạt
+# đăng nhập (trang im, không nạp SDK); phải bấm bằng chuột thật qua CDP mới ăn.
+_FB_ICON_XY_JS = """() => {
+  const dlg = document.querySelector('.semi-modal-wrap, [role="dialog"]');
+  if (!dlg) return null;
+  const center = (el) => {
+    const r = el.getBoundingClientRect();
+    return (r.width && r.height) ? {x: r.left + r.width / 2, y: r.top + r.height / 2} : null;
+  };
+  const p = dlg.querySelector('svg path[d^="M12 2C6.203 2 1.5 6.73"], svg path[fill="#0068FF" i], svg path[fill="#1877F2" i]');
+  if (p) return center(p.closest('svg') || p);
+  const icons = [...dlg.querySelectorAll('svg')].filter((sv) => {
+    const r = sv.getBoundingClientRect();
+    return r.width >= 16 && r.width <= 40 && Math.abs(r.width - r.height) <= 6;
+  }).sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+  return icons.length === 3 ? center(icons[1]) : null;
+}"""
+
+
+async def _click_fb_icon(page) -> bool:
+    """Bấm icon Facebook bằng chuột thật. True nếu đã bấm."""
+    try:
+        xy = await page.evaluate(_FB_ICON_XY_JS)
+    except Exception:
+        return False
+    if not xy:
+        return False
+    try:
+        await page.mouse.click(xy["x"], xy["y"])
+        return True
+    except Exception:
+        return False
+
+
 async def _click_continue(popup, timeout: int = 4000) -> bool:
     """Clicks Facebook's OAuth confirm button ('Continue as <name>' / '続行' / 'Tiếp tục')."""
     locs = []
@@ -585,70 +624,9 @@ async def add_account_via_facebook(
                     persist_dola_cookies(account, curr_cookies)
                     return cred.get("label") or ""
 
-                # 2b. JavaScript to find and click the 4th social circle button (Facebook)
-                try:
-                    clicked_fb = await page.evaluate("""() => {
-                        // Find the login dialog
-                        const dialog = document.querySelector('.semi-modal-wrap, [role="dialog"]') || document.body;
-                        
-                        // Strategy 0: exact markup (Dola 2026-09): <svg class="size-24"><path fill="#0068FF" d="M12 2C6.203…">
-                        const fbPath = dialog.querySelector('svg path[fill="#0068FF"], svg path[fill="#0068ff"], svg path[d^="M12 2C6.203 2 1.5 6.73"]');
-                        if (fbPath) {
-                            const svg = fbPath.closest('svg');
-                            (svg.closest('button, [role="button"], a') || svg.parentElement || svg).click();
-                            return true;
-                        }
-                        // Strategy 0b: social row = three 24px svgs (phone, facebook, apple); facebook is the middle one
-                        const row = [...dialog.querySelectorAll('svg.size-24')].filter(s => !s.closest('[aria-label="close"]') && s.getBoundingClientRect().width > 0)
-                            .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
-                        if (row.length === 3) { (row[1].closest('button, [role="button"], a') || row[1].parentElement || row[1]).click(); return true; }
-                        // Strategy 1: Look for blue Facebook icon SVG or circle
-                        const allNodes = [...dialog.querySelectorAll('svg, button, [role="button"], div, span')];
-                        for (const el of allNodes) {
-                            const h = el.outerHTML;
-                            if (h.includes('#1877F2') || h.includes('#1877f2') || h.includes('rgb(24, 119, 242)') || h.toLowerCase().includes('facebook')) {
-                                const target = el.closest('button, [role="button"]') || el;
-                                target.click();
-                                return true;
-                            }
-                        }
-
-                        // Strategy 2: Look for the 4 circular icons container
-                        // In Dola, Google button is followed by 4 circle buttons: LINE, Phone, Apple, Facebook
-                        const svgs = [...dialog.querySelectorAll('svg')];
-                        // Filter icons that are in the social icons row (small, square/round)
-                        const socialSvgs = svgs.filter(s => {
-                            const r = s.getBoundingClientRect();
-                            return r.width >= 16 && r.width <= 48 && r.height >= 16 && r.height <= 48;
-                        });
-                        if (socialSvgs.length >= 4) {
-                            // 4th icon is Facebook
-                            const fbSvg = socialSvgs[socialSvgs.length - 1];
-                            const clickTarget = fbSvg.closest('button, [role="button"], div') || fbSvg;
-                            clickTarget.click();
-                            return true;
-                        }
-
-                        // Strategy 3: Find by bounding box of the circular icon
-                        const googleBtn = [...dialog.querySelectorAll('button, [role="button"], div')].find(b =>
-                            /Googleで続ける|Google/.test(b.innerText || '')
-                        );
-                        if (googleBtn) {
-                            const gRect = googleBtn.getBoundingClientRect();
-                            const circles = [...dialog.querySelectorAll('div, button, span')].filter(el => {
-                                const r = el.getBoundingClientRect();
-                                return r.width >= 32 && r.width <= 56 && r.height >= 32 && r.height <= 56 && r.top > gRect.bottom;
-                            });
-                            if (circles.length >= 4) {
-                                circles[3].click();
-                                return true;
-                            }
-                        }
-
-                        return false;
-                    }""")
-                except Exception as e:
-                    pass
+                # 2b. Bấm icon Facebook bằng CHUỘT THẬT (xem _FB_ICON_XY_JS: icon là <div>, không phải
+                # <button>, và .click() bằng JS không kích hoạt được đăng nhập).
+                clicked_fb = await _click_fb_icon(page)
 
                 if clicked_fb:
                     break
@@ -699,17 +677,7 @@ async def add_account_via_facebook(
                         break
                     # If not yet opened, retry evaluate click
                     if _w % 4 == 0:
-                        await page.evaluate("""() => {
-                            const dialog = document.querySelector('.semi-modal-wrap, [role="dialog"]') || document.body;
-                            const svgs = [...dialog.querySelectorAll('svg')];
-                            const socialSvgs = svgs.filter(s => {
-                                const r = s.getBoundingClientRect();
-                                return r.width >= 16 && r.width <= 48 && r.height >= 16 && r.height <= 48;
-                            });
-                            if (socialSvgs.length >= 4) {
-                                (socialSvgs[socialSvgs.length - 1].closest('button, [role="button"], div') || socialSvgs[socialSvgs.length - 1]).click();
-                            }
-                        }""")
+                        await _click_fb_icon(page)   # thử lại bằng chuột thật
             except Exception:
                 pass
 
