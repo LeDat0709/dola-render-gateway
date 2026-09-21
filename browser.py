@@ -1316,13 +1316,16 @@ async def verify_cookie_http(cookie_str: str, timeout: int = 20, proxy: str | No
     # rơi xuống nhánh mở Chrome (3 luồng, tới 30s/nick), làm bước "kiểm tra nick" chậm hàng chục giây.
     via = proxy if proxy is not None else (config.PROXY or None)
     headers = {"Accept": "application/json", "cookie": cookie_str}
+    # Đi bằng curl_cffi giả vân tay TLS/HTTP2 của Chrome (tls_http): aiohttp lộ ngay ở cái bắt tay —
+    # đo 21/09, nó KHÔNG có vân tay HTTP/2 trong khi Chrome thật và curl_cffi cùng là 52d84b11737d980a.
+    import json as _json
+    import tls_http
     try:
-        async with aiohttp.ClientSession() as sess:
-            async with sess.get("https://www.dola.com" + PASSPORT_INFO_PATH, headers=headers,
-                                proxy=via or None, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
-                if r.status != 200:
-                    return None, f"Dola/WAF trả HTTP {r.status} (chưa kết luận được cookie)"
-                data = await r.json(content_type=None)
+        status, body = await tls_http.request("GET", "https://www.dola.com" + PASSPORT_INFO_PATH,
+                                              headers=headers, proxy=via or None, timeout=timeout)
+        if status != 200:
+            return None, f"Dola/WAF trả HTTP {status} (chưa kết luận được cookie)"
+        data = _json.loads(body)
     except Exception as exc:
         return None, f"không tới được dola.com qua {mask_proxy(via) or 'nối thẳng'}: {str(exc)[:80]}"
     dead = passport_dead(data)
