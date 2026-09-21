@@ -441,6 +441,11 @@ _proxy_leases: dict[str, int] = {}
 # IP proxy xoay phải còn sống ÍT NHẤT ngần này khi mở nick, không thì đổi IP trước. Phải PHỦ trọn một job: phiên thật 16/09
 # IP proxyxoay sống ~25–30 phút, job 30s kèm hỏi-đáp chạy 15–33 phút; ngưỡng cũ 180s cho IP còn 20 phút chạy rồi chết giữa
 # lúc dựng. 30s dựng lâu hơn nên ngưỡng riêng.
+# Đổi IP TRƯỚC mỗi job khi IP không đủ sống hết job. MẶC ĐỊNH TẮT từ 21/09: nhà bán proxyxoay cấp IP sống
+# ~1265s mà ngưỡng job 30s là 1200s → gần như job nào cũng đòi đổi, trong khi nhà bán chặn 1 lần đổi/phút/key.
+# 5 job song song đâm nhau ("Con 27s moi co the doi proxy") và chết trước khi gửi. Đổi IP liên tục còn làm Dola
+# thấy nick nhảy IP — chính thứ đang giết phiên đăng nhập. IP BẨN thì vẫn đổi ngay, không phụ thuộc cờ này.
+ROTATE_BEFORE_JOB = os.getenv("DOLA_PROXY_ROTATE_BEFORE_JOB", "0").strip().lower() in ("1", "true", "yes", "on")
 PROXY_MIN_LIFE_SEC = int(os.getenv("DOLA_PROXY_MIN_LIFE", "600"))
 PROXY_MIN_LIFE_30S_SEC = int(os.getenv("DOLA_PROXY_MIN_LIFE_30S", "1200"))
 
@@ -534,7 +539,7 @@ def rotate_if_expiring(account: str, min_life: int | None = None) -> bool:
         account_proxy(account)
         st = rotating_status(key)
     dirty = ip_dirty(st)
-    if not dirty and st.get("expires_in", need) >= need:
+    if not dirty and (not ROTATE_BEFORE_JOB or st.get("expires_in", need) >= need):
         return False
     why = "IP bẩn (vừa bị Dola chặn)" if dirty else f"IP còn {st['expires_in']}s"
     label = f"{account} ({why}, đổi trước khi mở nick)"

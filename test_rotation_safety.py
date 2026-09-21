@@ -621,8 +621,12 @@ def test_auto_rotate_skipped_while_other_job_on_same_proxy():
             assert env.rotations == [_LINK], "không còn job nào trên proxy → được đổi"
 
 
-def test_expiring_ip_rotated_before_opening_nick():
+def test_expiring_ip_rotated_before_opening_nick(monkeypatch):
+    """Hành vi CŨ: IP sắp hết tuổi thì đổi trước khi mở nick. Từ 21/09 mặc định TẮT
+    (browser.ROTATE_BEFORE_JOB) vì nó đâm vào giới hạn 1 lần đổi/phút của nhà bán — bật cờ ở đây để
+    vẫn kiểm chứng đường cũ cho ai cần."""
     import browser
+    monkeypatch.setattr(browser, "ROTATE_BEFORE_JOB", True)
     with tempfile.TemporaryDirectory() as tmp:
         pool = _pool(tmp)
         browser_pool.generate_video = _scripted({"n1": [("ok",)], "n2": [("ok",)]})
@@ -798,3 +802,45 @@ if __name__ == "__main__":
             print(f"FAIL {name}: {type(e).__name__}: {str(e)[:160]}")
     print(f"\n{len(tests) - failed}/{len(tests)} pass")
     sys.exit(1 if failed else 0)
+
+
+# --- Đổi IP trước khi mở nick: chỉ khi IP BẨN (thêm 21/09) ---
+# Đo 21/09: proxyxoay cấp IP sống ~1265s mà ngưỡng job 30s là 1200s → gần như job nào cũng đòi đổi IP,
+# trong khi nhà bán chặn 1 lần đổi/phút/key. 5 job song song đâm nhau ("Con 27s moi co the doi proxy")
+# và chết trước khi gửi. Đổi IP liên tục còn làm Dola thấy nick nhảy IP — thứ đang giết phiên đăng nhập.
+
+def _moi_truong_xoay(monkeypatch, expires_in, dirty):
+    import browser
+    monkeypatch.setattr(browser, "_effective_rotating", lambda a: "tmproxy://" + "a" * 32)
+    monkeypatch.setattr(browser, "rotating_status", lambda k: {"expires_in": expires_in})
+    monkeypatch.setattr(browser, "ip_dirty", lambda st: dirty)
+    monkeypatch.setattr(browser, "proxy_busy", lambda k: 0)
+    da_doi = []
+    monkeypatch.setattr(browser, "_rotate_raw", lambda k, nhan: da_doi.append(nhan) or True)
+    return da_doi
+
+
+def test_khong_doi_ip_khi_ip_sach_du_sap_het_han(monkeypatch):
+    """Mặc định mới: IP sạch thì GIỮ, kể cả còn ít giây — đổi liên tục hại hơn lợi."""
+    import browser
+    monkeypatch.setattr(browser, "ROTATE_BEFORE_JOB", False)
+    da_doi = _moi_truong_xoay(monkeypatch, expires_in=60, dirty=False)
+    assert browser.rotate_if_expiring("nick1", 1200) is False
+    assert da_doi == []
+
+
+def test_van_doi_ngay_khi_ip_ban(monkeypatch):
+    """IP vừa bị Dola chặn thì PHẢI đổi, bất kể cờ — không thì nick gửi trên IP bẩn."""
+    import browser
+    monkeypatch.setattr(browser, "ROTATE_BEFORE_JOB", False)
+    da_doi = _moi_truong_xoay(monkeypatch, expires_in=900, dirty=True)
+    assert browser.rotate_if_expiring("nick1", 1200) is True
+    assert da_doi and all("bẩn" in nhan for nhan in da_doi)   # nhà bán trả IP bẩn tiếp thì xoay lại
+
+
+def test_bat_co_thi_ve_hanh_vi_cu(monkeypatch):
+    import browser
+    monkeypatch.setattr(browser, "ROTATE_BEFORE_JOB", True)
+    da_doi = _moi_truong_xoay(monkeypatch, expires_in=60, dirty=False)
+    assert browser.rotate_if_expiring("nick1", 1200) is True
+    assert len(da_doi) == 1
