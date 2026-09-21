@@ -98,6 +98,15 @@ def _public_ipv4(now: float) -> str:
     return _pub_ip["ip"]
 
 
+def forget_public_ip() -> None:
+    """Quên IP máy đang nhớ để lần sau đọc lại NGAY (bỏ qua TTL 5 phút).
+
+    Gọi khi proxy whitelist báo chết: IP máy vừa đổi (tắt VPN, đổi mạng) thì bộ đệm còn giữ IP cũ,
+    tool khai whitelist bằng IP đã chết và proxy tiếp tục "Connection reset by peer" — người dùng
+    phải ngồi chờ hết 5 phút mà không biết vì sao (đo 21/09)."""
+    _pub_ip.update(ip="", at=0.0)
+
+
 def _whitelist_url(link: str, now: float) -> tuple[str, str]:
     """(url gọi thật, IP đang khai). Chỉ gắn &whitelist= cho proxyxoay.shop, khi link chưa tự ghi whitelist và IP
     máy khác lần khai thành công trước — link lưu trong kho/cache KHÔNG đổi (khoá cache giữ nguyên)."""

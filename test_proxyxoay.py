@@ -148,3 +148,28 @@ def test_shoplike():
 
 if __name__ == "__main__":
     main()
+
+
+# --- IP máy đổi giữa chừng: phải quên bộ đệm, không khai whitelist bằng IP cũ (thêm 21/09) ---
+# Đo 21/09: người dùng tắt VPN (194.5.83.x → 171.241.56.41) nhưng kho proxy vẫn "Connection reset by peer"
+# vì _pub_ip còn nhớ IP VPN tới 5 phút → khai whitelist bằng IP đã chết.
+
+def test_quen_ip_may_xoa_bo_dem(monkeypatch):
+    """forget_public_ip() phải xoá bộ đệm để lần đọc sau đi hỏi lại ngay, không chờ hết TTL 5 phút.
+
+    Kiểm THẲNG trên _pub_ip: file test này có chỗ gán đè proxyxoay._public_ipv4 bằng lambda và không
+    khôi phục, nên gọi qua hàm đó là đo nhầm."""
+    import proxyxoay
+    proxyxoay._pub_ip.update(ip="194.5.83.10", at=proxyxoay.time.time())
+    proxyxoay.forget_public_ip()
+    assert proxyxoay._pub_ip["ip"] == "" and proxyxoay._pub_ip["at"] == 0.0
+
+
+def test_quen_ip_thi_khai_lai_whitelist(monkeypatch):
+    """Sau khi quên, link phải được gắn &whitelist= bằng IP MỚI dù trước đó đã khai IP cũ."""
+    import proxyxoay
+    link = "https://proxyxoay.shop/api/get.php?key=abc"
+    proxyxoay._wl_sent[link] = "194.5.83.10"
+    monkeypatch.setattr(proxyxoay, "_public_ipv4", lambda now: "171.241.56.41")
+    url, ip = proxyxoay._whitelist_url(link, proxyxoay.time.time())
+    assert ip == "171.241.56.41" and "whitelist=171.241.56.41" in url

@@ -240,6 +240,12 @@ class PoolStore:
                 hint = whitelist_hint_for_raw(raw)
                 if hint:
                     info["error"] = f"{info['error']} — {hint}"
+                # Proxy whitelist chết có thể chỉ vì IP máy vừa đổi (tắt VPN, đổi mạng) mà tool còn nhớ IP cũ
+                # tới 5 phút → khai whitelist bằng IP đã chết. Quên đi để lần kiểm sau khai lại IP thật, thay
+                # vì bắt người dùng ngồi chờ hết TTL mà không hiểu vì sao (đo 21/09).
+                import proxyxoay as _px
+                if _px.is_key_link(raw):
+                    _px.forget_public_ip()
         if pid in self.items:
             self.items[pid].update(info)
 
