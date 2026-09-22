@@ -453,26 +453,28 @@ const JS_OPEN_DOLA_LOGIN = `(() => {
   return 'no-button';
 })()`;
 
-const JS_CLICK_FACEBOOK = `(() => {
+// TRẢ TOẠ ĐỘ TÂM icon Facebook (KHÔNG .click()). Đo 21/09: element.click() bằng JS KHÔNG kích hoạt
+// đăng nhập Facebook trên Dola — trang im, không nạp cả FB SDK. Chỉ chuột THẬT (webContents.sendInputEvent)
+// mới ăn. Trả {x,y,how} để tiến trình chính bấm thật; {how:'not-found'} nếu không thấy.
+const JS_FIND_FACEBOOK = `(() => {
   const dialog = document.querySelector('.semi-modal-wrap, [role="dialog"]');
-  if (!dialog) return 'no-dialog';
+  if (!dialog) return { how: 'no-dialog' };
   const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-  const clickIcon = (svg) => { (svg.closest('button, [role="button"], a') || svg.parentElement || svg).click(); };
-  // 0) exact markup (Dola 2026-09): <svg class="size-24" viewBox="0 0 24 25"><path fill="#0068FF" d="M12 2C6.203 2 1.5 6.73…
+  const xy = (el, how) => { const r = (el.closest('button,[role="button"],a') || el).getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, how }; };
+  // 0) exact markup (Dola 2026-09): <svg class="size-24"><path fill="#0068FF" d="M12 2C6.203 2 1.5 6.73…
   const fbPath = dialog.querySelector('svg path[fill="#0068FF"], svg path[fill="#0068ff"], svg path[d^="M12 2C6.203 2 1.5 6.73"]');
-  if (fbPath && vis(fbPath.closest('svg'))) { clickIcon(fbPath.closest('svg')); return 'exact'; }
+  if (fbPath && vis(fbPath.closest('svg'))) return xy(fbPath.closest('svg'), 'exact');
   // 1) other Facebook markers: brand colours, name in svg/img/aria
   for (const el of dialog.querySelectorAll('svg, img, button, [role="button"], a')) {
     const h = (el.outerHTML || '').toLowerCase();
-    if (vis(el) && (h.includes('#1877f2') || h.includes('rgb(24, 119, 242)') || h.includes('facebook'))) {
-      (el.closest('button, [role="button"], a') || el).click(); return 'marker';
-    }
+    if (vis(el) && (h.includes('#1877f2') || h.includes('rgb(24, 119, 242)') || h.includes('facebook'))) return xy(el, 'marker');
   }
-  // 1b) the social row is three 24px svgs (phone, facebook, apple) under the Google button: take the middle one
+  // 1b) hàng 3 icon 24px (điện thoại · facebook · apple) dưới nút Google → lấy cái GIỮA
   const icons = [...dialog.querySelectorAll('svg.size-24')].filter(vis).filter(s => !s.closest('[aria-label="close"]'))
     .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
-  if (icons.length === 3) { clickIcon(icons[1]); return 'row-3'; }
-  // 2) the row of round social buttons under "Googleで続ける": phone / facebook / apple
+  if (icons.length === 3) return xy(icons[1], 'row-3');
+  // 2) hàng nút tròn dưới "Googleで続ける": điện thoại / facebook / apple
   const google = [...dialog.querySelectorAll('button, [role="button"], div')].find(b => /Google/.test(b.innerText || ''));
   const top = google ? google.getBoundingClientRect().bottom : 0;
   let round = [...dialog.querySelectorAll('button, [role="button"], div')].filter(el => {
@@ -481,11 +483,11 @@ const JS_CLICK_FACEBOOK = `(() => {
     return r.width >= 34 && r.width <= 64 && Math.abs(r.width - r.height) < 4 && r.top > top
       && (cs.borderRadius.includes('%') || radius >= r.width / 2 - 2);
   });
-  round = round.filter(el => !round.some(o => o !== el && o.contains(el)));   // outermost only
+  round = round.filter(el => !round.some(o => o !== el && o.contains(el)));   // ngoài cùng
   round.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
-  if (round.length === 3) { round[1].click(); return 'round-3'; }
-  if (round.length === 4) { round[3].click(); return 'round-4'; }
-  return 'not-found:' + round.length;
+  if (round.length === 3) return xy(round[1], 'round-3');
+  if (round.length === 4) return xy(round[3], 'round-4');
+  return { how: 'not-found:' + round.length };
 })()`;
 
 // Guest mode (fresh partition) has NO login button; Dola only opens the modal (openLoginModal)
@@ -562,6 +564,17 @@ async function runJS(webContents, js) {
     if (!webContents || webContents.isDestroyed()) return null;
     return await webContents.executeJavaScript(js, true);
   } catch (_) { return null; }   // page navigating / closed: try again next tick
+}
+
+// Bấm CHUỘT THẬT tại (x,y) trong webContents. Đo 21/09: element.click() bằng JS không kích hoạt đăng nhập
+// Facebook trên Dola; chỉ sendInputEvent (chuột thật) mới nạp FB SDK và mở popup OAuth.
+function realClickAt(webContents, x, y) {
+  if (!webContents || webContents.isDestroyed() || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+  const px = Math.round(x), py = Math.round(y);
+  webContents.sendInputEvent({ type: 'mouseMove', x: px, y: py });
+  webContents.sendInputEvent({ type: 'mouseDown', x: px, y: py, button: 'left', clickCount: 1 });
+  webContents.sendInputEvent({ type: 'mouseUp', x: px, y: py, button: 'left', clickCount: 1 });
+  return true;
 }
 
 // After Dola issues sessionid, reload once so the bdms SDK re-sets the signing cookies
@@ -822,10 +835,14 @@ pausedHandle("account:importFacebookElectron", async (_e, { name, line, lang }) 
           if (attempt === 1) send(`Đang kích hoạt hộp đăng nhập (gửi thử tin nhắn: ${t})…`);
           await sleep(2500);
         }
-        // 3) modal is up → click the Facebook icon
+        // 3) modal is up → tìm toạ độ icon Facebook rồi bấm CHUỘT THẬT (JS .click() không kích hoạt được)
         if (await runJS(win.webContents, JS_LOGIN_MODAL_OPEN)) {
-          const r = await runJS(win.webContents, JS_CLICK_FACEBOOK);
-          if (r && !String(r).startsWith("no-") && !String(r).startsWith("not-found")) fbClicked = String(r);
+          const pos = await runJS(win.webContents, JS_FIND_FACEBOOK);
+          const how = pos && pos.how;
+          if (how && !how.startsWith("no-") && !how.startsWith("not-found")
+              && realClickAt(win.webContents, pos.x, pos.y)) {
+            fbClicked = how;
+          }
         }
         if (!fbClicked) await sleep(1200);
       }
