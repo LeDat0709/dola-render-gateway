@@ -33,7 +33,9 @@ def _get_lock(key: str) -> threading.Lock:
     return _locks.setdefault(key, threading.Lock())
 
 _cache: dict[str, dict] = {}   # key -> {"https","username","password","public_ip","exp","next_ok"}
-_last_err: dict[str, str] = {}  # key (cùng khoá _cache) -> lý do lấy IP hỏng gần nhất, để báo lỗi nick rõ ràng
+_last_err: dict[str, str] = {}  # key (cùng khoá _cache) -> lý do lấy IP hỏng gần nhất, để báo lỗi nick
+_fail_until: dict[str, float] = {}   # key -> thời điểm được thử lại API sau khi hỏng (gói hết hạn…)
+_FAIL_COOLDOWN = 60.0               # gói hết hạn/khoá thì nghỉ 60s, đừng đấm API mỗi giây (log 22/09) rõ ràng
 
 
 class TMProxyError(RuntimeError):
@@ -118,10 +120,23 @@ def current(key: str) -> dict:
         ent = _cache.get(key)
         if ent and now < ent["exp"]:
             return ent
+        if now < _fail_until.get(key, 0.0):
+            # Vừa hỏng (gói hết hạn/khoá) → trả lỗi cũ ngay, KHÔNG gọi API tới hết nghỉ.
+            raise TMProxyError(_last_err.get(key) or "TMProxy tạm không lấy được IP")
         try:
-            return _store(key, _call("get-current-proxy", {"api_key": key}), now)
+            r = _store(key, _call("get-current-proxy", {"api_key": key}), now)
+            _fail_until.pop(key, None)
+            return r
         except TMProxyError:
-            return _store(key, _call("get-new-proxy", _new_body(key)), now)
+            pass
+        try:
+            r = _store(key, _call("get-new-proxy", _new_body(key)), now)
+            _fail_until.pop(key, None)
+            return r
+        except TMProxyError as exc:
+            _fail_until[key] = now + _FAIL_COOLDOWN
+            _last_err[key] = str(exc)
+            raise
 
 
 def rotate(key: str) -> dict:

@@ -55,3 +55,57 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_goi_het_han_khong_dam_api_moi_lan():
+    """Gói hết hạn: current() hỏng cả get-current lẫn get-new. Đừng gọi lại API trong thời gian nghỉ —
+    đo 22/09: giao diện hỏi proxy/current mỗi giây, mỗi lần 2 lệnh API 'Gói Hết hạn' (log spam + dễ bị chặn)."""
+    import pytest
+
+    n = {"calls": 0}
+
+    def fail_post(path, body):
+        n["calls"] += 1
+        raise tmproxy.TMProxyError("Gói Hết hạn")
+
+    old_post = tmproxy._post
+    tmproxy._post = fail_post
+    tmproxy._cache.clear()
+    tmproxy._fail_until.clear()
+    key = "e2bfe0" + "0" * 26
+    try:
+        for _ in range(5):
+            with pytest.raises(tmproxy.TMProxyError):
+                tmproxy.current(key)
+        # lần đầu gọi 2 API (get-current + get-new); 4 lần sau vào cache lỗi → KHÔNG gọi thêm
+        assert n["calls"] == 2, n["calls"]
+    finally:
+        tmproxy._post = old_post
+        tmproxy._fail_until.clear()
+        tmproxy._cache.clear()
+
+
+def test_het_nghi_thi_thu_lai():
+    n = {"calls": 0}
+
+    def fail_post(path, body):
+        n["calls"] += 1
+        raise tmproxy.TMProxyError("Gói Hết hạn")
+
+    old_post = tmproxy._post
+    tmproxy._post = fail_post
+    tmproxy._cache.clear()
+    tmproxy._fail_until.clear()
+    key = "e2bfe0" + "0" * 26
+    try:
+        import pytest
+        with pytest.raises(tmproxy.TMProxyError):
+            tmproxy.current(key)
+        tmproxy._fail_until[key] = time.time() - 1        # hết nghỉ
+        with pytest.raises(tmproxy.TMProxyError):
+            tmproxy.current(key)
+        assert n["calls"] == 4                            # 2 lần × 2 API
+    finally:
+        tmproxy._post = old_post
+        tmproxy._fail_until.clear()
+        tmproxy._cache.clear()
